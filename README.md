@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" width="50%" alt="Claw64">
+</p>
+
 # Claw64
 
 The Commodore 64 is the agent. BASIC is its tool.
