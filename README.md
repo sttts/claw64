@@ -1,11 +1,12 @@
 # Claw64
 
-An autonomous AI agent running on a Commodore 64.
+The Commodore 64 is the agent. BASIC is its tool.
 
-Claw64 is a tiny TSR (Terminate and Stay Resident) program in 6502 assembly
-that coexists with the BASIC REPL. It receives commands from chat users via
-a Go bridge, forwards them to an LLM, and executes BASIC commands on behalf
-of remote users.
+Claw64 turns a Commodore 64 into an autonomous AI agent. The C64 receives
+instructions from chat users, thinks via an LLM, and acts by typing BASIC
+commands into its own REPL — reading the screen to see what happened.
+The BASIC interpreter is the agent's tool: `POKE` to change hardware state,
+`PRINT` to compute, `LIST` to inspect programs. The C64 does the work.
 
 ## Architecture
 
@@ -24,11 +25,12 @@ Chat (Slack/WhatsApp/Signal)
          │ RS232, 2400 baud
          │ (TCP in VICE for dev)
 ┌────────┴─────────┐
-│   C64 (Agent)    │
+│ C64 = THE AGENT  │
 │                  │
 │  • TSR at $C000  │ ◄── ~2KB, IRQ-driven, invisible
-│  • Key injection │ ◄── puppet the BASIC REPL
-│  • Screen scrape │ ◄── capture output
+│  • BASIC = tool  │ ◄── POKE, PRINT, LIST, LOAD, RUN
+│  • Key injection │ ◄── types commands into the REPL
+│  • Screen scrape │ ◄── reads output from screen RAM
 └──────────────────┘
 ```
 
@@ -82,9 +84,10 @@ Frame types: `EXEC`(0x01), `RESULT`(0x02), `ERROR`(0x03), `HEARTBEAT`(0x04).
 
 ```
 User (Slack):    "What is 6502 * 8?"
-LLM:             tool_call: basic_exec("PRINT 6502*8")
-C64:             injects keystrokes, BASIC prints 52016
-Agent:           scrapes screen, sends result back
+LLM:             → tool_call: basic_exec("PRINT 6502*8")
+C64 agent:       types "PRINT 6502*8" into BASIC
+BASIC:           prints 52016 on screen
+C64 agent:       reads screen → "52016" → sends back to LLM
 LLM:             "6502 * 8 = 52016"
 User sees:       "6502 * 8 = 52016"
 ```

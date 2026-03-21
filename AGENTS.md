@@ -1,7 +1,7 @@
 # Claw64 — Agent Rules
 
 ## Project
-Autonomous AI agent running on a Commodore 64. TSR in 6502 assembly puppeteers the BASIC REPL via keystroke injection and screen scraping. A Go bridge connects chat platforms, an LLM, and the C64 over serial.
+The Commodore 64 is the agent. BASIC is its tool. A tiny TSR in 6502 assembly types commands into the BASIC REPL and reads the screen to see what happened. A Go bridge connects the C64 to chat platforms and an LLM over serial.
 
 ## Structure
 ```
