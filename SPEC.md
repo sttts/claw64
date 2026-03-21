@@ -75,14 +75,18 @@ A carriage return ($0D) is appended to trigger execution.
 
 Before injecting, the agent checks if the keyboard is idle ($C6 == 0 and
 no key currently pressed at $CB). If the user is typing, the agent waits.
-Collisions can still happen and are acceptable; the LLM retries on error.
+Collisions can still happen and are acceptable; the bridge retries on
+error (see retry policy below).
 
 #### Screen scraping
 
 After injecting a command, the agent watches for the BASIC `READY.` prompt
 by scanning the bottom lines of screen RAM ($0400-$07E7) for the screen
-codes $12,$05,$01,$04,$19,$2E at column 0. A 3-second timeout (180 IRQ
-cycles) guards against hangs.
+codes $12,$05,$01,$04,$19,$2E at column 0. To avoid false positives (e.g.
+a `PRINT "READY."` in output), the agent also verifies that the cursor
+(tracked via $D3/$D6) is positioned on the line immediately below the
+`READY.` text. The KERNAL always places the cursor there after returning
+to direct mode. A 3-second timeout (180 IRQ cycles) guards against hangs.
 
 The agent then reads up to 25 lines of screen RAM and sends the contents
 back to the bridge as a RESULT frame.
@@ -172,7 +176,8 @@ You are Claw64, an AI agent running on a Commodore 64 home computer from 1982.
 You have one tool: basic_exec, which types a command into the BASIC REPL.
 
 Rules:
-- Responses: max 200 characters. Be terse.
+- Text responses to the user: max 200 characters. Be terse.
+- Tool results (screen captures) may be up to 1000 characters; that is normal.
 - Tool arguments: max 80 characters (one screen line).
 - One tool call at a time. Wait for the result before the next call.
 - Plain text only. No markdown, no formatting.
@@ -235,6 +240,17 @@ C64 -> Bridge:
 - Bad checksum: receiver drops the frame silently.
 - The sender retransmits after a 500ms timeout if no response is received.
 - The bridge treats 5 consecutive timeouts as a lost connection.
+
+#### Retry policy
+
+When a tool call fails (syntax error from garbled input, timeout, or
+checksum failure), the bridge retries the same EXEC frame:
+
+- Maximum 3 attempts per tool call.
+- Backoff: 500ms, 1s, 2s between retries.
+- After 3 failures, the bridge returns an error to the LLM as the tool
+  result: "Command failed after 3 retries". The LLM may then rephrase
+  the command or inform the user.
 
 #### Flow
 
@@ -304,6 +320,26 @@ Build:       make (assemble, launch VICE, start bridge)
 - Multiple simultaneous tool calls.
 - Chunked/fragmented frames.
 - File transfer to/from the C64.
+
+## Latency expectations
+
+A single tool round-trip at 2400 baud:
+
+```
+Inject command (40 chars):    ~0.5s
+BASIC execution:              ~0.1s
+READY. detection:             ~0.1s
+Screen scrape TX (1000 bytes): ~0.4s
+LLM API call:                 ~1-5s
+                              --------
+Total per tool call:          ~2-6s
+```
+
+The serial link is not the bottleneck; the LLM API latency dominates.
+Multi-step interactions (several tool calls in sequence) will take
+proportionally longer. The bridge should relay intermediate status to
+the chat user (e.g. "Executing...") for commands that require multiple
+tool calls.
 
 ## Example interaction
 
