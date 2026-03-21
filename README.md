@@ -4,6 +4,8 @@
 
 # Claw64
 
+> **WIP** — Work in progress. Not ready for use.
+
 The Commodore 64 is the agent. BASIC is its tool.
 
 Claw64 turns a Commodore 64 into an autonomous AI agent. The C64 receives
