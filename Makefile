@@ -8,7 +8,11 @@
 VICE        ?= x64sc
 
 # VICE RS232 flags: map userport to TCP socket
-VICE_RS     = -rsdev1 "127.0.0.1:25232" -rsdev1baud 2400 -rsuser -rsuserdev 0
+# VICE acts as TCP client — bridge must listen on port 25232 FIRST
+# -rsdev1: TCP endpoint VICE connects to when C64 opens RS232
+# -rsuserdev 0: map userport to rsdev1
+# -rsuserbaud: emulated baud rate (must match C64 software)
+VICE_RS     = -rsdev1 "127.0.0.1:25232" -rsuserdev 0 -rsuserbaud 2400
 
 # KickAssembler (auto-downloaded)
 KICKASS_DIR  = build/kickassembler

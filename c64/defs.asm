@@ -1,3 +1,4 @@
+#importonce
 // Claw64 — Constants and zero-page allocations
 // ================================================
 
@@ -31,7 +32,9 @@
 
 // RS232 constants
 .const RS232_DEV    = 2      // device number for RS232
-.const RS232_BAUD   = $06    // control byte: 2400 baud, 8N1
+// KERNAL RS232 baud codes (bits 0-3 of control byte):
+// $06=300, $07=600, $08=1200, $09=1800, $0A=2400
+.const RS232_BAUD   = $0A    // control byte: 2400 baud, 8N1
 .const NO_KEY       = $40    // LASTKEY value when no key is pressed
 
 // Frame protocol
