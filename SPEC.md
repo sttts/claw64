@@ -82,7 +82,12 @@ error (see retry policy below).
 
 After injecting a command, the agent watches for the BASIC `READY.` prompt
 by scanning the bottom lines of screen RAM ($0400-$07E7) for the screen
-codes $12,$05,$01,$04,$19,$2E at column 0. To avoid false positives (e.g.
+codes of `READY.` at column 0. Note: screen RAM uses screen codes, not
+PETSCII. Uppercase letters are PETSCII minus $40:
+
+```
+R=$12  E=$05  A=$01  D=$04  Y=$19  .=$2E
+``` To avoid false positives (e.g.
 a `PRINT "READY."` in output), the agent also verifies that the cursor
 (tracked via $D3/$D6) is positioned on the line immediately below the
 `READY.` text. The KERNAL always places the cursor there after returning
