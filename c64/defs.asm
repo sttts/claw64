@@ -21,6 +21,23 @@
 // System locations
 .const IRQ_LO       = $0314  // IRQ vector low byte
 .const IRQ_HI       = $0315  // IRQ vector high byte
+.const IMAIN_LO     = $0302  // BASIC main loop vector low byte
+.const IMAIN_HI     = $0303  // BASIC main loop vector high byte
+.const IGETIN_LO    = $032A  // KERNAL GETIN vector low byte
+.const IGETIN_HI    = $032B  // KERNAL GETIN vector high byte
+.const IBASIN_LO    = $0326  // KERNAL BASIN vector low byte
+.const IBASIN_HI    = $0327  // KERNAL BASIN vector high byte
+
+// RS232 buffer pointers (set by KERNAL OPEN)
+.const RIBUF_LO = $F7    // receive buffer pointer, low byte
+.const RIBUF_HI = $F8    // receive buffer pointer, high byte
+.const ROBUF_LO = $F9    // transmit buffer pointer, low byte
+.const ROBUF_HI = $FA    // transmit buffer pointer, high byte
+.const RIDBE    = $029B  // receive buffer write index (NMI sets)
+.const RIDBS    = $029C  // receive buffer read index (we set)
+.const RODBE    = $029D  // transmit buffer write index (we set)
+.const RODBS    = $029E  // transmit buffer read index (NMI sets)
+
 .const KBUF         = $0277  // keyboard buffer (10 bytes)
 .const KBUF_LEN     = $C6    // number of chars in keyboard buffer
 .const LASTKEY      = $CB    // matrix code of last key pressed ($40 = none)
