@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" width="50%" alt="Claw64">
+  <img src="logo-01e680f.png" width="50%" alt="Claw64">
 </p>
 
 # Claw64
