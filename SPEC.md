@@ -133,15 +133,26 @@ LLM API, and the C64 serial link.
 
 #### Chat platform
 
-The chat platform is pluggable. The bridge abstracts it behind a simple
+The chat platform is pluggable. The bridge abstracts it behind a Go
 interface:
 
-```
-recv_message() -> (user, text)
-send_message(user, text)
+```go
+type Channel interface {
+    Name() string
+    Start(ctx context.Context, handler MessageHandler) error
+    Send(ctx context.Context, user string, text string) error
+    Stop() error
+}
 ```
 
-The first implementation is author's choice (Discord or Telegram).
+Three channel implementations:
+
+- **Slack** via slagent library (`github.com/sttts/slagent`). Reuses
+  slagent's access control from the `access` package.
+- **WhatsApp** via whatsmeow (`go.mau.fi/whatsmeow`). Pure Go,
+  multi-device API.
+- **Signal** via signal-cli subprocess (JSON-RPC). Requires a Java
+  runtime on the bridge host.
 
 #### LLM integration
 
