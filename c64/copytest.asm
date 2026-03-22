@@ -17,11 +17,6 @@ install:
 
         sei
 
-        // disable CIA#2 NMI
-        lda #$7F
-        sta $DD0D
-        lda $DD0D
-
         // ensure ROM is on
         lda #%00110111
         sta PROCPORT
@@ -88,6 +83,9 @@ wr_hi:  sta $E000,y          // write to RAM under ROM (self-modified)
         sta $0315
 
         // redirect NMI to safe RTI
+        // RS232 NMI handler may set $0001=$37 which breaks our RAM patch.
+        // With safe_rti, RS232 bit-bang NMI is disabled.
+        // VICE TCP RS232 doesn't need NMI anyway (it's emulated at host level).
         lda #<safe_rti
         sta $0318
         lda #>safe_rti
@@ -136,3 +134,5 @@ safe_rti:
         rti
 
 cur_page: .byte $E0
+
+#import "serial.asm"
