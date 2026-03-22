@@ -1,70 +1,90 @@
-// copytest — page-buffer copy approach
-// =====================================
-// Instead of toggling $0001 per byte, copy each page to a temp
-// buffer at $C200 (with ROM on), then write the buffer to $E000+
-// (with ROM off). Only 2 toggles per page instead of 512.
+// copytest — serial + KERNAL patch (no NMI disable)
+// ===================================================
+// The RS232 NMI handler must stay active. Disabling CIA#2 NMI
+// causes the NMI dispatcher at $FE54 to fall through to the
+// RESTORE key handler which does IOINIT → resets $0001 and all vectors.
 
 #import "defs.asm"
 
 *= AGENT_BASE
 
 .const PROCPORT = $01
-.const TMPBUF   = $C200      // 256-byte temp buffer
+.const TMPBUF   = $C200
 
 install:
-        lda #5               // green
+        // save original IRQ vector before anything changes it
+        lda $0314
+        sta old_irq
+        lda $0315
+        sta old_irq+1
+
+        // Step 1: open RS232 (normal ROM state, no hooks)
+        jsr serial_init
+
+        lda #5               // green = starting copy
         sta BORDER_COLOR
 
         sei
 
-        // ensure ROM is on
+        // DO NOT disable CIA#2 NMI — RS232 needs it!
+        // Instead, redirect $0318 to safe_rti to prevent
+        // the RS232 bit-bang handler from running during copy.
+        // This is safe because $FE43 (NMI entry) does:
+        //   SEI / JMP ($0318) → safe_rti → RTI
+        // The CIA#2 NMI source remains enabled, so $DD0D bit 7
+        // stays set, and the $FE54 BMI check takes the RS232 path
+        // (not the RESTORE/warm-start path).
+        // But since we redirect $0318, the actual RS232 handler
+        // never runs — the NMI just returns immediately.
+        lda $0318
+        sta save_nmi
+        lda $0319
+        sta save_nmi+1
+        lda #<safe_nmi
+        sta $0318
+        lda #>safe_nmi
+        sta $0319
+
+        // ROM on
         lda #%00110111
         sta PROCPORT
 
-        // copy pages $E0-$FF
+        // Step 2: copy KERNAL ROM to RAM
         lda #$E0
         sta cur_page
 
 copy_next_page:
-        // --- step 1: copy ROM page to temp buffer (ROM on) ---
         lda cur_page
-        sta rd_hi+2          // set high byte of ROM read address
+        sta rd_hi+2
         ldy #0
 rd_loop:
-rd_hi:  lda $E000,y          // read from ROM (self-modified high byte)
-        sta TMPBUF,y         // write to temp buffer at $C200
+rd_hi:  lda $E000,y
+        sta TMPBUF,y
         iny
         bne rd_loop
 
-        // --- step 2: write temp buffer to RAM (ROM off) ---
         lda cur_page
-        sta wr_hi+2          // set high byte of RAM write address
-
-        lda #%00110101       // ROM off
+        sta wr_hi+2
+        lda #%00110101
         sta PROCPORT
-
         ldy #0
 wr_loop:
-        lda TMPBUF,y         // read from temp buffer
-wr_hi:  sta $E000,y          // write to RAM under ROM (self-modified)
+        lda TMPBUF,y
+wr_hi:  sta $E000,y
         iny
         bne wr_loop
-
-        lda #%00110111       // ROM back on
+        lda #%00110111
         sta PROCPORT
 
-        // next page
         inc cur_page
         lda cur_page
-        bne copy_next_page   // loop until wraps $FF → $00
+        bne copy_next_page
 
-        // --- copy done ---
-
-        // switch to RAM permanently
+        // Step 3: switch to RAM, patch, hook
         lda #%00110101
         sta PROCPORT
 
-        // patch keyboard loop: $E5D4 BEQ → JMP spoll
+        // patch keyboard loop
         lda #$4C
         sta $E5D4
         lda #<spoll
@@ -72,23 +92,16 @@ wr_hi:  sta $E000,y          // write to RAM under ROM (self-modified)
         lda #>spoll
         sta $E5D6
 
-        // hook IRQ vector at $0314 to force $0001=$35 after KERNAL IRQ
-        lda $0314
-        sta old_irq
-        lda $0315
-        sta old_irq+1
+        // install IRQ hook
         lda #<irq_hook
         sta $0314
         lda #>irq_hook
         sta $0315
 
-        // redirect NMI to safe RTI
-        // RS232 NMI handler may set $0001=$37 which breaks our RAM patch.
-        // With safe_rti, RS232 bit-bang NMI is disabled.
-        // VICE TCP RS232 doesn't need NMI anyway (it's emulated at host level).
-        lda #<safe_rti
+        // restore NMI vector (let RS232 handler run from RAM now)
+        lda save_nmi
         sta $0318
-        lda #>safe_rti
+        lda save_nmi+1
         sta $0319
 
         cli
@@ -99,40 +112,24 @@ wr_hi:  sta $E000,y          // write to RAM under ROM (self-modified)
         rts
 
 // keyboard loop patch
-spoll:  inc BORDER_COLOR     // visible proof
+spoll:
         lda $C6
         bne skey
         jmp $E5CD
 skey:   sei
         jmp $E5D7
 
-// IRQ hook: called via $0314 instead of $EA31.
-// The $FF48 entry code already pushed A/X/Y.
-// We call the original KERNAL IRQ, which does its work and ends
-// with PLA/TAY/PLA/TAX/PLA/RTI at $EA81. But we can't run code
-// after that RTI.
-//
-// Instead: the KERNAL IRQ at $EA31 is called via JMP ($0314).
-// We ARE $0314. We need to do the IRQ work, then set $0001=$35.
-//
-// Approach: set $0001=$37 (so KERNAL IRQ runs from ROM — it expects ROM),
-// call the original IRQ, then after it returns... wait, it does RTI, not RTS.
-//
-// Different approach: just set $0001=$35 HERE, then JMP to old_irq.
-// The KERNAL IRQ runs from RAM (our copy). At the end it does RTI.
-// If nothing in the KERNAL IRQ changes $0001, it stays $35.
-// We already proved the KERNAL IRQ doesn't touch bits 0-2.
+// IRQ hook: force KERNAL RAM
 irq_hook:
-        lda #%00110101       // force RAM
+        lda #%00110101
         sta $01
-        inc BORDER_COLOR     // visible proof IRQ hook fires
-        jmp (old_irq)        // run KERNAL IRQ from RAM copy
+        inc BORDER_COLOR
+        jmp (old_irq)
 
-old_irq: .word $EA31
+old_irq:   .word $EA31
+save_nmi:  .word 0
+cur_page:  .byte $E0
 
-safe_rti:
-        rti
-
-cur_page: .byte $E0
+safe_nmi:  rti
 
 #import "serial.asm"
