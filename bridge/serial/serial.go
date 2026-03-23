@@ -80,6 +80,14 @@ func (l *Link) Send(f Frame) error {
 	return nil
 }
 
+// SendRaw writes raw bytes to the serial connection.
+func (l *Link) SendRaw(data []byte) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, err := l.conn.Write(data)
+	return err
+}
+
 // Recv reads one frame from the C64. Skips echo'd and corrupted frames.
 // Only returns RESULT, ERROR, or HEARTBEAT frames.
 func (l *Link) Recv() (Frame, error) {
@@ -95,6 +103,19 @@ func (l *Link) Recv() (Frame, error) {
 		}
 		return f, nil
 	}
+}
+
+// DrainRead reads and discards all pending data with a timeout.
+func (l *Link) DrainRead(timeout time.Duration) {
+	l.conn.SetReadDeadline(time.Now().Add(timeout))
+	buf := make([]byte, 1024)
+	for {
+		_, err := l.conn.Read(buf)
+		if err != nil {
+			break
+		}
+	}
+	l.conn.SetReadDeadline(time.Time{})
 }
 
 // Close shuts down the serial link.

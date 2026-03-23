@@ -24,27 +24,21 @@ func main() {
 	}
 	defer link.Close()
 
-	// read frames in background
-	go func() {
-		for {
-			f, err := link.Recv()
-			if err != nil {
-				log.Printf("recv error: %v", err)
-				return
-			}
-			log.Printf("recv %s [%d bytes]: %q", serial.TypeName(f.Type), len(f.Payload), string(f.Payload))
-		}
-	}()
-
-	// wait for agent to initialize, then send test EXEC frames
+	// wait for agent to initialize
 	time.Sleep(15 * time.Second)
 
-	// send dummy bytes to absorb first-byte corruption
-	// Raw bytes, not a frame — the C64 parser ignores non-SYNC bytes
-	link.Send(serial.Frame{Type: 0x20, Payload: nil})
-	time.Sleep(500 * time.Millisecond)
+	// warm up: send SYNC bytes to activate the RS232 echo channel
+	warmup := make([]byte, 20)
+	for i := range warmup {
+		warmup[i] = serial.SyncByte
+	}
+	link.SendRaw(warmup)
+	time.Sleep(2 * time.Second)
 
-	// send EXEC: PRINT 42
+	// drain any echo'd warmup bytes by reading with a short deadline
+	link.DrainRead(1 * time.Second)
+
+	// send EXEC
 	cmd := "PRINT 42"
 	log.Printf("send EXEC: %q", cmd)
 	err = link.Send(serial.Frame{
@@ -55,7 +49,12 @@ func main() {
 		log.Fatalf("send: %v", err)
 	}
 
-	// wait for response
-	fmt.Println("waiting for RESULT...")
-	time.Sleep(30 * time.Second)
+	// NOW start reading for RESULT
+	log.Println("waiting for RESULT...")
+	f, err := link.Recv()
+	if err != nil {
+		log.Fatalf("recv error: %v", err)
+	}
+	log.Printf("RESULT [%d bytes]: %q", len(f.Payload), string(f.Payload))
+	fmt.Printf("C64 says: %s\n", string(f.Payload))
 }

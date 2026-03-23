@@ -88,6 +88,17 @@ func Decode(r io.Reader) (Frame, error) {
 	length := b[0]
 	chk ^= length
 
+	// sanity check: if type is not recognized OR length is suspiciously large,
+	// this is likely a corrupted frame — retry from SYNC hunt
+	if typ != FrameExec && typ != FrameResult && typ != FrameError && typ != FrameHeartbeat {
+		log.Printf("  bad type 0x%02X, resync", typ)
+		return Decode(r)
+	}
+	if length > 128 {
+		log.Printf("  bad length %d, resync", length)
+		return Decode(r)
+	}
+
 	// read payload
 	payload := make([]byte, length)
 	if length > 0 {
