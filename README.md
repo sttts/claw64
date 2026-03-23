@@ -84,7 +84,7 @@ Simple binary frames over RS232 at 2400 baud:
 └──────┴─────────┴────────┴─────────────┴──────┘
 ```
 
-Frame types: `EXEC`(0x01), `RESULT`(0x02), `ERROR`(0x03), `HEARTBEAT`(0x04).
+Frame types: `EXEC`(E), `RESULT`(R), `ERROR`(X), `HEARTBEAT`(H). SYNC=`0xFE`.
 
 ## Example
 
@@ -97,5 +97,21 @@ C64 agent:       reads screen → "52016" → sends back to LLM
 LLM:             "6502 * 8 = 52016"
 User sees:       "6502 * 8 = 52016"
 ```
+
+## Status
+
+| # | Phase | Status |
+|---|-------|--------|
+| 0 | Skeleton + Build System | done |
+| 1 | Serial I/O (C64 TSR) | done |
+| 2 | Frame Protocol (C64 + Go) | done |
+| 3 | Keystroke Injection | **in progress** |
+| 4 | Screen Scraping + READY. Detection | pending |
+| 5 | Bridge LLM Client | pending |
+| 6 | Bridge Orchestrator | pending |
+| 7a | Chat: Slack (slagent) | pending |
+| 7b | Chat: WhatsApp (whatsmeow) | pending |
+| 7c | Chat: Signal (signal-cli) | pending |
+| 8 | Robustness + Polish | pending |
 
 See [SPEC.md](SPEC.md) for the full specification.
