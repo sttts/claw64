@@ -27,10 +27,11 @@ func main() {
 	// wait for agent to initialize
 	time.Sleep(15 * time.Second)
 
-	// warm up: send SYNC bytes to activate the RS232 echo channel
+	// warm up: send non-SYNC, non-zero bytes to activate the echo channel
+	// (SYNC=$FE would corrupt the parser; $00 doesn't echo)
 	warmup := make([]byte, 20)
 	for i := range warmup {
-		warmup[i] = serial.SyncByte
+		warmup[i] = 0x55 // 'U' — harmless to parser (not SYNC)
 	}
 	link.SendRaw(warmup)
 	time.Sleep(2 * time.Second)

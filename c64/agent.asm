@@ -115,22 +115,21 @@ bl_send:
         lda send_flag
         beq bl_inject
 
-        // burst-send RESULT (no dots — echo provides channel keepalive)
-        // burst-send ALL RESULT bytes, then clear flag
-        lda #0
-        sta send_flag
+        // send ONE RESULT byte per iteration (one CHKOUT/CHROUT/CLRCHN)
+        ldx send_pos
+        lda send_buf,x
+        pha
         ldx #RS232_DEV
         jsr CHKOUT
-        ldy #0
-bl_bloop:
-        sty send_pos
-        lda send_buf,y
+        pla
         jsr CHROUT
-        ldy send_pos
-        iny
-        cpy send_total
-        bne bl_bloop
         jsr CLRCHN
+        inc send_pos
+        lda send_pos
+        cmp send_total
+        bne bl_inject
+        lda #0
+        sta send_flag
 
 bl_inject:
         // inject one keystroke
