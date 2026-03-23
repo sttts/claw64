@@ -39,8 +39,9 @@ func main() {
 	// wait for agent to initialize, then send test EXEC frames
 	time.Sleep(15 * time.Second)
 
-	// send a dummy byte to absorb first-byte corruption
-	link.Send(serial.Frame{Type: 0, Payload: nil})
+	// send dummy bytes to absorb first-byte corruption
+	// Raw bytes, not a frame — the C64 parser ignores non-SYNC bytes
+	link.Send(serial.Frame{Type: 0x20, Payload: nil})
 	time.Sleep(500 * time.Millisecond)
 
 	// send EXEC: PRINT 42
