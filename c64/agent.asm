@@ -17,7 +17,7 @@
 *= AGENT_BASE
 
 .const PROCPORT = $01
-.const TMPBUF   = $C200       // temp buffer for KERNAL copy
+.const TMPBUF   = $C500       // temp buffer for KERNAL copy (after code+data)
 
 // ---------------------------------------------------------
 // Entry point — SYS 49152
@@ -90,6 +90,14 @@ cp_wr:  sta $E000,y
 
         cli
 
+        // send handshake '!' to verify TX works
+        ldx #RS232_DEV
+        jsr CHKOUT
+        lda #$21             // '!'
+        jsr CHROUT
+        jsr CLRCHN
+
+
         // fall through to main loop
 
 // ---------------------------------------------------------
@@ -107,7 +115,15 @@ main_loop:
         // feed byte to frame parser
         cmp #0
         beq ml_check_kb      // no data
-        inc BORDER_COLOR     // flash on every received byte
+
+        pha
+        sta $0780,x          // received byte as screen code
+        inx
+        lda #$20             // space
+        sta $0780,x
+        inx
+        pla
+
         jsr frame_rx_byte    // process received byte
 
 ml_check_kb:
@@ -151,11 +167,11 @@ frame_rx_byte:
         sta zp_parse_state
         rts
 
-// hunt for SYNC byte ($FF)
+// hunt for SYNC byte
 fr_hunt:
         cmp #SYNC_BYTE
-        bne fr_hunt_done     // not sync, ignore
-        lda #STATE_SUB       // got sync, next state
+        bne fr_hunt_done
+        lda #STATE_SUB
         sta zp_parse_state
 fr_hunt_done:
         rts
@@ -204,9 +220,8 @@ fr_pay_done:
 
 // verify checksum
 fr_checksum:
-        cmp zp_checksum      // compare received CHK with computed XOR
+        cmp zp_checksum
         bne fr_chk_bad
-        // checksum OK — dispatch frame
         jsr frame_dispatch
 fr_chk_bad:
         // reset parser
@@ -227,6 +242,7 @@ frame_dispatch:
 // handle EXEC frame: echo payload back as RESULT for now
 // (later: inject into keyboard buffer)
 fd_exec:
+
         // send RESULT frame with same payload
         lda #FRAME_RESULT
         sta tx_subtype
@@ -288,6 +304,16 @@ fs_chk:
 // ---------------------------------------------------------
 // Data
 // ---------------------------------------------------------
+
+// parser state variables (in agent data area, after code)
+zp_parse_state: .byte 0
+zp_frame_sub:   .byte 0
+zp_frame_len:   .byte 0
+zp_pay_remain:  .byte 0
+zp_checksum:    .byte 0
+zp_rx_index:    .byte 0
+
+// frame send state
 tx_subtype:  .byte 0
 tx_length:   .byte 0
 tx_checksum: .byte 0

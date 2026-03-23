@@ -4,8 +4,8 @@
 
 // Agent memory layout
 .const AGENT_BASE    = $C000  // agent code starts here
-.const AGENT_RXBUF   = $C100  // 256-byte receive buffer
-.const AGENT_TXBUF   = $C200  // 256-byte transmit / inject buffer
+.const AGENT_RXBUF   = $C300  // 256-byte receive buffer (after code)
+.const AGENT_TXBUF   = $C400  // 256-byte transmit / inject buffer
 
 // KERNAL jump table
 .const SETLFS  = $FFBA
@@ -55,7 +55,7 @@
 .const NO_KEY       = $40    // LASTKEY value when no key is pressed
 
 // Frame protocol
-.const SYNC_BYTE    = $FF
+.const SYNC_BYTE    = $FE    // $FF gets corrupted to $FE by RS232
 .const FRAME_EXEC   = $01    // bridge -> c64: execute BASIC command
 .const FRAME_RESULT = $02    // c64 -> bridge: screen capture
 .const FRAME_ERROR  = $03    // c64 -> bridge: timeout/failure
@@ -86,14 +86,9 @@
 .const SC_Y = $19
 .const SC_DOT = $2E
 
-// Zero-page allocations (upper range to avoid conflicts)
-// Frame parser
-.const zp_parse_state = $F0  // parser state machine
-.const zp_frame_sub   = $F1  // received frame subtype
-.const zp_frame_len   = $F2  // received frame payload length
-.const zp_pay_remain  = $F3  // payload bytes remaining
-.const zp_checksum    = $F4  // running XOR checksum
-.const zp_rx_index    = $F5  // index into receive buffer
+// Parser state — defined as labels in agent.asm data section.
+// Using .var to declare names that will be resolved by label addresses.
+// (Labels in agent.asm provide the actual addresses.)
 
 // Injection
 .const zp_inj_pos     = $F6  // current inject position

@@ -17,7 +17,9 @@ import (
 )
 
 // Sync byte marks the start of a frame.
-const SyncByte = 0xFF
+// SyncByte marks the start of a frame. 0xFE because 0xFF gets
+// corrupted by the C64 KERNAL RS232 (bit 0 flipped).
+const SyncByte = 0xFE
 
 // Frame types.
 const (
