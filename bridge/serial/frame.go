@@ -73,13 +73,22 @@ func Decode(r io.Reader) (Frame, error) {
 		}
 	}
 
-	// read subtype
-	if _, err := io.ReadFull(r, b[:]); err != nil {
-		return Frame{}, fmt.Errorf("subtype: %w", err)
+	// read subtype — skip keepalive $55 bytes that may be interleaved
+	for {
+		if _, err := io.ReadFull(r, b[:]); err != nil {
+			return Frame{}, fmt.Errorf("subtype: %w", err)
+		}
+		if b[0] == SyncByte {
+			continue // another SYNC — restart
+		}
+		if b[0] == 0x55 {
+			continue // keepalive — skip
+		}
+		break
 	}
 	typ := b[0]
 	chk := typ
-	log.Printf("  decode: sync found, type=0x%02X (%s)", typ, TypeName(typ))
+	log.Printf("  decode: type=0x%02X (%s)", typ, TypeName(typ))
 
 	// read length
 	if _, err := io.ReadFull(r, b[:]); err != nil {

@@ -36,8 +36,8 @@ func main() {
 	link.SendRaw(warmup)
 	time.Sleep(2 * time.Second)
 
-	// drain any echo'd warmup bytes by reading with a short deadline
-	link.DrainRead(1 * time.Second)
+	// drain echo'd warmup bytes BEFORE sending EXEC
+	link.DrainRead(500 * time.Millisecond)
 
 	// send EXEC
 	cmd := "PRINT 42"
@@ -50,7 +50,9 @@ func main() {
 		log.Fatalf("send: %v", err)
 	}
 
-	// NOW start reading for RESULT
+	// wait for echo + RESULT to arrive
+	time.Sleep(5 * time.Second)
+
 	log.Println("waiting for RESULT...")
 	f, err := link.Recv()
 	if err != nil {
