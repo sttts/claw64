@@ -133,7 +133,6 @@ bl_inject:
         beq bl_inj_do
         jmp bl_kb              // keyboard buffer not empty, wait
 bl_inj_do:
-
         ldx inj_pos
         cpx inj_len
         beq bl_inj_return      // all chars injected → send RETURN
@@ -182,15 +181,7 @@ bl_wait:
         // screen codes: R=$12 E=$05 A=$01 D=$04 Y=$19 .=$2E
         ldx #24                // start at line 24 (bottom)
 bl_scan:
-        // compute screen address: $0400 + X*40
-        txa
-        asl                    // *2
-        asl                    // *4
-        asl                    // *8
-        adc #0                 // (carry from asl)
-        // actually, let's use a lookup table for line addresses
-        // simpler: just check lines 19-24 at column 0
-        lda screen_lo,x
+        lda screen_lo,x       // get screen line address from lookup table
         sta $FB
         lda screen_hi,x
         sta $FC
@@ -227,8 +218,7 @@ bl_scan:
 
 bl_scan_next:
         dex
-        cpx #18                // check lines 19-24 only
-        bne bl_scan
+        bpl bl_scan            // check ALL lines 0-24
 
         // not found — check timeout
         lda ready_timer
@@ -451,8 +441,7 @@ frame_dispatch:
         lda #AG_INJECTING
         sta agent_state
 
-        // echo RESULT immediately (payload = command, before execution)
-        // bridge uses this to confirm the command was received
+        // build and burst-send echo RESULT
         lda #SYNC_BYTE
         sta send_buf+0
         lda #FRAME_RESULT
@@ -477,8 +466,6 @@ fd_end: lda frame_chk
         clc
         adc #4
         sta send_total
-
-        // burst-send RESULT
         ldx #RS232_DEV
         jsr CHKOUT
         ldy #0
@@ -491,7 +478,6 @@ fd_send:
         cpy send_total
         bne fd_send
         jsr CLRCHN
-
         inc BORDER_COLOR
 fd_done:
         rts
