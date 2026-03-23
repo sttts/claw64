@@ -54,14 +54,23 @@ func main() {
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	// wait for echo + RESULT to arrive
-	time.Sleep(10 * time.Second)
+	// drain echo'd EXEC + first RESULT (echo confirmation)
+	// The echo and first RESULT arrive within ~2 seconds.
+	// The screen scrape RESULT arrives after BASIC executes (~3-5 seconds).
+	time.Sleep(3 * time.Second)
+	link.DrainRead(1 * time.Second)
 
-	log.Println("waiting for RESULT...")
+	log.Println("waiting for screen output...")
+
+	// read the screen scrape RESULT (or ERROR on timeout)
 	f, err := link.Recv()
 	if err != nil {
 		log.Fatalf("recv error: %v", err)
 	}
-	log.Printf("RESULT [%d bytes]: %q", len(f.Payload), string(f.Payload))
-	fmt.Printf("C64 says: %s\n", string(f.Payload))
+	if f.Type == serial.FrameError {
+		fmt.Println("C64: command timed out")
+	} else {
+		log.Printf("screen [%d bytes]: %q", len(f.Payload), string(f.Payload))
+		fmt.Printf("C64> %s\n", string(f.Payload))
+	}
 }
