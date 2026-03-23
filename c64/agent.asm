@@ -86,7 +86,7 @@ cp_wr:  sta $E000,y
 
 // === MAIN LOOP ===
 bloop:
-        // 1. RECEIVE one byte
+        // receive one byte
         ldx #RS232_DEV
         jsr CHKIN
         jsr GETIN
@@ -98,14 +98,18 @@ bloop:
         jsr frame_rx_byte
 
 bl_send:
-        // 2. SEND one byte (after receive, like the working echo)
+        // send one byte: RESULT byte if flagged, else $00 keepalive
         lda send_flag
-        beq bl_inject
+        beq bl_keepalive
 
-        // load byte from send_buf, push it, then CHKOUT/PLA/CHROUT
-        // (mimicking the echo pattern which works)
         ldx send_pos
         lda send_buf,x
+        jmp bl_do_send
+
+bl_keepalive:
+        lda #$2E             // keepalive '.' (bridge can filter)
+
+bl_do_send:
         pha
         ldx #RS232_DEV
         jsr CHKOUT
@@ -113,6 +117,9 @@ bl_send:
         jsr CHROUT
         jsr CLRCHN
 
+        // advance send pos if we were sending a RESULT
+        lda send_flag
+        beq bl_inject
         inc send_pos
         lda send_pos
         cmp send_total
