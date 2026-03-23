@@ -11,6 +11,7 @@
 
 .const PROCPORT = $01
 .const TMPBUF   = $C500
+.const send_buf = $C400       // fixed address for send buffer
 
 install:
         lda #5
@@ -97,49 +98,36 @@ bloop:
         pla
         cmp #0
         beq bl_send
-
-        // ECHO the byte (keeps RS232 channel active for GETIN)
-        pha
-        ldx #RS232_DEV
-        jsr CHKOUT
-        pla
-        pha
-        jsr CHROUT
-        jsr CLRCHN
-        pla
-
-        // ALSO parse it
-        jsr frame_rx_byte
+        jsr frame_rx_byte    // parse received byte (no echo)
 
 bl_send:
-        // send one byte: RESULT byte if flagged, else $00 keepalive
         lda send_flag
-        beq bl_keepalive
+        bne bl_burst
 
-        ldx send_pos
-        lda send_buf,x
-        jmp bl_do_send
-
-bl_keepalive:
-        lda #$2E             // keepalive '.' (bridge can filter)
-
-bl_do_send:
-        pha
+        // keepalive: one dot (no RESULT pending)
         ldx #RS232_DEV
         jsr CHKOUT
-        pla
+        lda #$2E
         jsr CHROUT
         jsr CLRCHN
+        jmp bl_inject
 
-        // advance send pos if we were sending a RESULT
-        lda send_flag
-        beq bl_inject
-        inc send_pos
-        lda send_pos
-        cmp send_total
-        bne bl_inject
+bl_burst:
+        // burst-send ALL RESULT bytes, then clear flag
         lda #0
         sta send_flag
+        ldx #RS232_DEV
+        jsr CHKOUT
+        ldy #0
+bl_bloop:
+        sty send_pos
+        lda send_buf,y
+        jsr CHROUT
+        ldy send_pos
+        iny
+        cpy send_total
+        bne bl_bloop
+        jsr CLRCHN
 
 bl_inject:
         // inject one keystroke
@@ -315,6 +303,6 @@ send_flag:   .byte 0
 send_pos:    .byte 0
 send_total:  .byte 0
 cur_page:    .byte $E0
-send_buf:    .fill 64, 0
+// send_buf at $C400 (fixed, defined at top)
 
 #import "serial.asm"

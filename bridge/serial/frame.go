@@ -13,6 +13,7 @@ package serial
 
 import (
 	"fmt"
+	"log"
 	"io"
 )
 
@@ -102,7 +103,10 @@ func Decode(r io.Reader) (Frame, error) {
 		return Frame{}, fmt.Errorf("checksum: %w", err)
 	}
 	if b[0] != chk {
-		return Frame{}, fmt.Errorf("checksum mismatch: got 0x%02X, want 0x%02X", b[0], chk)
+		// checksum mismatch — might be echo/keepalive byte mixed in
+		// retry by hunting for next SYNC
+		log.Printf("checksum fail: got 0x%02X want 0x%02X, retrying", b[0], chk)
+		return Decode(r)
 	}
 
 	return Frame{Type: typ, Payload: payload}, nil
