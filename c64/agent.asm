@@ -83,6 +83,8 @@ cp_wr:  sta $E000,y
         jsr CHROUT
         jsr CLRCHN
 
+        // (send_buf loaded by fd_exec when EXEC frame arrives)
+
 // ---------------------------------------------------------
 // Main loop: serial poll → frame parse → inject → keyboard
 // ---------------------------------------------------------
@@ -101,11 +103,10 @@ main_loop:
         jsr frame_rx_byte
 
 ml_send:
-        // 2. send one byte of pending RESULT per iteration
+        // send one byte of pending RESULT per iteration
         lda send_flag
         beq ml_inject
 
-        // send one byte via CHKOUT/CHROUT/CLRCHN
         ldx #RS232_DEV
         jsr CHKOUT
         ldx send_pos
@@ -117,7 +118,6 @@ ml_send:
         lda send_pos
         cmp send_total
         bne ml_inject
-        // all bytes sent
         lda #0
         sta send_flag
 
@@ -265,38 +265,37 @@ fd_exec:
         lda #AG_INJECTING
         sta agent_state
 
-        // build RESULT frame in send_buf
-        ldx #0
+        // build RESULT frame in send_buf using absolute addresses
         lda #SYNC_BYTE
-        sta send_buf,x
-        inx
+        sta send_buf+0
         lda #FRAME_RESULT
-        sta send_buf,x
-        sta send_chk         // init checksum
-        inx
+        sta send_buf+1
         lda frame_len
-        sta send_buf,x
-        eor send_chk
+        sta send_buf+2
+
+        // compute checksum and copy payload
+        lda #FRAME_RESULT
+        eor frame_len
         sta send_chk
-        inx
-        // copy payload
-        ldy #0
+        ldx #0
 fd_cpay:
-        cpy frame_len
+        cpx frame_len
         beq fd_cend
-        lda AGENT_RXBUF,y
-        sta send_buf,x
+        lda AGENT_RXBUF,x
+        sta send_buf+3,x
         eor send_chk
         sta send_chk
         inx
-        iny
         jmp fd_cpay
 fd_cend:
-        // checksum
         lda send_chk
-        sta send_buf,x
+        sta send_buf+3,x      // checksum after payload
         inx
-        stx send_total
+        // total = 3 (header) + payload + 1 (chk)
+        txa
+        clc
+        adc #3
+        sta send_total
 
         // activate send
         lda #0
