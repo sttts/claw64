@@ -100,18 +100,18 @@ User sees:       "6502 * 8 = 52016"
 
 ## Status
 
-| # | Phase | Status |
-|---|-------|--------|
-| 0 | Skeleton + Build System | done |
-| 1 | Serial I/O (C64 TSR) | done |
-| 2 | Frame Protocol (C64 + Go) | done |
-| 3 | Keystroke Injection | **in progress** |
-| 4 | Screen Scraping + READY. Detection | pending |
-| 5 | Bridge LLM Client | pending |
-| 6 | Bridge Orchestrator | pending |
-| 7a | Chat: Slack (slagent) | pending |
-| 7b | Chat: WhatsApp (whatsmeow) | pending |
-| 7c | Chat: Signal (signal-cli) | pending |
-| 8 | Robustness + Polish | pending |
+| Phase | Status |
+|-------|--------|
+| Skeleton + Build System | :white_check_mark: |
+| Serial I/O (C64 TSR) | :white_check_mark: |
+| Frame Protocol (C64 + Go) | :white_check_mark: |
+| Keystroke Injection | :construction: |
+| Screen Scraping + READY. Detection | |
+| Bridge LLM Client | |
+| Bridge Orchestrator | |
+| Chat: Slack (slagent) | |
+| Chat: WhatsApp (whatsmeow) | |
+| Chat: Signal (signal-cli) | |
+| Robustness + Polish | |
 
 See [SPEC.md](SPEC.md) for the full specification.
