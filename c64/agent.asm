@@ -96,34 +96,42 @@ bloop:
         pha
         jsr CLRCHN
         pla
+        // save received byte
+        sta rx_byte
+
+        // parse nonzero bytes
         cmp #0
-        beq bl_send
+        beq bl_tx
+        jsr frame_rx_byte
 
-        // echo byte back (keeps VICE RS232 channel active for GETIN)
-        pha
-        ldx #RS232_DEV
-        jsr CHKOUT
-        pla
-        pha
-        jsr CHROUT
-        jsr CLRCHN
-        pla
-
-        jsr frame_rx_byte    // parse received byte
-
-bl_send:
+bl_tx:
+        // TX: send one byte via echo mechanism (CHKOUT/CHROUT/CLRCHN)
+        // Priority: RESULT byte > received byte echo > keepalive $55
         lda send_flag
-        beq bl_inject
+        beq bl_echo
 
-        // send ONE RESULT byte per iteration (one CHKOUT/CHROUT/CLRCHN)
+        // send RESULT byte from send_buf
         ldx send_pos
         lda send_buf,x
+        jmp bl_do_tx
+
+bl_echo:
+        // echo received byte (if nonzero) or send keepalive
+        lda rx_byte
+        bne bl_do_tx
+        lda #$55             // keepalive
+
+bl_do_tx:
         pha
         ldx #RS232_DEV
         jsr CHKOUT
         pla
         jsr CHROUT
         jsr CLRCHN
+
+        // advance RESULT send pos if applicable
+        lda send_flag
+        beq bl_inject
         inc send_pos
         lda send_pos
         cmp send_total
@@ -293,6 +301,7 @@ fd_done:
         rts
 
 // === DATA ===
+rx_byte:     .byte 0
 parse_state: .byte 0
 frame_sub:   .byte 0
 frame_len:   .byte 0
