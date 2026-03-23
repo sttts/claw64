@@ -42,12 +42,16 @@ func main() {
 	// send EXEC
 	cmd := "PRINT 42"
 	log.Printf("send EXEC: %q", cmd)
-	err = link.Send(serial.Frame{
+	// send EXEC frame byte by byte with delays (matches Python test pattern)
+	frame := serial.Encode(serial.Frame{
 		Type:    serial.FrameExec,
 		Payload: []byte(cmd),
 	})
-	if err != nil {
-		log.Fatalf("send: %v", err)
+	for _, b := range frame {
+		if err := link.SendRaw([]byte{b}); err != nil {
+			log.Fatalf("send: %v", err)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	// wait for echo + RESULT to arrive

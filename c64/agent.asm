@@ -91,10 +91,14 @@ bl_tx:
         lda send_flag
         bne bl_send_result
 
-        // echo or keepalive
+        // echo received byte if nonzero
         lda rx_byte
         bne bl_send_it
-        lda #$55
+
+        // no data — only send keepalive every 256th iteration
+        inc idle_count
+        bne bloop            // skip TX most iterations
+        lda #$55             // keepalive
 
 bl_send_it:
         // send one byte via echo path
@@ -227,6 +231,7 @@ fd_done:
 
 // === DATA ===
 rx_byte:     .byte 0
+idle_count:  .byte 0
 parse_state: .byte 0
 frame_sub:   .byte 0
 frame_len:   .byte 0

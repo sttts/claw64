@@ -57,44 +57,56 @@ func Encode(f Frame) []byte {
 	return buf
 }
 
-// Decode reads one frame from r. It hunts for the SYNC byte,
-// then reads subtype, length, payload, and checksum.
-// Returns an error on EOF or checksum mismatch.
-func Decode(r io.Reader) (Frame, error) {
+// readFiltered reads one byte from r, skipping keepalive ($55) bytes.
+// Also treats $FE as "resync" (returns it for SYNC hunting).
+func readFiltered(r io.Reader) (byte, error) {
 	var b [1]byte
-
-	// hunt for SYNC byte
 	for {
 		if _, err := io.ReadFull(r, b[:]); err != nil {
+			return 0, err
+		}
+		if b[0] != 0x55 { // skip keepalive
+			return b[0], nil
+		}
+	}
+}
+
+// Decode reads one frame from r. Hunts for SYNC, then reads
+// type/length/payload/checksum, skipping interleaved $55 keepalive bytes.
+func Decode(r io.Reader) (Frame, error) {
+	// hunt for SYNC byte
+	for {
+		b, err := readFiltered(r)
+		if err != nil {
 			return Frame{}, fmt.Errorf("sync: %w", err)
 		}
-		if b[0] == SyncByte {
+		if b == SyncByte {
 			break
 		}
 	}
 
-	// read subtype — skip keepalive $55 bytes that may be interleaved
+	// read subtype (skip more SYNCs too)
+	var typ byte
 	for {
-		if _, err := io.ReadFull(r, b[:]); err != nil {
+		b, err := readFiltered(r)
+		if err != nil {
 			return Frame{}, fmt.Errorf("subtype: %w", err)
 		}
-		if b[0] == SyncByte {
-			continue // another SYNC — restart
+		if b == SyncByte {
+			continue // another SYNC
 		}
-		if b[0] == 0x55 {
-			continue // keepalive — skip
-		}
+		typ = b
 		break
 	}
-	typ := b[0]
 	chk := typ
 	log.Printf("  decode: type=0x%02X (%s)", typ, TypeName(typ))
 
 	// read length
-	if _, err := io.ReadFull(r, b[:]); err != nil {
+	b, err := readFiltered(r)
+	if err != nil {
 		return Frame{}, fmt.Errorf("length: %w", err)
 	}
-	length := b[0]
+	length := b
 	chk ^= length
 
 	// sanity check: if type is not recognized OR length is suspiciously large,
@@ -108,25 +120,24 @@ func Decode(r io.Reader) (Frame, error) {
 		return Decode(r)
 	}
 
-	// read payload
+	// read payload (skip $55 keepalive between bytes)
 	payload := make([]byte, length)
-	if length > 0 {
-		if _, err := io.ReadFull(r, payload); err != nil {
-			return Frame{}, fmt.Errorf("payload: %w", err)
+	for i := byte(0); i < length; i++ {
+		pb, err := readFiltered(r)
+		if err != nil {
+			return Frame{}, fmt.Errorf("payload[%d]: %w", i, err)
 		}
-		for _, p := range payload {
-			chk ^= p
-		}
+		payload[i] = pb
+		chk ^= pb
 	}
 
 	// read and verify checksum
-	if _, err := io.ReadFull(r, b[:]); err != nil {
+	cb, err := readFiltered(r)
+	if err != nil {
 		return Frame{}, fmt.Errorf("checksum: %w", err)
 	}
-	if b[0] != chk {
-		// checksum mismatch — might be echo/keepalive byte mixed in
-		// retry by hunting for next SYNC
-		log.Printf("checksum fail: got 0x%02X want 0x%02X, retrying", b[0], chk)
+	if cb != chk {
+		log.Printf("  checksum fail: got 0x%02X want 0x%02X, retrying", cb, chk)
 		return Decode(r)
 	}
 
