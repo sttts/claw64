@@ -21,12 +21,12 @@ import (
 // corrupted by the C64 KERNAL RS232 (bit 0 flipped).
 const SyncByte = 0xFE
 
-// Frame types.
+// Frame types — printable ASCII to avoid PETSCII control char issues.
 const (
-	FrameExec      byte = 0x01 // bridge → C64: execute BASIC command
-	FrameResult    byte = 0x02 // C64 → bridge: screen capture result
-	FrameError     byte = 0x03 // C64 → bridge: timeout/failure
-	FrameHeartbeat byte = 0x04 // C64 → bridge: agent is alive
+	FrameExec      byte = 0x45 // 'E' — bridge → C64: execute BASIC command
+	FrameResult    byte = 0x52 // 'R' — C64 → bridge: screen capture result
+	FrameError     byte = 0x58 // 'X' — C64 → bridge: timeout/failure
+	FrameHeartbeat byte = 0x48 // 'H' — C64 → bridge: agent is alive
 )
 
 // Frame is a single protocol frame.

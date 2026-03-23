@@ -1,40 +1,25 @@
-// Claw64 — Main agent: frame protocol + keystroke injection
-// ==========================================================
-//
-// LOAD "AGENT",8,1 then SYS 49152
-//
-// Architecture:
-//   1. Copy KERNAL ROM to RAM, patch $E5D1 for re-entry
-//   2. serial_init from ROM
-//   3. Blocking serial+keyboard loop from RAM
-//   4. Parse incoming frames, dispatch EXEC
-//   5. EXEC: inject command into BASIC keyboard buffer
-//   6. After injection: wait for READY., scrape screen, send RESULT
+// Claw64 — agent with frame protocol + keystroke injection
+// =========================================================
 
 #import "defs.asm"
 
 *= AGENT_BASE
 
 .const PROCPORT = $01
-.const TMPBUF   = $C500       // temp buffer for KERNAL copy
+.const TMPBUF   = $C500
 
 // Agent states
-.const AG_IDLE      = 0       // waiting for EXEC frame
-.const AG_INJECTING = 1       // drip-feeding keystrokes
-.const AG_WAITING   = 2       // waiting for READY. (future)
+.const AG_IDLE      = 0
+.const AG_INJECTING = 1
 
-// ---------------------------------------------------------
-// Entry point — SYS 49152
-// ---------------------------------------------------------
 install:
         lda #5
         sta BORDER_COLOR
-
         sei
-
-        // copy KERNAL ROM to RAM
         lda #%00110111
         sta PROCPORT
+
+        // copy KERNAL to RAM
         lda #$E0
         sta cur_page
 cp:     lda cur_page
@@ -60,7 +45,7 @@ cp_wr:  sta $E000,y
         lda cur_page
         bne cp
 
-        // patch $E5D1: STA $0292 → JMP reenter
+        // patch $E5D1
         lda #%00110101
         sta PROCPORT
         lda #$4C
@@ -76,42 +61,33 @@ cp_wr:  sta $E000,y
         cli
         jsr serial_init
         sei
-
-        // switch to RAM permanently
         lda #%00110101
         sta PROCPORT
 
         // init state
-        lda #STATE_HUNT
-        sta parse_state
-        lda #AG_IDLE
-        sta agent_state
         lda #0
-        sta rx_index
-        sta frame_len
-        sta frame_chk
+        sta parse_state
+        sta agent_state
         sta inj_pos
         sta inj_len
+        sta send_flag
 
         lda #3
         sta BORDER_COLOR
-
         cli
 
-        // send handshake
+        // handshake
         ldx #RS232_DEV
         jsr CHKOUT
         lda #$21
         jsr CHROUT
         jsr CLRCHN
 
-        // fall through to main loop
-
 // ---------------------------------------------------------
-// Main loop — polls serial, injects keystrokes, checks keyboard
+// Main loop: serial poll → frame parse → inject → keyboard
 // ---------------------------------------------------------
 main_loop:
-        // step 1: poll serial for one byte
+        // 1. poll serial
         ldx #RS232_DEV
         jsr CHKIN
         jsr GETIN
@@ -119,132 +95,136 @@ main_loop:
         jsr CLRCHN
         pla
         cmp #0
-        beq ml_inject
+        beq ml_send
+
+        // got byte — feed to parser
         jsr frame_rx_byte
 
-        // DEBUG: send raw '.' every loop to test TX from main loop
+ml_send:
+        // 2. send one byte of pending RESULT per iteration
+        lda send_flag
+        beq ml_inject
+
+        // send one byte via CHKOUT/CHROUT/CLRCHN
         ldx #RS232_DEV
         jsr CHKOUT
-        lda #$2E             // '.'
+        ldx send_pos
+        lda send_buf,x
         jsr CHROUT
         jsr CLRCHN
 
-ml_send_result:
-        // step 1b: send pending RESULT if flag set
-        lda send_result_flag
-        beq ml_inject
+        inc send_pos
+        lda send_pos
+        cmp send_total
+        bne ml_inject
+        // all bytes sent
         lda #0
-        sta send_result_flag
-        lda #FRAME_RESULT
-        sta tx_subtype
-        lda result_len
-        sta tx_length
-        jsr frame_send
+        sta send_flag
 
 ml_inject:
-        // step 2: inject one keystroke if active
+        // 3. inject one keystroke
         lda agent_state
         cmp #AG_INJECTING
-        bne ml_check_kb
+        bne ml_kb
 
-        // check if keyboard buffer has room (max 10 chars, we inject 1 at a time)
         lda KBUF_LEN
-        bne ml_check_kb      // buffer not empty, wait for BASIC to consume
+        bne ml_kb            // buffer not empty, wait
 
-        // inject next character
         ldx inj_pos
         cpx inj_len
-        beq ml_inj_done      // all chars injected
+        beq ml_inj_return    // all chars done, send RETURN
 
-        lda AGENT_RXBUF,x    // get next char from received payload
-
-        // ASCII to PETSCII: lowercase → uppercase
-        cmp #$61             // 'a'
-        bcc ml_inj_nofold
-        cmp #$7B             // 'z'+1
-        bcs ml_inj_nofold
+        // inject next char (ASCII→PETSCII: lowercase→uppercase)
+        lda AGENT_RXBUF,x
+        cmp #$61
+        bcc ml_nofold
+        cmp #$7B
+        bcs ml_nofold
         sec
-        sbc #$20             // a→A, b→B, etc.
-ml_inj_nofold:
-
-        sta KBUF             // put in keyboard buffer position 0
+        sbc #$20
+ml_nofold:
+        sta KBUF
         lda #1
-        sta KBUF_LEN         // tell KERNAL there's 1 char
-        inc inj_pos          // advance to next char
-        jmp ml_check_kb
+        sta KBUF_LEN
+        inc inj_pos
+        jmp ml_kb
 
-ml_inj_done:
-        // all chars injected — append RETURN
+ml_inj_return:
+        // inject RETURN
         lda #$0D
         sta KBUF
         lda #1
         sta KBUF_LEN
-
-        // transition to IDLE
         lda #AG_IDLE
         sta agent_state
 
-ml_check_kb:
-        // skip keyboard for now — just loop serial
+ml_kb:
+        // 4. keyboard management
+        lda $C6
+        sta $CC
+        sta $0292
+        bne ml_key
         jmp main_loop
+ml_key:
+        // key pressed
+        sei
+        jmp $E5D7
 
-// re-entry from patched keyboard loop
 reenter:
         sta $0292
         jmp main_loop
 
 // ---------------------------------------------------------
-// Frame parser — state machine
+// Frame parser
 // ---------------------------------------------------------
 frame_rx_byte:
         ldx parse_state
-        cpx #STATE_HUNT
+        cpx #0
         beq fr_hunt
-        cpx #STATE_SUB
-        beq fr_subtype
-        cpx #STATE_LEN
-        beq fr_length
-        cpx #STATE_PAY
-        beq fr_payload
-        cpx #STATE_CHK
-        beq fr_checksum
-        // unknown — reset
-        lda #STATE_HUNT
+        cpx #1
+        beq fr_sub
+        cpx #2
+        beq fr_len
+        cpx #3
+        beq fr_pay
+        cpx #4
+        beq fr_chk
+        lda #0
         sta parse_state
         rts
 
 fr_hunt:
         cmp #SYNC_BYTE
-        bne fr_hunt_done
-        lda #STATE_SUB
+        bne fr_done
+        lda #1
         sta parse_state
-fr_hunt_done:
+fr_done:
         rts
 
-fr_subtype:
+fr_sub:
         sta frame_sub
         sta frame_chk
-        lda #STATE_LEN
+        lda #2
         sta parse_state
         rts
 
-fr_length:
+fr_len:
         sta frame_len
         eor frame_chk
         sta frame_chk
         lda #0
         sta rx_index
         lda frame_len
-        beq fr_len_zero
-        lda #STATE_PAY
+        beq fr_len0
+        lda #3
         sta parse_state
         rts
-fr_len_zero:
-        lda #STATE_CHK
+fr_len0:
+        lda #4
         sta parse_state
         rts
 
-fr_payload:
+fr_pay:
         ldx rx_index
         sta AGENT_RXBUF,x
         eor frame_chk
@@ -252,18 +232,18 @@ fr_payload:
         inx
         stx rx_index
         cpx frame_len
-        bne fr_pay_done
-        lda #STATE_CHK
+        bne fr_pdone
+        lda #4
         sta parse_state
-fr_pay_done:
+fr_pdone:
         rts
 
-fr_checksum:
+fr_chk:
         cmp frame_chk
-        bne fr_chk_bad
+        bne fr_bad
         jsr frame_dispatch
-fr_chk_bad:
-        lda #STATE_HUNT
+fr_bad:
+        lda #0
         sta parse_state
         rts
 
@@ -276,9 +256,8 @@ frame_dispatch:
         beq fd_exec
         rts
 
-// EXEC: set flag to send RESULT on next loop iteration
 fd_exec:
-        // set up injection
+        // start injection
         lda frame_len
         sta inj_len
         lda #0
@@ -286,83 +265,69 @@ fd_exec:
         lda #AG_INJECTING
         sta agent_state
 
-        // set flag to send RESULT echo next iteration
-        lda #1
-        sta send_result_flag
+        // build RESULT frame in send_buf
+        ldx #0
+        lda #SYNC_BYTE
+        sta send_buf,x
+        inx
+        lda #FRAME_RESULT
+        sta send_buf,x
+        sta send_chk         // init checksum
+        inx
         lda frame_len
-        sta result_len
+        sta send_buf,x
+        eor send_chk
+        sta send_chk
+        inx
+        // copy payload
+        ldy #0
+fd_cpay:
+        cpy frame_len
+        beq fd_cend
+        lda AGENT_RXBUF,y
+        sta send_buf,x
+        eor send_chk
+        sta send_chk
+        inx
+        iny
+        jmp fd_cpay
+fd_cend:
+        // checksum
+        lda send_chk
+        sta send_buf,x
+        inx
+        stx send_total
+
+        // activate send
+        lda #0
+        sta send_pos
+        lda #1
+        sta send_flag
 
         inc BORDER_COLOR
         rts
 
 // ---------------------------------------------------------
-// Frame sender
-// ---------------------------------------------------------
-frame_send:
-        ldx #RS232_DEV
-        jsr CHKOUT
-
-        // SYNC
-        lda #SYNC_BYTE
-        jsr CHROUT
-
-        // SUBTYPE + checksum init
-        lda tx_subtype
-        jsr CHROUT
-        sta tx_checksum
-
-        // LENGTH
-        lda tx_length
-        jsr CHROUT
-        eor tx_checksum
-        sta tx_checksum
-
-        // PAYLOAD
-        ldx #0
-        cpx tx_length
-        beq fs_chk
-fs_pay:
-        lda AGENT_RXBUF,x
-        jsr CHROUT
-        eor tx_checksum
-        sta tx_checksum
-        inx
-        cpx tx_length
-        bne fs_pay
-
-        // CHECKSUM
-fs_chk:
-        lda tx_checksum
-        jsr CHROUT
-
-        jsr CLRCHN
-        rts
-
-// ---------------------------------------------------------
 // Data
 // ---------------------------------------------------------
-
-// parser state
 parse_state: .byte 0
 frame_sub:   .byte 0
 frame_len:   .byte 0
 frame_chk:   .byte 0
 rx_index:    .byte 0
 
-// agent state
 agent_state: .byte 0
-inj_pos:     .byte 0          // current injection position
-inj_len:     .byte 0          // total chars to inject
+inj_pos:     .byte 0
+inj_len:     .byte 0
 
-// pending result
-send_result_flag: .byte 0
-result_len:       .byte 0
-
-// frame send
-tx_subtype:  .byte 0
-tx_length:   .byte 0
-tx_checksum: .byte 0
+send_flag:   .byte 0
+send_pos:    .byte 0
+send_total:  .byte 0
+send_chk:    .byte 0
 cur_page:    .byte $E0
 
-// ---------------------------------------------------------
+// send buffer: SYNC + TYPE + LEN + payload(max 255) + CHK = max 259 bytes
+// placed at end of agent data, before AGENT_RXBUF at $C300
+send_buf:    .fill 64, 0      // 64 bytes max for now
+
 #import "serial.asm"

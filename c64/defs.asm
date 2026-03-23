@@ -56,10 +56,12 @@
 
 // Frame protocol
 .const SYNC_BYTE    = $FE    // $FF gets corrupted to $FE by RS232
-.const FRAME_EXEC   = $01    // bridge -> c64: execute BASIC command
-.const FRAME_RESULT = $02    // c64 -> bridge: screen capture
-.const FRAME_ERROR  = $03    // c64 -> bridge: timeout/failure
-.const FRAME_HBEAT  = $04    // c64 -> bridge: heartbeat
+// Frame types — must be >=$20 to avoid PETSCII control char conversion
+// by KERNAL CHROUT. Using ASCII printable chars.
+.const FRAME_EXEC   = $45    // 'E' — bridge -> c64: execute BASIC command
+.const FRAME_RESULT = $52    // 'R' — c64 -> bridge: screen capture
+.const FRAME_ERROR  = $58    // 'X' — c64 -> bridge: timeout/failure
+.const FRAME_HBEAT  = $48    // 'H' — c64 -> bridge: heartbeat
 
 // Frame parser states
 .const STATE_HUNT   = 0      // hunting for SYNC byte
