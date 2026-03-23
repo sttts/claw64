@@ -84,6 +84,29 @@ cp_wr:  sta $E000,y
         jsr CHROUT
         jsr CLRCHN
 
+        // pre-load send_buf with hardcoded RESULT
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda #FRAME_RESULT
+        sta send_buf+1
+        lda #$02
+        sta send_buf+2
+        lda #$48
+        sta send_buf+3
+        lda #$49
+        sta send_buf+4
+        lda #FRAME_RESULT
+        eor #$02
+        eor #$48
+        eor #$49
+        sta send_buf+5
+        lda #6
+        sta send_total
+        lda #0
+        sta send_pos
+        lda #1
+        sta send_flag
+
 // === MAIN LOOP ===
 bloop:
         // receive one byte
