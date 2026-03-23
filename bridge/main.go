@@ -25,7 +25,7 @@ func main() {
 	defer link.Close()
 
 	// wait for agent to initialize
-	time.Sleep(15 * time.Second)
+	time.Sleep(25 * time.Second)
 
 	// warm up: send non-SYNC, non-zero bytes to activate the echo channel
 	// (SYNC=$FE would corrupt the parser; $00 doesn't echo)
