@@ -98,21 +98,24 @@ bloop:
         pla
         cmp #0
         beq bl_send
-        jsr frame_rx_byte    // parse received byte (no echo)
+
+        // echo byte back (keeps VICE RS232 channel active for GETIN)
+        pha
+        ldx #RS232_DEV
+        jsr CHKOUT
+        pla
+        pha
+        jsr CHROUT
+        jsr CLRCHN
+        pla
+
+        jsr frame_rx_byte    // parse received byte
 
 bl_send:
         lda send_flag
-        bne bl_burst
+        beq bl_inject
 
-        // keepalive: one dot (no RESULT pending)
-        ldx #RS232_DEV
-        jsr CHKOUT
-        lda #$2E
-        jsr CHROUT
-        jsr CLRCHN
-        jmp bl_inject
-
-bl_burst:
+        // burst-send RESULT (no dots — echo provides channel keepalive)
         // burst-send ALL RESULT bytes, then clear flag
         lda #0
         sta send_flag

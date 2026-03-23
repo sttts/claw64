@@ -80,10 +80,21 @@ func (l *Link) Send(f Frame) error {
 	return nil
 }
 
-// Recv reads one frame from the C64. Blocks until a complete frame
-// is received or an error occurs.
+// Recv reads one frame from the C64. Skips echo'd and corrupted frames.
+// Only returns RESULT, ERROR, or HEARTBEAT frames.
 func (l *Link) Recv() (Frame, error) {
-	return Decode(l.conn)
+	for {
+		f, err := Decode(l.conn)
+		if err != nil {
+			return f, err
+		}
+		// skip echo'd EXEC frames
+		if f.Type == FrameExec {
+			log.Printf("recv: skipping echo'd EXEC frame")
+			continue
+		}
+		return f, nil
+	}
 }
 
 // Close shuts down the serial link.

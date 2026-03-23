@@ -79,6 +79,7 @@ func Decode(r io.Reader) (Frame, error) {
 	}
 	typ := b[0]
 	chk := typ
+	log.Printf("  decode: sync found, type=0x%02X (%s)", typ, TypeName(typ))
 
 	// read length
 	if _, err := io.ReadFull(r, b[:]); err != nil {
