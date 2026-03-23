@@ -86,14 +86,30 @@ cp_wr:  sta $E000,y
 
 // === MAIN LOOP ===
 bloop:
-        // 1. SEND first (before receive — order matters for RS232 state!)
-        lda send_flag
-        beq bl_recv
-
+        // 1. RECEIVE one byte
         ldx #RS232_DEV
-        jsr CHKOUT
+        jsr CHKIN
+        jsr GETIN
+        pha
+        jsr CLRCHN
+        pla
+        cmp #0
+        beq bl_send
+        jsr frame_rx_byte
+
+bl_send:
+        // 2. SEND one byte (after receive, like the working echo)
+        lda send_flag
+        beq bl_inject
+
+        // load byte from send_buf, push it, then CHKOUT/PLA/CHROUT
+        // (mimicking the echo pattern which works)
         ldx send_pos
         lda send_buf,x
+        pha
+        ldx #RS232_DEV
+        jsr CHKOUT
+        pla
         jsr CHROUT
         jsr CLRCHN
 
@@ -103,18 +119,6 @@ bloop:
         bne bl_inject
         lda #0
         sta send_flag
-
-bl_recv:
-        // 2. RECEIVE one byte
-        ldx #RS232_DEV
-        jsr CHKIN
-        jsr GETIN
-        pha
-        jsr CLRCHN
-        pla
-        cmp #0
-        beq bl_inject
-        jsr frame_rx_byte
 
 bl_inject:
         // inject one keystroke
