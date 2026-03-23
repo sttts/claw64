@@ -88,27 +88,29 @@ func Decode(r io.Reader) (Frame, error) {
 readType:
 	// read subtype (skip more SYNCs too)
 	var typ byte
+	var rawTyp byte
 	for {
 		b, err := readFiltered(r)
 		if err != nil {
 			return Frame{}, fmt.Errorf("subtype: %w", err)
 		}
 		if b == SyncByte {
-			continue // another SYNC
+			continue
 		}
-		typ = b
+		rawTyp = b
+		typ = b & 0x7F
 		break
 	}
-	chk := typ
+	chk := rawTyp
 	log.Printf("  decode: type=0x%02X (%s)", typ, TypeName(typ))
 
 	// read length
-	b, err := readFiltered(r)
+	rawLen, err := readFiltered(r)
 	if err != nil {
 		return Frame{}, fmt.Errorf("length: %w", err)
 	}
-	length := b
-	chk ^= length
+	length := rawLen & 0x7F
+	chk ^= rawLen
 
 	// sanity check: if type is not recognized OR length is suspiciously large,
 	// this is likely a corrupted frame — retry from SYNC hunt
@@ -122,14 +124,15 @@ readType:
 	}
 
 	// read payload (skip $55 keepalive between bytes)
+	// mask bit 7: VICE RS232 sometimes sets it spuriously
 	payload := make([]byte, length)
 	for i := byte(0); i < length; i++ {
 		pb, err := readFiltered(r)
 		if err != nil {
 			return Frame{}, fmt.Errorf("payload[%d]: %w", i, err)
 		}
-		payload[i] = pb
-		chk ^= pb
+		payload[i] = pb & 0x7F // strip bit 7
+		chk ^= pb              // checksum uses raw byte
 	}
 
 	// read and verify checksum
