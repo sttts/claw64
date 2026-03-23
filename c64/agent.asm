@@ -87,46 +87,17 @@ bloop:
         jsr frame_rx_byte
 
 bl_tx:
-        // decide what to send
-        lda send_flag
-        bne bl_send_result
-
         // echo received byte if nonzero
         lda rx_byte
-        bne bl_send_it
+        beq bloop            // no data → skip TX, just loop
 
-        // no data — only send keepalive every 256th iteration
-        inc idle_count
-        bne bloop            // skip TX most iterations
-        lda #$55             // keepalive
-
-bl_send_it:
-        // send one byte via echo path
+        // echo one byte
         pha
         ldx #RS232_DEV
         jsr CHKOUT
         pla
         jsr CHROUT
         jsr CLRCHN
-        jmp bloop
-
-bl_send_result:
-        // send one RESULT byte
-        ldx send_pos
-        lda send_buf,x
-        pha
-        ldx #RS232_DEV
-        jsr CHKOUT
-        pla
-        jsr CHROUT
-        jsr CLRCHN
-
-        inc send_pos
-        lda send_pos
-        cmp send_total
-        bne bloop
-        lda #0
-        sta send_flag
         jmp bloop
 
 // === FRAME PARSER ===
@@ -221,10 +192,25 @@ fd_end: lda frame_chk
         clc
         adc #4
         sta send_total
-        lda #0
-        sta send_pos
-        lda #1
-        sta send_flag
+        // burst-send ALL RESULT bytes NOW (before next CHKIN)
+        txa
+        clc
+        adc #4
+        sta send_total
+
+        ldx #RS232_DEV
+        jsr CHKOUT
+        ldy #0
+fd_send:
+        sty send_pos         // save Y
+        lda send_buf,y
+        jsr CHROUT
+        ldy send_pos
+        iny
+        cpy send_total
+        bne fd_send
+        jsr CLRCHN
+
         inc BORDER_COLOR
 fd_done:
         rts

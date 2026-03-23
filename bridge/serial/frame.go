@@ -85,6 +85,7 @@ func Decode(r io.Reader) (Frame, error) {
 		}
 	}
 
+readType:
 	// read subtype (skip more SYNCs too)
 	var typ byte
 	for {
@@ -137,7 +138,13 @@ func Decode(r io.Reader) (Frame, error) {
 		return Frame{}, fmt.Errorf("checksum: %w", err)
 	}
 	if cb != chk {
-		log.Printf("  checksum fail: got 0x%02X want 0x%02X, retrying", cb, chk)
+		log.Printf("  checksum fail: got 0x%02X want 0x%02X", cb, chk)
+		if cb == SyncByte {
+			// the "checksum" byte was actually a SYNC — start of next frame
+			// don't consume it; instead, read TYPE directly
+			log.Printf("  checksum was SYNC — reading next frame inline")
+			goto readType
+		}
 		return Decode(r)
 	}
 

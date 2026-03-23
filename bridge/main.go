@@ -55,7 +55,7 @@ func main() {
 	}
 
 	// wait for echo + RESULT to arrive
-	time.Sleep(5 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	log.Println("waiting for RESULT...")
 	f, err := link.Recv()
