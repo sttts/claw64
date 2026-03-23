@@ -1,9 +1,7 @@
-// Claw64 agent — based on proven copytest echo loop
-// ==================================================
-// MINIMAL changes from the working copytest:
-// 1. Replace echo with frame parser
-// 2. Add byte-at-a-time RESULT send
-// 3. Add keystroke injection
+// Claw64 agent — minimal frame echo test
+// ========================================
+// Stripped to minimum: receive → parse → echo/RESULT → loop
+// No injection, no keyboard checking.
 
 #import "defs.asm"
 
@@ -11,7 +9,7 @@
 
 .const PROCPORT = $01
 .const TMPBUF   = $C500
-.const send_buf = $C400       // fixed address for send buffer
+.const send_buf = $C400
 
 install:
         lda #5
@@ -46,16 +44,6 @@ cp_wr:  sta $E000,y
         lda cur_page
         bne cp
 
-        // patch $E5D1
-        lda #%00110101
-        sta PROCPORT
-        lda #$4C
-        sta $E5D1
-        lda #<reenter
-        sta $E5D2
-        lda #>reenter
-        sta $E5D3
-
         // serial_init from ROM
         lda #%00110111
         sta PROCPORT
@@ -70,9 +58,6 @@ cp_wr:  sta $E000,y
         sta parse_state
         sta send_flag
         sta send_pos
-        sta inj_pos
-        sta inj_len
-        sta agent_state
 
         lda #3
         sta BORDER_COLOR
@@ -85,43 +70,46 @@ cp_wr:  sta $E000,y
         jsr CHROUT
         jsr CLRCHN
 
-        // (send_buf loaded by fd_exec when EXEC frame arrives)
-
-// === MAIN LOOP ===
+// === MINIMAL LOOP: receive → parse → tx → loop ===
 bloop:
-        // receive one byte
+        // receive
         ldx #RS232_DEV
         jsr CHKIN
         jsr GETIN
         pha
         jsr CLRCHN
         pla
-        // save received byte
         sta rx_byte
 
-        // parse nonzero bytes
+        // parse nonzero
         cmp #0
         beq bl_tx
         jsr frame_rx_byte
 
 bl_tx:
-        // TX: send one byte via echo mechanism (CHKOUT/CHROUT/CLRCHN)
-        // Priority: RESULT byte > received byte echo > keepalive $55
+        // decide what to send
         lda send_flag
-        beq bl_echo
+        bne bl_send_result
 
-        // send RESULT byte from send_buf
+        // echo or keepalive
+        lda rx_byte
+        bne bl_send_it
+        lda #$55
+
+bl_send_it:
+        // send one byte via echo path
+        pha
+        ldx #RS232_DEV
+        jsr CHKOUT
+        pla
+        jsr CHROUT
+        jsr CLRCHN
+        jmp bloop
+
+bl_send_result:
+        // send one RESULT byte
         ldx send_pos
         lda send_buf,x
-        jmp bl_do_tx
-
-bl_echo:
-        // echo received byte (if nonzero) or send keepalive
-        lda rx_byte
-        bne bl_do_tx
-        lda #$55             // keepalive
-
-bl_do_tx:
         pha
         ldx #RS232_DEV
         jsr CHKOUT
@@ -129,78 +117,26 @@ bl_do_tx:
         jsr CHROUT
         jsr CLRCHN
 
-        // advance RESULT send pos if applicable
-        lda send_flag
-        beq bl_inject
         inc send_pos
         lda send_pos
         cmp send_total
-        bne bl_inject
+        bne bloop
         lda #0
         sta send_flag
-
-bl_inject:
-        // inject one keystroke
-        lda agent_state
-        beq bl_kb              // AG_IDLE = 0
-
-        lda KBUF_LEN
-        bne bl_kb              // buffer not empty
-
-        ldx inj_pos
-        cpx inj_len
-        beq bl_inj_ret
-
-        // inject next char (lowercase→uppercase)
-        lda AGENT_RXBUF,x
-        cmp #$61
-        bcc bl_nofold
-        cmp #$7B
-        bcs bl_nofold
-        sec
-        sbc #$20
-bl_nofold:
-        sta KBUF
-        lda #1
-        sta KBUF_LEN
-        inc inj_pos
-        jmp bl_kb
-
-bl_inj_ret:
-        lda #$0D
-        sta KBUF
-        lda #1
-        sta KBUF_LEN
-        lda #0
-        sta agent_state
-
-bl_kb:
-        // keyboard (EXACT same as copytest)
-        lda $C6
-        sta $CC
-        sta $0292
-        bne bl_key
-        jmp bloop
-bl_key:
-        sei
-        jmp $E5D7
-
-reenter:
-        sta $0292
         jmp bloop
 
-// === FRAME PARSER (compact) ===
+// === FRAME PARSER ===
 frame_rx_byte:
         ldx parse_state
-        beq fr_hunt       // state 0
+        beq fr_hunt
         dex
-        beq fr_sub        // state 1
+        beq fr_sub
         dex
-        beq fr_len        // state 2
+        beq fr_len
         dex
-        beq fr_pay        // state 3
+        beq fr_pay
         dex
-        beq fr_chk        // state 4
+        beq fr_chk
         ldx #0
         stx parse_state
         rts
@@ -256,14 +192,6 @@ frame_dispatch:
         cmp #FRAME_EXEC
         bne fd_done
 
-        // start injection
-        lda frame_len
-        sta inj_len
-        lda #0
-        sta inj_pos
-        lda #1              // AG_INJECTING
-        sta agent_state
-
         // build RESULT in send_buf
         lda #SYNC_BYTE
         sta send_buf+0
@@ -271,11 +199,9 @@ frame_dispatch:
         sta send_buf+1
         lda frame_len
         sta send_buf+2
-        // checksum init
         lda #FRAME_RESULT
         eor frame_len
-        sta frame_chk        // reuse as temp
-        // copy payload
+        sta frame_chk
         ldx #0
 fd_cp:  cpx frame_len
         beq fd_end
@@ -287,7 +213,6 @@ fd_cp:  cpx frame_len
         jmp fd_cp
 fd_end: lda frame_chk
         sta send_buf+3,x
-        // total bytes = 3 + payload + 1
         txa
         clc
         adc #4
@@ -307,13 +232,9 @@ frame_sub:   .byte 0
 frame_len:   .byte 0
 frame_chk:   .byte 0
 rx_index:    .byte 0
-agent_state: .byte 0
-inj_pos:     .byte 0
-inj_len:     .byte 0
 send_flag:   .byte 0
 send_pos:    .byte 0
 send_total:  .byte 0
 cur_page:    .byte $E0
-// send_buf at $C400 (fixed, defined at top)
 
 #import "serial.asm"
