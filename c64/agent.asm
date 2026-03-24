@@ -445,13 +445,14 @@ bl_scan:
         bne bl_scan_next
 
         // ---- READY. found! ----
-        // The BASIC interpreter has finished executing the command.
-        // X still holds the line number where READY. was found.
-        // Scrape the screen output and send it back to the bridge.
-        jsr send_screen_result  // scrape screen line above READY. → RESULT frame
-        lda #AG_IDLE            // transition back to IDLE state
-        sta agent_state         // ready for next command from bridge
-        jmp bl_kb               // proceed to keyboard processing
+        // Build the RESULT frame in send_buf (screen scrape).
+        // The drip-send at bl_inject will transmit it one byte per iteration.
+        jsr send_screen_result  // builds frame in send_buf, sets send_total
+        lda #0
+        sta send_pos            // start drip-send from byte 0
+        lda #AG_IDLE
+        sta agent_state
+        jmp bl_kb
 
 bl_scan_next:
         dex                     // move to next line up (24→23→...→0)
@@ -619,17 +620,8 @@ ssr_chk_done:
         adc #4                  // add 4 for header (3 bytes) + checksum (1 byte)
         sta send_total          // store total number of bytes to send
 
-        // ---- Send the complete frame byte-by-byte ----
-        ldy #0
-ssr_send:
-        lda send_buf,y
-        sty send_pos
-        jsr sf_byte             // CHKOUT/CHROUT/CLRCHN for one byte
-        ldy send_pos
-        iny
-        cpy send_total
-        bne ssr_send
-
+        // Frame is built in send_buf. Caller sets send_pos=0 to
+        // trigger drip-send at bl_inject (one byte per iteration).
         rts
 
 // ---------------------------------------------------------
@@ -642,14 +634,19 @@ ssr_send:
 // Checksum = TYPE ^ LENGTH = 'X' ^ 0 = 'X'
 // ---------------------------------------------------------
 send_error:
+        // build ERROR frame in send_buf for drip-send
         lda #SYNC_BYTE
-        jsr sf_byte
+        sta send_buf+0
         lda #FRAME_ERROR
-        jsr sf_byte
+        sta send_buf+1
         lda #0
-        jsr sf_byte
-        lda #FRAME_ERROR
-        jsr sf_byte
+        sta send_buf+2
+        lda #FRAME_ERROR        // checksum = TYPE ^ 0 = TYPE
+        sta send_buf+3
+        lda #4
+        sta send_total
+        lda #0
+        sta send_pos            // trigger drip-send
         rts
 
 // ---------------------------------------------------------
@@ -816,11 +813,9 @@ fd_not_text:
         lda #AG_INJECTING       // switch agent to INJECTING state
         sta agent_state         // main loop will now drip-feed keystrokes
 
-        // ---- Send echo RESULT frame ----
-        // Each byte sent via its own CHKOUT/CHROUT/CLRCHN cycle
-        // (only way that works on VICE RS232).
-        lda #FRAME_RESULT
-        jsr send_frame
+        // No echo RESULT — can't call send_frame from inside
+        // frame_dispatch (VICE RS232 only handles one CHKOUT/CHROUT/CLRCHN
+        // per main loop iteration). The bridge doesn't need the echo.
 
 fd_done:
         rts
