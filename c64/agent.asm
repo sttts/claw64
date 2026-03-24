@@ -716,9 +716,61 @@ frame_dispatch:
         // ---- Check for MSG frame ($4D = 'M') ----
         cmp #FRAME_MSG          // is it a MSG frame (user's chat message)?
         bne fd_not_msg          // no → check next type
-        lda #7                  // 7 = yellow — visual indicator of incoming message
-        sta BORDER_COLOR        // flash border yellow (restored next main loop iteration)
-        rts                     // nothing else to do — bridge handles LLM call
+
+        // flash border yellow as visual indicator
+        lda #7                  // 7 = yellow
+        sta BORDER_COLOR
+
+        // forward the user's message to the LLM by sending it back
+        // as an LLM_MSG (L) frame — the bridge will call the model
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda #FRAME_LLM          // $4C ('L') — tell bridge to call LLM
+        sta send_buf+1
+        lda frame_len
+        sta send_buf+2
+
+        // checksum: TYPE ^ LEN
+        lda #FRAME_LLM
+        eor frame_len
+        sta frame_chk
+
+        // copy payload from AGENT_RXBUF to send_buf, update checksum
+        ldx #0
+fd_msg_cp:
+        cpx frame_len
+        beq fd_msg_end
+        lda AGENT_RXBUF,x
+        sta send_buf+3,x
+        eor frame_chk
+        sta frame_chk
+        inx
+        jmp fd_msg_cp
+
+fd_msg_end:
+        // append checksum
+        lda frame_chk
+        sta send_buf+3,x
+        txa
+        clc
+        adc #4                  // total = payload + SYNC + TYPE + LEN + CHK
+        sta send_total
+
+        // burst-send the LLM_MSG frame
+        ldx #RS232_DEV
+        jsr CHKOUT
+        ldy #0
+fd_msg_send:
+        sty send_pos
+        lda send_buf,y
+        jsr CHROUT
+        ldy send_pos
+        iny
+        cpy send_total
+        bne fd_msg_send
+        jsr CLRCHN
+
+        rts
 
 fd_not_msg:
         // ---- Check for TEXT frame ($54 = 'T') ----

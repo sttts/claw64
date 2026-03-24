@@ -22,9 +22,11 @@ var retryBackoff = []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * 
 // Relay routes messages between chat, LLM, and the C64 serial link.
 // The C64 drives the agent loop; the relay just forwards.
 type Relay struct {
-	Link    *serial.Link
-	LLM     llm.Completer
-	History *History
+	Link     *serial.Link
+	LLM      llm.Completer
+	History  *History
+	lastText       string // set by callAndDispatch when LLM returns text
+	lastToolCallID string // tracks which tool call the next RESULT belongs to
 }
 
 // basicExecArgs is the JSON structure the LLM passes to basic_exec.
@@ -38,58 +40,81 @@ func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (
 	// append user message to history
 	r.History.Append(userID, llm.Message{Role: "user", Content: text})
 
-	// notify C64 that a chat message arrived
+	// send to C64 — the C64 is the agent, it decides what happens next
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
 	if err := r.sendWithRetry(msgFrame); err != nil {
-		log.Printf("relay: failed to send MSG to C64: %v", err)
+		return "", fmt.Errorf("send MSG: %w", err)
 	}
 
-	// call LLM with conversation history
-	resp, err := r.callLLM(ctx, userID)
-	if err != nil {
-		return "", err
-	}
+	// wait for C64 to drive the conversation
+	return r.eventLoop(ctx, userID)
+}
 
-	// loop: process tool calls and C64 responses
+// eventLoop waits for C64 frames and reacts. The C64 drives the flow:
+// - LLM_MSG: call LLM, dispatch response (EXEC or TEXT) back to C64
+// - RESULT: feed tool result to LLM, dispatch response back to C64
+// - ERROR: feed error to LLM, dispatch response back to C64
+// Returns when the LLM produces a text response (no tool calls).
+func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 	for i := 0; i < maxIterations; i++ {
-		// text response — send to C64 and return to chat
-		if len(resp.ToolCalls) == 0 {
-			if resp.Content != "" {
-				textFrame := serial.Frame{Type: serial.FrameText, Payload: []byte(resp.Content)}
-				if err := r.sendWithRetry(textFrame); err != nil {
-					log.Printf("relay: failed to send TEXT to C64: %v", err)
-				}
-			}
-			return resp.Content, nil
-		}
-
-		// tool call — extract command, send EXEC to C64
-		for _, tc := range resp.ToolCalls {
-			result, err := r.handleToolCall(ctx, userID, tc)
-			if err != nil {
-				return "", err
-			}
-
-			// append tool result to history
-			r.History.Append(userID, llm.Message{
-				Role:       "tool",
-				Content:    result,
-				ToolCallID: tc.ID,
-			})
-		}
-
-		// call LLM again with updated history
-		resp, err = r.callLLM(ctx, userID)
+		// read next frame from C64
+		f, err := r.recvFromC64(ctx)
 		if err != nil {
 			return "", err
 		}
+
+		switch f.Type {
+		case serial.FrameLLM:
+			// C64 asks us to call the LLM
+			log.Printf("relay: LLM_MSG from C64: %q", string(f.Payload))
+			if len(f.Payload) > 0 {
+				r.History.Append(userID, llm.Message{Role: "user", Content: string(f.Payload)})
+			}
+			if err := r.callAndDispatch(ctx, userID); err != nil {
+				return "", err
+			}
+
+		case serial.FrameResult:
+			// tool result — feed to LLM
+			log.Printf("relay: RESULT from C64: %q", string(f.Payload))
+			// find the last assistant message with tool calls to get the ID
+			r.appendToolResult(userID, string(f.Payload))
+			if err := r.callAndDispatch(ctx, userID); err != nil {
+				return "", err
+			}
+
+		case serial.FrameError:
+			// tool error — feed to LLM
+			log.Printf("relay: ERROR from C64")
+			r.appendToolResult(userID, "ERROR: command timed out on C64")
+			if err := r.callAndDispatch(ctx, userID); err != nil {
+				return "", err
+			}
+
+		case serial.FrameHeartbeat:
+			continue
+
+		default:
+			log.Printf("relay: unexpected frame 0x%02X, skipping", f.Type)
+		}
+
+		// check if we just sent a TEXT frame (meaning conversation is done)
+		// callAndDispatch returns the text via lastText
+		if r.lastText != "" {
+			text := r.lastText
+			r.lastText = ""
+			return text, nil
+		}
 	}
 
-	return "", fmt.Errorf("LLM loop exceeded %d iterations", maxIterations)
+	return "", fmt.Errorf("event loop exceeded %d iterations", maxIterations)
 }
 
-// callLLM sends conversation history to the LLM and appends the response.
-func (r *Relay) callLLM(ctx context.Context, userID string) (llm.Message, error) {
+// callAndDispatch calls the LLM and dispatches the response to the C64.
+// If the LLM returns text: sends TEXT frame, sets r.lastText.
+// If the LLM returns tool calls: sends EXEC frames.
+func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
+	// call LLM
 	history := r.History.Get(userID)
 	msgs := make([]llm.Message, 0, 1+len(history))
 	msgs = append(msgs, llm.Message{Role: "system", Content: llm.SystemPrompt})
@@ -97,70 +122,74 @@ func (r *Relay) callLLM(ctx context.Context, userID string) (llm.Message, error)
 
 	resp, err := r.LLM.Complete(ctx, msgs, []llm.Tool{llm.BasicExecTool})
 	if err != nil {
-		return llm.Message{}, fmt.Errorf("llm: %w", err)
+		return fmt.Errorf("llm: %w", err)
 	}
-
-	// store assistant response
 	r.History.Append(userID, resp)
-	return resp, nil
+
+	// text response — send TEXT frame to C64, signal completion
+	if len(resp.ToolCalls) == 0 {
+		if resp.Content != "" {
+			textFrame := serial.Frame{Type: serial.FrameText, Payload: []byte(resp.Content)}
+			if err := r.sendWithRetry(textFrame); err != nil {
+				log.Printf("relay: failed to send TEXT: %v", err)
+			}
+		}
+		r.lastText = resp.Content
+		return nil
+	}
+
+	// tool calls — send EXEC frames to C64
+	for _, tc := range resp.ToolCalls {
+		if tc.Function.Name != "basic_exec" {
+			r.History.Append(userID, llm.Message{
+				Role: "tool", Content: "ERROR: unknown tool", ToolCallID: tc.ID,
+			})
+			continue
+		}
+
+		var args basicExecArgs
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			r.History.Append(userID, llm.Message{
+				Role: "tool", Content: fmt.Sprintf("ERROR: %v", err), ToolCallID: tc.ID,
+			})
+			continue
+		}
+		log.Printf("relay: EXEC %q", args.Command)
+
+		// remember tool call ID so we can match the RESULT
+		r.lastToolCallID = tc.ID
+
+		execFrame := serial.Frame{Type: serial.FrameExec, Payload: []byte(args.Command)}
+		if err := r.sendWithRetry(execFrame); err != nil {
+			return fmt.Errorf("send EXEC: %w", err)
+		}
+	}
+	return nil
 }
 
-// handleToolCall sends an EXEC frame to the C64 and waits for its response.
-func (r *Relay) handleToolCall(ctx context.Context, userID string, tc llm.ToolCall) (string, error) {
-	if tc.Function.Name != "basic_exec" {
-		return fmt.Sprintf("ERROR: unknown tool %s", tc.Function.Name), nil
-	}
-
-	// parse command from arguments
-	var args basicExecArgs
-	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-		return fmt.Sprintf("ERROR: parse args: %v", err), nil
-	}
-	if args.Command == "" {
-		return "ERROR: empty command", nil
-	}
-	log.Printf("relay: EXEC %q", args.Command)
-
-	// send EXEC frame to C64
-	execFrame := serial.Frame{Type: serial.FrameExec, Payload: []byte(args.Command)}
-	if err := r.sendWithRetry(execFrame); err != nil {
-		return "", fmt.Errorf("send EXEC: %w", err)
-	}
-
-	// wait for C64 response
-	return r.waitForResult(ctx, userID)
+// appendToolResult appends a tool result to history using the last tool call ID.
+func (r *Relay) appendToolResult(userID, result string) {
+	r.History.Append(userID, llm.Message{
+		Role:       "tool",
+		Content:    result,
+		ToolCallID: r.lastToolCallID,
+	})
 }
 
-// waitForResult reads frames from the C64 until a RESULT or ERROR arrives.
-// LLM_MSG frames are appended to history and trigger another LLM call.
-func (r *Relay) waitForResult(ctx context.Context, userID string) (string, error) {
+// recvFromC64 reads one frame from the C64, skipping heartbeats in a tight loop.
+func (r *Relay) recvFromC64(ctx context.Context) (serial.Frame, error) {
 	for {
 		if ctx.Err() != nil {
-			return "", ctx.Err()
+			return serial.Frame{}, ctx.Err()
 		}
-
 		f, err := r.Link.Recv()
 		if err != nil {
-			return "", fmt.Errorf("recv: %w", err)
+			return serial.Frame{}, fmt.Errorf("recv: %w", err)
 		}
-
-		switch f.Type {
-		case serial.FrameResult:
-			return string(f.Payload), nil
-
-		case serial.FrameLLM:
-			log.Printf("relay: LLM_MSG from C64: %q", string(f.Payload))
-			r.History.Append(userID, llm.Message{Role: "user", Content: string(f.Payload)})
-
-		case serial.FrameError:
-			return "ERROR: command timed out on C64", nil
-
-		case serial.FrameHeartbeat:
+		if f.Type == serial.FrameHeartbeat {
 			continue
-
-		default:
-			log.Printf("relay: unexpected frame type 0x%02X, skipping", f.Type)
 		}
+		return f, nil
 	}
 }
 
