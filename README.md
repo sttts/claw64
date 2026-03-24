@@ -17,35 +17,70 @@ behalf of the C64, which cannot reach the internet at 2400 baud.
 ## Architecture
 
 ```
-Chat (Slack/WhatsApp/Signal)
-        │
-        ▼
-┌──────────────────┐
-│   Bridge (Go)    │
-│                  │
-│  • Chat relay    │ ◄── forwards messages between user and C64
-│  • LLM proxy     │ ◄── forwards requests between C64 and LLM
-│  • Serial link   │ ◄── frame protocol over RS232
-│  • History store │ ◄── keeps conversation history (C64 has no RAM)
-└────────┬─────────┘
-         │ RS232, 2400 baud
-         │ (TCP in VICE for dev)
-┌────────┴─────────┐
-│ C64 = THE AGENT  │
-│                  │
-│  • TSR at $C000  │ ◄── ~1KB, invisible, coexists with BASIC
-│  • Agent loop    │ ◄── state machine: receive, think, act
-│  • BASIC = tool  │ ◄── POKE, PRINT, LIST, LOAD, RUN
-│  • Key injection │ ◄── types commands into the REPL
-│  • Screen scrape │ ◄── reads output from screen RAM
-└──────────────────┘
+                    Chat (Slack/WhatsApp/Signal/stdin)
+                              │
+                              ▼
+                 ┌──────────────────────┐
+                 │     Bridge (Go)      │
+                 │                      │
+                 │  Relay — not an      │
+                 │  agent. Never makes  │
+                 │  decisions.          │
+                 │                      │
+                 │  • Chat ←→ C64      │     ┌─────────────────┐
+                 │  • LLM  ←→ C64      │────▶│ LLM (Anthropic, │
+                 │  • History store     │◀────│ OpenAI, Ollama) │
+                 └──────────┬───────────┘     └─────────────────┘
+                            │
+                     RS232, 2400 baud
+                     (TCP in VICE for dev)
+                            │
+┌───────────────────────────┴───────────────────────────┐
+│                    Commodore 64                        │
+│                                                        │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │              TSR Agent ($C000)                   │  │
+│  │                                                 │  │
+│  │  IDLE ──▶ Receive MSG from bridge               │  │
+│  │           │                                     │  │
+│  │           ▼                                     │  │
+│  │         Send LLM_MSG ──▶ bridge calls LLM       │  │
+│  │           │                                     │  │
+│  │           ▼                                     │  │
+│  │    ┌── Receive EXEC or TEXT from bridge          │  │
+│  │    │                                            │  │
+│  │    │──▶ TEXT: forward to user, back to IDLE     │  │
+│  │    │                                            │  │
+│  │    └──▶ EXEC: inject keystrokes into BASIC ──┐  │  │
+│  │                                              │  │  │
+│  │         Wait for READY. prompt ◀─────────────┘  │  │
+│  │           │                                     │  │
+│  │           ▼                                     │  │
+│  │         Scrape screen, send RESULT              │  │
+│  │           │                                     │  │
+│  │           ▼                                     │  │
+│  │         Bridge feeds to LLM, loop back          │  │
+│  └─────────────────────────────────────────────────┘  │
+│                                                        │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │           BASIC Interpreter (ROM)               │  │
+│  │                                                 │  │
+│  │  The agent's tool. Types commands into the      │  │
+│  │  REPL via keyboard buffer injection:            │  │
+│  │                                                 │  │
+│  │  PRINT 6502*8     → compute                     │  │
+│  │  POKE 53281,3     → change hardware             │  │
+│  │  LIST / LOAD / RUN → inspect and run programs   │  │
+│  │                                                 │  │
+│  │  Screen RAM ($0400) is the "return value"       │  │
+│  └─────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────┘
 ```
 
 ## Serial Protocol
 
-The protocol defines how the C64 agent communicates with the outside world.
-The bridge translates between these frames and HTTP/chat APIs — it never
-makes decisions itself.
+The C64 communicates with the outside world via serial frames.
+The bridge translates frames to HTTP/chat APIs — it never decides anything.
 
 ```
 ┌──────┬──────┬────────┬─────────────┬──────┐
@@ -78,44 +113,67 @@ more follows, LENGTH<255 means final chunk.
 
 ```
 User (Slack):     "What is 6502 * 8?"
-Bridge → C64:      U │ What is 6502 * 8?
+
+Bridge → C64:      M │ What is 6502 * 8?      ← user's message
+C64 → Bridge:      L │ What is 6502 * 8?      ← C64 asks bridge to call LLM
 Bridge → LLM:      (calls model with user message)
 LLM → Bridge:      tool_call: basic_exec("PRINT 6502*8")
-Bridge → C64:      E │ PRINT 6502*8
-C64:               types "PRINT 6502*8" into BASIC
-BASIC:             prints " 52016"
-C64 → Bridge:      R │  52016
-Bridge → LLM:      (feeds tool result back to model)
+Bridge → C64:      E │ PRINT 6502*8            ← tool call
+
+C64 types "PRINT 6502*8" into BASIC REPL
+BASIC prints " 52016" on screen
+C64 scrapes screen from old cursor to READY.
+
+C64 → Bridge:      R │  52016                  ← tool result
+Bridge → LLM:      (feeds tool result back)
 LLM → Bridge:      "6502 * 8 = 52016"
-Bridge → C64:      T │ 6502 * 8 = 52016
+Bridge → C64:      T │ 6502 * 8 = 52016        ← final answer
 Bridge → Slack:    "6502 * 8 = 52016"
 ```
 
-The C64 can add context at any time:
+## Getting Started
 
-```
-C64 → Bridge:      L │ Screen is blue. PEEK(53281)=6
-Bridge → LLM:      (appends to history, calls model)
-```
-
-## Prerequisites
+### Prerequisites
 
 - **Java** (any JDK/JRE) — for KickAssembler (downloaded automatically)
 - **VICE** — C64 emulator: `brew install --cask vice`
 - **Go** — for the bridge: `brew install go`
 
-## Quick Start
+### One command
 
 ```bash
-# Build the C64 agent (downloads KickAssembler on first run)
-make assemble
+make run
+```
 
-# Launch VICE with the agent and RS232 enabled
-make vice
-# In VICE, type: SYS 49152
+This:
+1. Assembles the C64 agent
+2. Starts the bridge (listening for serial)
+3. Launches VICE (auto-loads agent, auto-types `SYS 49152`)
+4. Bridge detects C64 handshake, shows `you>` prompt
+5. Type a message — the C64 does the rest
 
-# In another terminal, run the bridge (stdin chat, Anthropic LLM)
-make bridge
+No fixed sleeps. Bridge polls for VICE with `nc -z`, syncs via
+handshake byte (`!`).
+
+### Manual steps
+
+```bash
+make assemble      # build the C64 agent PRG
+make vice          # launch VICE (auto-starts agent)
+make bridge        # run bridge in another terminal
+```
+
+### Environment variables
+
+```bash
+CLAW64_LLM=anthropic        # default: claude CLI
+CLAW64_LLM=anthropic-api    # direct API (needs CLAW64_LLM_KEY)
+CLAW64_LLM=openai           # OpenAI (needs CLAW64_LLM_KEY)
+CLAW64_LLM=ollama           # local Ollama
+CLAW64_LLM_MODEL=...        # override model name
+CLAW64_CHAT=stdin            # default: terminal REPL
+CLAW64_CHAT=slack            # needs SLACK_BOT_TOKEN + SLACK_APP_TOKEN
+CLAW64_CHAT=whatsapp         # scans QR on first run
 ```
 
 ## Chat Platforms
@@ -123,9 +181,8 @@ make bridge
 | Platform | Library | Notes |
 |----------|---------|-------|
 | Slack | [slack-go](https://github.com/slack-go/slack) | Socket Mode |
-| WhatsApp | [whatsmeow](https://github.com/tulir/whatsmeow) | Pure Go, multi-device API |
-| Signal | [signal-cli](https://github.com/AsamK/signal-cli) | Requires Java runtime |
-| stdin | (built-in) | Terminal REPL for local testing |
+| WhatsApp | [whatsmeow](https://github.com/tulir/whatsmeow) | Pure Go, multi-device |
+| stdin | (built-in) | Terminal REPL for testing |
 
 ## LLM Backends
 
@@ -146,11 +203,11 @@ make bridge
 | Keystroke Injection | :white_check_mark: |
 | Screen Scraping + READY. Detection | :white_check_mark: |
 | Bridge LLM Client | :white_check_mark: |
-| Bridge Orchestrator | :white_check_mark: |
+| Bridge Relay (orchestrator) | :white_check_mark: |
 | Chat: Slack | :white_check_mark: |
 | Chat: WhatsApp | :white_check_mark: |
 | Chat: Signal | |
-| Agent Loop Refactor (new frame types) | :construction: |
+| Agent Loop (MSG→LLM→EXEC→RESULT) | :construction: |
 | Robustness + Polish | |
 
 See [SPEC.md](SPEC.md) for the full specification.
