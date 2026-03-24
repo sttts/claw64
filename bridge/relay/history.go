@@ -1,6 +1,4 @@
-// Package agent implements the Claw64 bridge orchestrator that connects
-// chat users to the C64 via an LLM with tool-calling.
-package agent
+package relay
 
 import (
 	"sync"

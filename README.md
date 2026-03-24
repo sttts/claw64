@@ -60,7 +60,7 @@ All payloads are plain text. No JSON, no quoting.
 
 ```
 Bridge → C64:
-  U  USER_MSG    User's chat message ("What is 6502*8?")
+  M  MSG         User's chat message ("What is 6502*8?")
   E  EXEC        Tool call: BASIC command to execute ("PRINT 6502*8")
   T  TEXT        LLM's final answer, forward to chat user
 

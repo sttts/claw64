@@ -26,7 +26,7 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/sttts/claw64/agent"
+	"github.com/sttts/claw64/relay"
 	"github.com/sttts/claw64/chat"
 	"github.com/sttts/claw64/llm"
 	"github.com/sttts/claw64/serial"
@@ -102,10 +102,10 @@ func runBridge() {
 	llmClient, llmDesc := newLLM()
 
 	// create agent
-	ag := &agent.Agent{
+	rl := &relay.Relay{
 		Link:    link,
 		LLM:     llmClient,
-		History: agent.NewHistory(),
+		History: relay.NewHistory(),
 	}
 
 	// select chat backend
@@ -138,7 +138,7 @@ func runBridge() {
 	// run chat — blocks until ctx is cancelled
 	err = ch.Start(ctx, func(ctx context.Context, userID, text string) (string, error) {
 		log.Printf("bridge: [%s] %q", userID, text)
-		reply, err := ag.HandleMessage(ctx, userID, text)
+		reply, err := rl.HandleMessage(ctx, userID, text)
 		if err != nil {
 			log.Printf("bridge: agent error: %v", err)
 			return "", err

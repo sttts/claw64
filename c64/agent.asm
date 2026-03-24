@@ -691,19 +691,47 @@ fr_bad: lda #0                  // reset parser state to HUNT
 // ---------------------------------------------------------
 // Frame dispatch — handle a fully parsed and validated frame
 //
-// Currently only handles EXEC frames (bridge telling C64 to
-// run a BASIC command). Other frame types are silently ignored.
+// Handles three incoming frame types from the bridge:
+//   EXEC ($45): bridge tells C64 to run a BASIC command
+//   MSG  ($4D): user's chat message — bridge handles LLM call
+//   TEXT ($54): LLM's final text answer — bridge forwards to chat
 //
 // On EXEC frame:
 //   1. Sets up injection state (copies length, resets position)
 //   2. Sends an immediate echo RESULT frame back to bridge
 //      (confirms receipt by echoing the command text back)
 //   3. Transitions agent to AG_INJECTING state
+//
+// On MSG frame:
+//   Flash border yellow as visual feedback. No action needed —
+//   the bridge handles calling the LLM directly.
+//
+// On TEXT frame:
+//   Flash border green as visual feedback. No action needed —
+//   the bridge forwards the LLM's answer to chat independently.
 // ---------------------------------------------------------
 frame_dispatch:
         lda frame_sub           // load the frame subtype
-        cmp #FRAME_EXEC         // is it an EXEC frame ($45 = 'E')?
-        bne fd_done             // no → ignore all other frame types
+
+        // ---- Check for MSG frame ($4D = 'M') ----
+        cmp #FRAME_MSG          // is it a MSG frame (user's chat message)?
+        bne fd_not_msg          // no → check next type
+        lda #7                  // 7 = yellow — visual indicator of incoming message
+        sta BORDER_COLOR        // flash border yellow (restored next main loop iteration)
+        rts                     // nothing else to do — bridge handles LLM call
+
+fd_not_msg:
+        // ---- Check for TEXT frame ($54 = 'T') ----
+        cmp #FRAME_TEXT         // is it a TEXT frame (LLM's final answer)?
+        bne fd_not_text         // no → check next type
+        lda #5                  // 5 = green — visual indicator of LLM response
+        sta BORDER_COLOR        // flash border green (restored next main loop iteration)
+        rts                     // nothing else to do — bridge forwards to chat
+
+fd_not_text:
+        // ---- Check for EXEC frame ($45 = 'E') ----
+        cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
+        bne fd_done             // no → unknown frame type, ignore
 
         // ---- Start keystroke injection ----
         // The EXEC payload (stored in AGENT_RXBUF by the parser) contains
@@ -770,6 +798,34 @@ fd_send:
         jsr CLRCHN              // KERNAL: reset I/O channels to defaults
 
 fd_done:
+        rts                     // return to caller
+
+// ---------------------------------------------------------
+// Send LLM message as FRAME_LLM frame (stub)
+//
+// Intended to send context/data to the LLM via the bridge.
+// Frame format: SYNC($FE) + TYPE('L') + LENGTH(n) + PAYLOAD(n) + CHK(1)
+// Checksum = XOR of TYPE, LENGTH, and all PAYLOAD bytes.
+//
+// On entry: AGENT_TXBUF contains the payload data
+//           X = payload length (0-255)
+//
+// Currently a stub — sends a zero-length FRAME_LLM frame as
+// a placeholder. Will be expanded when the C64 needs to push
+// context (e.g. screen state, BASIC variables) to the LLM.
+// ---------------------------------------------------------
+send_llm_msg:
+        ldx #RS232_DEV          // X = logical file number 2 (RS232)
+        jsr CHKOUT              // KERNAL: redirect output to RS232
+        lda #SYNC_BYTE          // $FE — frame synchronization byte
+        jsr CHROUT              // send SYNC byte to start the frame
+        lda #FRAME_LLM          // $4C ('L') — LLM message frame type
+        jsr CHROUT              // send frame type byte
+        lda #0                  // payload length = 0 (stub: no data yet)
+        jsr CHROUT              // send length byte
+        lda #FRAME_LLM          // checksum = TYPE ^ 0 = TYPE = $4C
+        jsr CHROUT              // send checksum byte to close the frame
+        jsr CLRCHN              // KERNAL: reset I/O channels to defaults
         rts                     // return to caller
 
 // ---------------------------------------------------------

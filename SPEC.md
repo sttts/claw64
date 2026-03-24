@@ -48,7 +48,7 @@ perspective — it just relays frames.
 IDLE
   |
   v
-Receive USER_MSG frame ("What is 6502*8?")
+Receive MSG frame ("What is 6502*8?")
   |
   v
 (Bridge calls LLM on C64's behalf, using stored history)
@@ -153,7 +153,7 @@ frame types to API calls and back.
 
 #### Responsibilities
 
-- Receive chat messages and send USER_MSG frames to the C64.
+- Receive chat messages and send MSG frames to the C64.
 - Receive LLM_MSG frames from the C64, append to conversation history,
   call the LLM.
 - When the LLM returns a tool call: send EXEC frame to the C64.
@@ -270,7 +270,7 @@ Total overhead: 4 bytes per frame.
 
 ```
 Bridge -> C64:
-  'U' (0x55)  USER_MSG    User's chat message text
+  'M' (0x4D)  MSG         User's chat message text
   'E' (0x45)  EXEC        Tool call: BASIC command to execute
   'T' (0x54)  TEXT        LLM's final text response (forward to user)
 
@@ -310,7 +310,7 @@ a frame with LENGTH < 255 arrives.
 
 ```
 1. Chat user sends "What is 6502*8?"
-2. Bridge sends USER_MSG frame to C64:  U | "What is 6502*8?"
+2. Bridge sends MSG frame to C64:  U | "What is 6502*8?"
 3. Bridge calls LLM with user message.
 4. LLM returns tool_call: basic_exec("PRINT 6502*8")
 5. Bridge sends EXEC frame to C64:     E | "PRINT 6502*8"
@@ -364,7 +364,7 @@ Build:       make assemble / make vice / make bridge
 ### In scope (MVP)
 
 - C64 TSR agent in 6502 assembly.
-- Frame protocol (USER_MSG/EXEC/TEXT/RESULT/LLM_MSG/ERROR/HEARTBEAT).
+- Frame protocol (MSG/EXEC/TEXT/RESULT/LLM_MSG/ERROR/HEARTBEAT).
 - Bridge in Go: LLM proxy + chat relay + serial link.
 - One tool: `basic_exec`.
 - Multi-user chat support.
@@ -396,7 +396,7 @@ The serial link is not the bottleneck; the LLM API latency dominates.
 
 ```
 User (Slack):    "What is 6502 * 8?"
-Bridge:          -> C64: USER_MSG "What is 6502 * 8?"
+Bridge:          -> C64: MSG "What is 6502 * 8?"
 Bridge:          -> LLM: user message
 LLM:             -> tool_call: basic_exec("PRINT 6502*8")
 Bridge:          -> C64: EXEC "PRINT 6502*8"
@@ -411,7 +411,7 @@ Bridge:          -> Slack: "6502 * 8 = 52016"
 
 ```
 User (Slack):    "Make the screen cyan"
-Bridge:          -> C64: USER_MSG "Make the screen cyan"
+Bridge:          -> C64: MSG "Make the screen cyan"
 Bridge:          -> LLM: user message
 LLM:             -> tool_call: basic_exec("POKE 53281,3")
 Bridge:          -> C64: EXEC "POKE 53281,3"

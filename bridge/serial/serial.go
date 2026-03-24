@@ -88,17 +88,19 @@ func (l *Link) SendRaw(data []byte) error {
 	return err
 }
 
-// Recv reads one frame from the C64. Skips echo'd and corrupted frames.
-// Only returns RESULT, ERROR, or HEARTBEAT frames.
+// Recv reads one frame from the C64. Skips echo'd bridge→C64 frames.
+// Returns C64→bridge frames: RESULT, LLM_MSG, ERROR, HEARTBEAT.
 func (l *Link) Recv() (Frame, error) {
 	for {
 		f, err := Decode(l.conn)
 		if err != nil {
 			return f, err
 		}
-		// skip echo'd EXEC frames
-		if f.Type == FrameExec {
-			log.Printf("recv: skipping echo'd EXEC frame")
+
+		// skip echo'd bridge→C64 frames
+		switch f.Type {
+		case FrameMsg, FrameExec, FrameText:
+			log.Printf("recv: skipping echo'd %s frame", TypeName(f.Type))
 			continue
 		}
 		return f, nil

@@ -24,10 +24,16 @@ const SyncByte = 0xFE
 
 // Frame types — printable ASCII to avoid PETSCII control char issues.
 const (
-	FrameExec      byte = 0x45 // 'E' — bridge → C64: execute BASIC command
-	FrameResult    byte = 0x52 // 'R' — C64 → bridge: screen capture result
-	FrameError     byte = 0x58 // 'X' — C64 → bridge: timeout/failure
-	FrameHeartbeat byte = 0x48 // 'H' — C64 → bridge: agent is alive
+	// Bridge → C64
+	FrameMsg  byte = 0x4D // 'M' — user's chat message
+	FrameExec byte = 0x45 // 'E' — tool call: BASIC command to execute
+	FrameText byte = 0x54 // 'T' — LLM's final answer, forward to user
+
+	// C64 → Bridge
+	FrameResult    byte = 0x52 // 'R' — tool result: screen scrape
+	FrameLLM       byte = 0x4C // 'L' — context message for the LLM
+	FrameError     byte = 0x58 // 'X' — tool call timed out
+	FrameHeartbeat byte = 0x48 // 'H' — heartbeat
 )
 
 // Frame is a single protocol frame.
@@ -114,7 +120,8 @@ readType:
 
 	// sanity check: if type is not recognized OR length is suspiciously large,
 	// this is likely a corrupted frame — retry from SYNC hunt
-	if typ != FrameExec && typ != FrameResult && typ != FrameError && typ != FrameHeartbeat {
+	if typ != FrameMsg && typ != FrameExec && typ != FrameText &&
+		typ != FrameResult && typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat {
 		log.Printf("  bad type 0x%02X, resync", typ)
 		return Decode(r)
 	}
@@ -157,10 +164,16 @@ readType:
 // TypeName returns a human-readable name for a frame type.
 func TypeName(t byte) string {
 	switch t {
+	case FrameMsg:
+		return "MSG"
 	case FrameExec:
 		return "EXEC"
+	case FrameText:
+		return "TEXT"
 	case FrameResult:
 		return "RESULT"
+	case FrameLLM:
+		return "LLM_MSG"
 	case FrameError:
 		return "ERROR"
 	case FrameHeartbeat:
