@@ -98,8 +98,14 @@ func runBridge() {
 	}
 	defer link.Close()
 
-	// brief pause for C64 agent to finish initialization
-	time.Sleep(3 * time.Second)
+	// send warmup bytes to keep RS232 channel alive, then drain echoes
+	warmup := make([]byte, 10)
+	for i := range warmup {
+		warmup[i] = 0x55
+	}
+	link.SendRaw(warmup)
+	time.Sleep(500 * time.Millisecond)
+	link.DrainRead(200 * time.Millisecond)
 	log.Println("serial: ready")
 
 	// configure LLM
