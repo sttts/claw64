@@ -215,25 +215,34 @@ bloop:
 
         // ---- Step 1: Receive one serial byte ----
         //
-        // CHKIN sets RS232 as input, GETIN reads one byte (or 0 if none),
-        // CLRCHN resets I/O. We save/restore A across CLRCHN because
-        // KERNAL calls can clobber registers.
-        ldx #RS232_DEV          // X = logical file number 2 (RS232)
-        jsr CHKIN               // KERNAL: set RS232 as current input device
-        jsr GETIN               // KERNAL: get one byte (A=byte, or A=0 if none)
-        pha                     // save received byte on stack (CLRCHN clobbers A)
-        jsr CLRCHN              // KERNAL: reset I/O channels back to defaults
-        pla                     // restore received byte from stack
-        sta rx_byte             // store in our variable for later use
-
-        // Only process nonzero bytes — GETIN returns 0 when no data available
-        cmp #0
-        beq bl_inject           // no data received, skip to injection step
+        // Use KERNAL CHKIN/GETIN/CLRCHN (the only path that works with
+        // VICE RS232). To handle 0x00 bytes: check RIDBS before/after
+        // GETIN. If RIDBS changed, data was read (even if A=0).
+        lda RIDBS               // save read index before GETIN
+        sta rx_byte             // temporarily store old RIDBS
+        ldx #RS232_DEV
+        jsr CHKIN
+        jsr GETIN               // A = byte (or 0 if no data)
+        pha
+        jsr CLRCHN
+        pla
+        pha                     // save the byte
+        lda RIDBS               // new read index
+        cmp rx_byte             // compare with old read index
+        beq bl_no_data          // same → GETIN returned 0 = no data
+        pla                     // different → got real data (even if 0)
+        sta rx_byte
+        jmp bl_got_data
+bl_no_data:
+        pla                     // discard the 0
+        jmp bl_inject           // no data → skip
+bl_got_data:
 
         // Flash border white on serial activity (like a modem LED)
         lda #1                  // 1 = white
-        sta BORDER_COLOR        // border stays white until next bloop iteration restores it
+        sta BORDER_COLOR
 
+        lda rx_byte             // reload the received byte into A
         jsr frame_rx_byte       // feed byte to the frame protocol parser
 
         // Echo received byte back to bridge
@@ -245,18 +254,63 @@ bloop:
         jsr CHROUT
         jsr CLRCHN
 
-        // check if LLM_MSG needs to be sent (set by frame_dispatch for MSG)
+bl_inject:
+        // ---- Drip-send pending frame (one byte per iteration) ----
+        // Runs EVERY iteration (even no-data ones). When llm_pending
+        // is set, builds the frame. Then sends one byte per iteration.
+        // VICE RS232 only handles one CHKOUT/CHROUT/CLRCHN per iteration.
         lda llm_pending
-        beq bl_inject
+        beq bl_send_check       // no pending build → check if sending
+
+        // build LLM_MSG frame in send_buf
         lda #0
         sta llm_pending
-
-        // send LLM_MSG frame — must be HERE (after echo, in main loop)
-        // because sf_byte doesn't work from inside frame_dispatch
+        lda #SYNC_BYTE
+        sta send_buf+0
         lda #FRAME_LLM
-        jsr send_frame
+        sta send_buf+1
+        lda frame_len
+        sta send_buf+2
+        lda #FRAME_LLM
+        eor frame_len
+        sta frame_chk
+        ldx #0
+bl_build_cp:
+        cpx frame_len
+        beq bl_build_end
+        lda AGENT_RXBUF,x
+        sta send_buf+3,x
+        eor frame_chk
+        sta frame_chk
+        inx
+        jmp bl_build_cp
+bl_build_end:
+        lda frame_chk
+        sta send_buf+3,x
+        txa
+        clc
+        adc #4
+        sta send_total
+        lda #0
+        sta send_pos
 
-bl_inject:
+bl_send_check:
+        lda send_pos
+        cmp send_total
+        beq bl_inj_check        // done (or nothing to send)
+
+        // send one byte via CHKOUT/CHROUT/CLRCHN
+        tax
+        lda send_buf,x
+        pha
+        ldx #RS232_DEV
+        jsr CHKOUT
+        pla
+        jsr CHROUT
+        jsr CLRCHN
+        inc send_pos
+
+bl_inj_check:
         // ---- Step 2: Inject keystrokes if in AG_INJECTING state ----
         //
         // When the agent receives an EXEC frame, it transitions to
@@ -645,6 +699,7 @@ fr_x:   rts
 // This byte identifies what kind of frame it is (EXEC, RESULT, etc.)
 // Also serves as the initial value for the running XOR checksum.
 fr_sub:
+        and #$7F                // strip bit 7 (VICE RS232 corruption)
         sta frame_sub           // store the subtype byte
         sta frame_chk           // initialize checksum with subtype
         inc parse_state         // advance to state 2 (LEN)
@@ -655,6 +710,7 @@ fr_sub:
 // XOR it into the running checksum. If length is 0, skip directly
 // to state 4 (CHK) since there are no payload bytes.
 fr_len:
+        and #$7F                // strip bit 7
         sta frame_len           // store payload length
         eor frame_chk           // XOR length into running checksum
         sta frame_chk           // update checksum
@@ -672,9 +728,10 @@ fr_l1:  inc parse_state         // advance to state 3 (PAY)
 // Each byte is stored and XORed into the running checksum.
 // When rx_index reaches frame_len, advance to state 4 (CHK).
 fr_pay:
+        and #$7F                // strip bit 7
         ldx rx_index            // X = current payload position
-        sta AGENT_RXBUF,x      // store received byte in receive buffer at position X
-        eor frame_chk           // XOR this byte into running checksum
+        sta AGENT_RXBUF,x      // store masked byte in receive buffer
+        eor frame_chk           // XOR masked byte into running checksum
         sta frame_chk           // update checksum
         inx                     // advance to next position
         stx rx_index            // save updated position
@@ -688,8 +745,9 @@ fr_pay:
 // subtype + length + all payload bytes. If it matches, the frame
 // is valid and we dispatch it. Either way, reset parser to HUNT.
 fr_chk:
-        cmp frame_chk           // compare received checksum with computed
-        bne fr_bad              // mismatch → bad frame, skip dispatch
+        and #$7F                // strip bit 7 from received checksum
+        cmp frame_chk           // compare with computed (also 7-bit)
+        bne fr_bad              // mismatch → bad frame
         jsr frame_dispatch      // match → valid frame! handle it
 fr_bad: lda #0                  // reset parser state to HUNT
         sta parse_state         // ready for next frame
@@ -728,9 +786,11 @@ frame_dispatch:
         lda #7                  // 7 = yellow
         sta BORDER_COLOR
 
-        // send LLM_MSG frame via send_frame (CHKOUT/CHROUT/CLRCHN per byte)
-        lda #FRAME_LLM
-        jsr send_frame
+        // set flag — main loop drip-sends the LLM_MSG frame (one byte
+        // per iteration). Can't send from here because VICE RS232 only
+        // handles one CHKOUT/CHROUT/CLRCHN per main loop iteration.
+        lda #1
+        sta llm_pending
         rts
 
 fd_not_msg:
