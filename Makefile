@@ -50,7 +50,7 @@ echotest: $(KICKASS_JAR)
 # launch VICE with the agent and RS232 enabled
 # Agent is auto-loaded but not auto-run. Type SYS 49152 to start.
 vice: assemble
-	$(VICE) $(VICE_RS) $(VICE_MON) -autostart $(ASM_OUT)
+	$(VICE) $(VICE_RS) $(VICE_MON) -autostart $(ASM_OUT) -keybuf "sys 49152\n"
 
 # assemble the vector test
 vectest: $(KICKASS_JAR)
