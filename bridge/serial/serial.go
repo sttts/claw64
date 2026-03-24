@@ -30,8 +30,12 @@ func Listen(addr string) (*Link, error) {
 
 	l := &Link{ln: ln}
 
-	// VICE may send a probe (connect then drop) before the real connection.
-	// Accept until we get one that doesn't reset within 500ms.
+	// VICE makes multiple TCP connections:
+	//   1. Boot-time probe (before PRG loads)
+	//   2. Real connection when C64 agent calls OPEN (serial_init)
+	// Our agent sends '!' (0x21) as handshake after serial_init.
+	// Accept connections until we see the handshake byte.
+	var prev net.Conn
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -40,29 +44,31 @@ func Listen(addr string) (*Link, error) {
 		}
 		log.Printf("serial: connected from %s", conn.RemoteAddr())
 
-		// try a non-destructive check: peek with short deadline
-		conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		// close previous connection if we get a new one
+		if prev != nil {
+			prev.Close()
+		}
+		prev = conn
+
+		// wait up to 30s for handshake byte from C64 agent
+		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 		buf := make([]byte, 1)
 		_, err = conn.Read(buf)
 		conn.SetReadDeadline(time.Time{})
 
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// timeout = alive, just no data yet
-				l.conn = conn
-				log.Printf("serial: connected (stable)")
-				return l, nil
-			}
-			// connection reset — probe
-			log.Printf("serial: probe dropped, waiting for next")
-			conn.Close()
+			log.Printf("serial: no handshake, waiting for next connection")
 			continue
 		}
 
-		// got data (handshake byte) — real connection, active
-		log.Printf("serial: connected (handshake 0x%02X)", buf[0])
-		l.conn = conn
-		return l, nil
+		if buf[0] == 0x21 {
+			l.conn = conn
+			log.Printf("serial: C64 agent ready (handshake '!')")
+			return l, nil
+		}
+
+		// got data but not handshake — try next connection
+		log.Printf("serial: unexpected byte 0x%02X, waiting for next", buf[0])
 	}
 }
 
