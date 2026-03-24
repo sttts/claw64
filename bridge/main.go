@@ -55,8 +55,14 @@ func newLLM() (llm.Completer, string) {
 
 	switch backend {
 	case "anthropic":
+		// default: use claude CLI (handles all auth transparently)
+		c := llm.NewClaudeCLI(model)
+		return c, fmt.Sprintf("anthropic(cli) model=%s", c.Model)
+
+	case "anthropic-api":
+		// direct API (needs CLAW64_LLM_KEY or working Keychain)
 		c := llm.NewAnthropic(key, model)
-		return c, fmt.Sprintf("anthropic model=%s", c.Model)
+		return c, fmt.Sprintf("anthropic(api) model=%s", c.Model)
 
 	case "openai":
 		url := env("CLAW64_LLM_URL", "https://api.openai.com/v1/chat/completions")
@@ -75,7 +81,7 @@ func newLLM() (llm.Completer, string) {
 			fmt.Sprintf("ollama url=%s model=%s", url, model)
 
 	default:
-		log.Fatalf("unknown LLM backend: %q (use \"anthropic\", \"openai\", or \"ollama\")", backend)
+		log.Fatalf("unknown LLM backend: %q (use \"anthropic\", \"anthropic-api\", \"openai\", or \"ollama\")", backend)
 		return nil, ""
 	}
 }
