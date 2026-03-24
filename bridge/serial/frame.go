@@ -80,13 +80,17 @@ func readFiltered(r io.Reader) (byte, error) {
 // Decode reads one frame from r. Hunts for SYNC, then reads
 // type/length/payload/checksum, skipping interleaved $55 keepalive bytes.
 func Decode(r io.Reader) (Frame, error) {
-	// hunt for SYNC byte
+	// hunt for SYNC byte ($FE)
+	// VICE RS232 corrupts bits — accept $FE with any single-bit error:
+	// $FE=11111110, single-bit errors: $FF,$FC,$FA,$F6,$EE,$DE,$BE,$7E
+	// Simplified: accept any byte >= $7C with at least 5 bits set.
 	for {
 		b, err := readFiltered(r)
 		if err != nil {
 			return Frame{}, fmt.Errorf("sync: %w", err)
 		}
-		if b == SyncByte {
+		masked := b & 0x7F // strip bit 7
+		if masked >= 0x7C { // 0x7C=1111100, catches $FE,$FC,$7E,$7C etc
 			break
 		}
 	}

@@ -175,6 +175,7 @@ func (r *Relay) appendToolResult(userID, result string) {
 
 // recvFromC64 reads one frame from the C64, skipping heartbeats in a tight loop.
 func (r *Relay) recvFromC64(ctx context.Context) (serial.Frame, error) {
+	log.Println("relay: waiting for C64 frame...")
 	for {
 		if ctx.Err() != nil {
 			return serial.Frame{}, ctx.Err()
@@ -196,6 +197,7 @@ func (r *Relay) sendWithRetry(f serial.Frame) error {
 	for i, backoff := range retryBackoff {
 		err = r.Link.Send(f)
 		if err == nil {
+			log.Printf("relay: sent %s [%d bytes]", serial.TypeName(f.Type), len(f.Payload))
 			return nil
 		}
 		log.Printf("relay: send attempt %d failed: %v", i+1, err)

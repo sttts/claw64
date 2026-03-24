@@ -191,9 +191,13 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         //
         // CHKOUT sets the RS232 device as the current output channel,
         // CHROUT sends one byte through it, CLRCHN resets to default I/O.
-        // send handshake '!' via serial_write
+        // send handshake '!' via KERNAL (must use CHROUT, not ring buffer,
+        // because ring buffer writes don't produce TCP output on VICE)
+        ldx #RS232_DEV
+        jsr CHKOUT
         lda #$21
-        jsr serial_write
+        jsr CHROUT
+        jsr CLRCHN
 
 // ---------------------------------------------------------
 // Main loop — runs forever, never returns
@@ -240,6 +244,17 @@ bloop:
         pla
         jsr CHROUT
         jsr CLRCHN
+
+        // check if LLM_MSG needs to be sent (set by frame_dispatch for MSG)
+        lda llm_pending
+        beq bl_inject
+        lda #0
+        sta llm_pending
+
+        // send LLM_MSG frame — must be HERE (after echo, in main loop)
+        // because sf_byte doesn't work from inside frame_dispatch
+        lda #FRAME_LLM
+        jsr send_frame
 
 bl_inject:
         // ---- Step 2: Inject keystrokes if in AG_INJECTING state ----
@@ -550,17 +565,18 @@ ssr_chk_done:
         adc #4                  // add 4 for header (3 bytes) + checksum (1 byte)
         sta send_total          // store total number of bytes to send
 
-        // ---- Send the complete frame via ring buffer ----
-        // CHROUT burst doesn't work on VICE RS232 — use serial_write.
-        ldy #0                  // Y = index into send_buf
+        // ---- Send the complete frame byte-by-byte ----
+        ldy #0
 ssr_send:
-        lda send_buf,y          // load next byte to send
-        jsr serial_write        // write to RS232 ring buffer (NMI transmits)
-        iny                     // advance to next byte
-        cpy send_total          // have we sent all bytes?
-        bne ssr_send            // no → send next byte
+        lda send_buf,y
+        sty send_pos
+        jsr sf_byte             // CHKOUT/CHROUT/CLRCHN for one byte
+        ldy send_pos
+        iny
+        cpy send_total
+        bne ssr_send
 
-        rts                     // return to caller
+        rts
 
 // ---------------------------------------------------------
 // Send ERROR frame (timeout notification)
@@ -573,13 +589,13 @@ ssr_send:
 // ---------------------------------------------------------
 send_error:
         lda #SYNC_BYTE
-        jsr serial_write
+        jsr sf_byte
         lda #FRAME_ERROR
-        jsr serial_write
-        lda #0                  // length = 0
-        jsr serial_write
-        lda #FRAME_ERROR        // checksum = TYPE ^ 0 = TYPE
-        jsr serial_write
+        jsr sf_byte
+        lda #0
+        jsr sf_byte
+        lda #FRAME_ERROR
+        jsr sf_byte
         rts
 
 // ---------------------------------------------------------
@@ -615,9 +631,13 @@ frame_rx_byte:
         rts
 
 // State 0: HUNT — looking for the SYNC byte ($FE) that starts every frame
+// VICE RS232 corrupts bits in both directions. Accept any byte >= $FC
+// after stripping bit 7 (i.e. $7C-$7F, $FC-$FF). This catches $FE
+// with up to 1 bit error in the lower 7 bits.
 fr_hunt:
-        cmp #SYNC_BYTE          // is this byte the sync marker?
-        bne fr_x                // no → ignore, stay in HUNT
+        and #$7F                // strip bit 7 (VICE corruption)
+        cmp #$7C                // is it >= $7C? ($FE masked = $7E, with 1-bit error → $7C+)
+        bcc fr_x                // no → ignore, stay in HUNT
         inc parse_state         // yes → advance to state 1 (SUB)
 fr_x:   rts
 
@@ -708,7 +728,7 @@ frame_dispatch:
         lda #7                  // 7 = yellow
         sta BORDER_COLOR
 
-        // send LLM_MSG frame via ring buffer (same send_frame helper)
+        // send LLM_MSG frame via send_frame (CHKOUT/CHROUT/CLRCHN per byte)
         lda #FRAME_LLM
         jsr send_frame
         rts
@@ -736,55 +756,73 @@ fd_not_text:
         lda #AG_INJECTING       // switch agent to INJECTING state
         sta agent_state         // main loop will now drip-feed keystrokes
 
-        // ---- Send echo RESULT frame via ring buffer ----
-        // CHROUT burst doesn't work on VICE RS232 (only 1 byte per
-        // CHKOUT session). Use serial_write (direct ring buffer)
-        // which bypasses KERNAL and lets the NMI transmit.
-        lda #FRAME_RESULT       // type byte for send_frame helper
-        jsr send_frame          // sends AGENT_RXBUF[0..frame_len-1] as frame
+        // ---- Send echo RESULT frame ----
+        // Each byte sent via its own CHKOUT/CHROUT/CLRCHN cycle
+        // (only way that works on VICE RS232).
+        lda #FRAME_RESULT
+        jsr send_frame
 
 fd_done:
         rts
 
 // ---------------------------------------------------------
-// send_frame — send a frame using serial_write (ring buffer)
+// send_frame — send a frame one byte at a time
+//
+// Each byte uses CHKOUT/CHROUT/CLRCHN (the ONLY transmit method
+// that works on VICE RS232 — ring buffer writes and multi-byte
+// CHROUT per CHKOUT session both fail).
 //
 // Input: A = frame type byte
 //        AGENT_RXBUF[0..frame_len-1] = payload
 //        frame_len = payload length
-// Uses:  frame_chk, X, Y
+// Uses:  frame_chk, send_pos, X
 // ---------------------------------------------------------
 send_frame:
-        sta frame_chk           // save type byte, also start checksum
+        sta send_pos            // save type byte
 
-        // write SYNC
+        // send SYNC
         lda #SYNC_BYTE
-        jsr serial_write
+        jsr sf_byte
 
-        // write TYPE
-        lda frame_chk           // reload type byte
-        jsr serial_write
+        // send TYPE, init checksum
+        lda send_pos
+        jsr sf_byte
+        sta frame_chk
 
-        // write LEN, update checksum
+        // send LEN, update checksum
         lda frame_len
-        jsr serial_write
+        jsr sf_byte
         eor frame_chk
         sta frame_chk
 
-        // write payload, update checksum
+        // send payload
         ldx #0
 sf_pay: cpx frame_len
         beq sf_chk
         lda AGENT_RXBUF,x
-        jsr serial_write
+        stx send_pos            // save X (sf_byte clobbers it)
+        jsr sf_byte
         eor frame_chk
         sta frame_chk
+        ldx send_pos            // restore X
         inx
         jmp sf_pay
 
-        // write checksum
+        // send checksum
 sf_chk: lda frame_chk
-        jsr serial_write
+        jsr sf_byte
+        rts
+
+// Send one byte via CHKOUT/CHROUT/CLRCHN. Preserves A.
+sf_byte:
+        pha
+        ldx #RS232_DEV
+        jsr CHKOUT
+        pla
+        pha
+        jsr CHROUT
+        jsr CLRCHN
+        pla
         rts
 
 // ---------------------------------------------------------

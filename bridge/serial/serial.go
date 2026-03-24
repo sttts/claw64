@@ -66,8 +66,10 @@ func Listen(addr string) (*Link, error) {
 	}
 }
 
-// Send writes a frame to the C64, byte-by-byte with short delays.
-// Burst writes cause first-byte corruption on VICE RS232.
+// Send writes a frame to the C64, byte-by-byte with delays.
+// At 2400 baud, the C64's NMI handles both RX and TX. Sending all bytes
+// at once causes RX/TX collision that corrupts the echo. Spacing bytes
+// at ~2× the per-byte time (8.3ms) avoids this.
 func (l *Link) Send(f Frame) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -77,7 +79,7 @@ func (l *Link) Send(f Frame) error {
 		if _, err := l.conn.Write([]byte{b}); err != nil {
 			return fmt.Errorf("send %s: %w", TypeName(f.Type), err)
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 	return nil
 }
