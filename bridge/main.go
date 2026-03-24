@@ -24,25 +24,23 @@ func main() {
 	}
 	defer link.Close()
 
-	// wait for agent to initialize
+	// wait for agent to initialize (keybuf SYS at ~20s)
 	time.Sleep(25 * time.Second)
 
 	// warm up: send non-SYNC, non-zero bytes to activate the echo channel
-	// (SYNC=$FE would corrupt the parser; $00 doesn't echo)
 	warmup := make([]byte, 20)
 	for i := range warmup {
-		warmup[i] = 0x55 // 'U' — harmless to parser (not SYNC)
+		warmup[i] = 0x55
 	}
 	link.SendRaw(warmup)
 	time.Sleep(2 * time.Second)
 
-	// drain echo'd warmup bytes BEFORE sending EXEC
+	// drain echo'd warmup bytes
 	link.DrainRead(500 * time.Millisecond)
 
-	// send EXEC
+	// send EXEC byte-by-byte with delays
 	cmd := "PRINT 42"
 	log.Printf("send EXEC: %q", cmd)
-	// send EXEC frame byte by byte with delays (matches Python test pattern)
 	frame := serial.Encode(serial.Frame{
 		Type:    serial.FrameExec,
 		Payload: []byte(cmd),
@@ -54,18 +52,19 @@ func main() {
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	// drain echo'd EXEC + first RESULT (echo confirmation)
-	// The echo and first RESULT arrive within ~2 seconds.
-	// The screen scrape RESULT arrives after BASIC executes (~3-5 seconds).
-	time.Sleep(3 * time.Second)
-	link.DrainRead(1 * time.Second)
-
-	log.Println("waiting for screen output...")
-
-	// read the screen scrape RESULT (or ERROR on timeout)
+	// receive echo RESULT (fd_exec sends it immediately)
+	log.Println("waiting for echo RESULT...")
 	f, err := link.Recv()
 	if err != nil {
-		log.Fatalf("recv error: %v", err)
+		log.Fatalf("recv echo: %v", err)
+	}
+	log.Printf("echo RESULT [%d bytes]: %q", len(f.Payload), string(f.Payload))
+
+	// receive screen scrape RESULT (after BASIC executes + READY. detected)
+	log.Println("waiting for screen scrape RESULT...")
+	f, err = link.Recv()
+	if err != nil {
+		log.Fatalf("recv screen: %v", err)
 	}
 	if f.Type == serial.FrameError {
 		fmt.Println("C64: command timed out")

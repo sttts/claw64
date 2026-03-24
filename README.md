@@ -105,10 +105,10 @@ User sees:       "6502 * 8 = 52016"
 | Skeleton + Build System | :white_check_mark: |
 | Serial I/O (C64 TSR) | :white_check_mark: |
 | Frame Protocol (C64 + Go) | :white_check_mark: |
-| Keystroke Injection | :construction: |
-| Screen Scraping + READY. Detection | |
-| Bridge LLM Client | |
-| Bridge Orchestrator | |
+| Keystroke Injection | :white_check_mark: |
+| Screen Scraping + READY. Detection | :white_check_mark: |
+| Bridge LLM Client | :white_check_mark: |
+| Bridge Orchestrator | :white_check_mark: |
 | Chat: Slack (slagent) | |
 | Chat: WhatsApp (whatsmeow) | |
 | Chat: Signal (signal-cli) | |
