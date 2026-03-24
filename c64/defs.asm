@@ -3,9 +3,10 @@
 // ================================================
 
 // Agent memory layout
+// Code + data extends to ~$C410. Buffers must be above that.
 .const AGENT_BASE    = $C000  // agent code starts here
-.const AGENT_RXBUF   = $C300  // 256-byte receive buffer (after code)
-.const AGENT_TXBUF   = $C400  // 256-byte transmit / inject buffer
+.const AGENT_RXBUF   = $C500  // 256-byte receive buffer
+.const AGENT_TXBUF   = $C600  // 256-byte transmit / inject buffer
 
 // KERNAL jump table
 .const SETLFS  = $FFBA

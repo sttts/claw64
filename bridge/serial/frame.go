@@ -48,7 +48,7 @@ func Encode(f Frame) []byte {
 	if n > 255 {
 		n = 255
 	}
-	buf := make([]byte, 4+n+1) // SYNC + TYPE + LEN + PAYLOAD + CHK
+	buf := make([]byte, 4+n) // SYNC + TYPE + LEN + PAYLOAD + CHK
 	buf[0] = SyncByte
 	buf[1] = f.Type
 	buf[2] = byte(n)
@@ -94,7 +94,6 @@ func Decode(r io.Reader) (Frame, error) {
 readType:
 	// read subtype (skip more SYNCs too)
 	var typ byte
-	var rawTyp byte
 	for {
 		b, err := readFiltered(r)
 		if err != nil {
@@ -103,11 +102,12 @@ readType:
 		if b == SyncByte {
 			continue
 		}
-		rawTyp = b
 		typ = b & 0x7F
 		break
 	}
-	chk := rawTyp
+	// compute checksum on masked (7-bit) values — VICE RS232 randomly
+	// sets bit 7 on transmitted bytes, which would corrupt raw checksums
+	chk := typ
 	log.Printf("  decode: type=0x%02X (%s)", typ, TypeName(typ))
 
 	// read length
@@ -116,7 +116,7 @@ readType:
 		return Frame{}, fmt.Errorf("length: %w", err)
 	}
 	length := rawLen & 0x7F
-	chk ^= rawLen
+	chk ^= length
 
 	// sanity check: if type is not recognized OR length is suspiciously large,
 	// this is likely a corrupted frame — retry from SYNC hunt
@@ -139,17 +139,18 @@ readType:
 			return Frame{}, fmt.Errorf("payload[%d]: %w", i, err)
 		}
 		payload[i] = pb & 0x7F // strip bit 7
-		chk ^= pb              // checksum uses raw byte
+		chk ^= payload[i]      // checksum on masked bytes
 	}
 
-	// read and verify checksum
-	cb, err := readFiltered(r)
+	// read and verify checksum (mask bit 7 like everything else)
+	rawCb, err := readFiltered(r)
 	if err != nil {
 		return Frame{}, fmt.Errorf("checksum: %w", err)
 	}
+	cb := rawCb & 0x7F
 	if cb != chk {
-		log.Printf("  checksum fail: got 0x%02X want 0x%02X", cb, chk)
-		if cb == SyncByte {
+		log.Printf("  checksum fail: got 0x%02X want 0x%02X (raw 0x%02X)", cb, chk, rawCb)
+		if rawCb == SyncByte {
 			// the "checksum" byte was actually a SYNC — start of next frame
 			// don't consume it; instead, read TYPE directly
 			log.Printf("  checksum was SYNC — reading next frame inline")

@@ -31,11 +31,12 @@ func Listen(addr string) (*Link, error) {
 	l := &Link{ln: ln}
 
 	// VICE makes multiple TCP connections:
-	//   1. Boot-time probe (before PRG loads)
+	//   1. Boot-time probe (before PRG loads) — drops on C64 RESET
 	//   2. Real connection when C64 agent calls OPEN (serial_init)
 	// Our agent sends '!' (0x21) as handshake after serial_init.
 	// Accept connections until we see the handshake byte.
-	var prev net.Conn
+	// IMPORTANT: never close old connections — VICE's RS232 layer
+	// treats any TCP close as EOF and kills the channel.
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -43,12 +44,6 @@ func Listen(addr string) (*Link, error) {
 			return nil, fmt.Errorf("accept: %w", err)
 		}
 		log.Printf("serial: connected from %s", conn.RemoteAddr())
-
-		// close previous connection if we get a new one
-		if prev != nil {
-			prev.Close()
-		}
-		prev = conn
 
 		// wait up to 30s for handshake byte from C64 agent
 		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
@@ -67,7 +62,6 @@ func Listen(addr string) (*Link, error) {
 			return l, nil
 		}
 
-		// got data but not handshake — try next connection
 		log.Printf("serial: unexpected byte 0x%02X, waiting for next", buf[0])
 	}
 }

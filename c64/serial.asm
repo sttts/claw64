@@ -102,26 +102,23 @@ sr_no_data:
         rts                 // return (A is undefined)
 
 // ---------------------------------------------------------
-// Write one byte to the RS232 transmit buffer
+// Write one byte via KERNAL CHKOUT/CHROUT/CLRCHN
 //
-// We write the byte and advance RODBE. The NMI handler reads
-// from RODBS and transmits bytes out the userport. As long as
-// RODBE != RODBS, the NMI keeps transmitting.
-//
-// IRQ-SAFE: no KERNAL calls, just memory writes.
+// VICE RS232 only transmits via KERNAL CHROUT, not via direct
+// ring buffer writes. Each byte needs its own CHKOUT session.
 //
 // Input: A = byte to send
-// Clobbers: Y
+// Clobbers: X, Y (KERNAL calls)
+// Preserves: A (saved/restored across KERNAL calls)
 // ---------------------------------------------------------
 serial_write:
-        ldy RODBE           // Y = current write position in transmit buffer
-        sta (ROBUF_LO),y   // store byte at transmit_buffer[Y]
-                            // (ROBUF_LO/HI at $F9/$FA points to the buffer)
-
-        iny                 // increment write index (wraps 255→0 automatically)
-        sty RODBE           // store updated write position
-                            // NMI handler sees RODBE != RODBS and starts transmitting
-        rts                 // return
+        pha                 // save the byte to send
+        ldx #RS232_DEV      // X = logical file number 2 (RS232)
+        jsr CHKOUT          // KERNAL: redirect output to RS232
+        pla                 // restore byte
+        jsr CHROUT          // KERNAL: send the byte
+        jsr CLRCHN          // KERNAL: reset I/O channels
+        rts
 
 // ---------------------------------------------------------
 // Close RS232 device (cleanup — disables NMI, frees buffers)

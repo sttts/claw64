@@ -35,11 +35,11 @@
 
 // Temporary 256-byte buffer used during KERNAL ROM copy.
 // Located at $C500, safely in our agent's memory space.
-.const TMPBUF   = $C500
+.const TMPBUF   = $C700
 
 // Buffer for building outgoing serial frames before burst-sending.
-// Located at $C400, between the receive buffer and TMPBUF.
-.const send_buf = $C400
+// Located at $C600 (AGENT_TXBUF), above the receive buffer.
+.const send_buf = AGENT_TXBUF
 
 // Agent state machine constants.
 // The agent cycles through these states as it processes commands:
@@ -172,6 +172,7 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         sta inj_pos             // keystroke injection position = 0
         sta inj_len             // no keystrokes to inject yet
         sta ready_timer         // READY. detection timer starts at 0
+        sta llm_pending         // no pending LLM_MSG
 
         // Save the current border color so we can restore it after flashes.
         // Set border to cyan (3) = visual indicator that install is complete.
@@ -190,11 +191,9 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         //
         // CHKOUT sets the RS232 device as the current output channel,
         // CHROUT sends one byte through it, CLRCHN resets to default I/O.
-        ldx #RS232_DEV          // X = logical file number 2 (RS232)
-        jsr CHKOUT              // KERNAL: redirect output to RS232 device
-        lda #$21                // A = '!' (ASCII 0x21) — handshake signal
-        jsr CHROUT              // KERNAL: send the byte over RS232
-        jsr CLRCHN              // KERNAL: reset I/O channels to screen/keyboard
+        // send handshake '!' via serial_write
+        lda #$21
+        jsr serial_write
 
 // ---------------------------------------------------------
 // Main loop — runs forever, never returns
@@ -233,15 +232,14 @@ bloop:
 
         jsr frame_rx_byte       // feed byte to the frame protocol parser
 
-        // Echo received byte back to bridge (for debugging/flow control).
-        // This also keeps the RS232 channel active.
-        lda rx_byte             // reload the byte we received
-        pha                     // save it (CHKOUT may clobber A)
-        ldx #RS232_DEV          // X = logical file number 2 (RS232)
-        jsr CHKOUT              // KERNAL: redirect output to RS232
-        pla                     // restore the byte to send
-        jsr CHROUT              // KERNAL: send byte over RS232
-        jsr CLRCHN              // KERNAL: reset I/O channels to defaults
+        // Echo received byte back to bridge
+        lda rx_byte
+        pha
+        ldx #RS232_DEV
+        jsr CHKOUT
+        pla
+        jsr CHROUT
+        jsr CLRCHN
 
 bl_inject:
         // ---- Step 2: Inject keystrokes if in AG_INJECTING state ----
@@ -552,23 +550,15 @@ ssr_chk_done:
         adc #4                  // add 4 for header (3 bytes) + checksum (1 byte)
         sta send_total          // store total number of bytes to send
 
-        // ---- Burst-send the complete frame over RS232 ----
-        //
-        // CHKOUT redirects output to RS232, then we loop sending each
-        // byte with CHROUT. We save/restore Y across CHROUT because
-        // KERNAL RS232 output can clobber registers.
-        ldx #RS232_DEV          // X = logical file number 2 (RS232)
-        jsr CHKOUT              // KERNAL: redirect output to RS232
+        // ---- Send the complete frame via ring buffer ----
+        // CHROUT burst doesn't work on VICE RS232 — use serial_write.
         ldy #0                  // Y = index into send_buf
 ssr_send:
-        sty send_pos            // save Y (CHROUT may clobber it)
         lda send_buf,y          // load next byte to send
-        jsr CHROUT              // KERNAL: send byte over RS232
-        ldy send_pos            // restore Y
+        jsr serial_write        // write to RS232 ring buffer (NMI transmits)
         iny                     // advance to next byte
         cpy send_total          // have we sent all bytes?
         bne ssr_send            // no → send next byte
-        jsr CLRCHN              // KERNAL: reset I/O channels to defaults
 
         rts                     // return to caller
 
@@ -582,17 +572,14 @@ ssr_send:
 // Checksum = TYPE ^ LENGTH = 'X' ^ 0 = 'X'
 // ---------------------------------------------------------
 send_error:
-        ldx #RS232_DEV          // X = logical file number 2 (RS232)
-        jsr CHKOUT              // KERNAL: redirect output to RS232
-        lda #SYNC_BYTE          // $FE — frame sync byte
-        jsr CHROUT              // send SYNC
-        lda #FRAME_ERROR        // $58 ('X') — ERROR frame type
-        jsr CHROUT              // send frame type
-        lda #0                  // payload length = 0 (no detail message)
-        jsr CHROUT              // send length byte
-        lda #FRAME_ERROR        // checksum = TYPE ^ 0 = TYPE = $58
-        jsr CHROUT              // send checksum
-        jsr CLRCHN              // KERNAL: reset I/O channels to defaults
+        lda #SYNC_BYTE
+        jsr serial_write
+        lda #FRAME_ERROR
+        jsr serial_write
+        lda #0                  // length = 0
+        jsr serial_write
+        lda #FRAME_ERROR        // checksum = TYPE ^ 0 = TYPE
+        jsr serial_write
         rts
 
 // ---------------------------------------------------------
@@ -721,55 +708,9 @@ frame_dispatch:
         lda #7                  // 7 = yellow
         sta BORDER_COLOR
 
-        // forward the user's message to the LLM by sending it back
-        // as an LLM_MSG (L) frame — the bridge will call the model
-        lda #SYNC_BYTE
-        sta send_buf+0
-        lda #FRAME_LLM          // $4C ('L') — tell bridge to call LLM
-        sta send_buf+1
-        lda frame_len
-        sta send_buf+2
-
-        // checksum: TYPE ^ LEN
+        // send LLM_MSG frame via ring buffer (same send_frame helper)
         lda #FRAME_LLM
-        eor frame_len
-        sta frame_chk
-
-        // copy payload from AGENT_RXBUF to send_buf, update checksum
-        ldx #0
-fd_msg_cp:
-        cpx frame_len
-        beq fd_msg_end
-        lda AGENT_RXBUF,x
-        sta send_buf+3,x
-        eor frame_chk
-        sta frame_chk
-        inx
-        jmp fd_msg_cp
-
-fd_msg_end:
-        // append checksum
-        lda frame_chk
-        sta send_buf+3,x
-        txa
-        clc
-        adc #4                  // total = payload + SYNC + TYPE + LEN + CHK
-        sta send_total
-
-        // burst-send the LLM_MSG frame
-        ldx #RS232_DEV
-        jsr CHKOUT
-        ldy #0
-fd_msg_send:
-        sty send_pos
-        lda send_buf,y
-        jsr CHROUT
-        ldy send_pos
-        iny
-        cpy send_total
-        bne fd_msg_send
-        jsr CLRCHN
-
+        jsr send_frame
         rts
 
 fd_not_msg:
@@ -795,62 +736,56 @@ fd_not_text:
         lda #AG_INJECTING       // switch agent to INJECTING state
         sta agent_state         // main loop will now drip-feed keystrokes
 
-        // ---- Build and send echo RESULT frame ----
-        //
-        // Send the received command text back as a RESULT frame.
-        // This serves as an acknowledgment to the bridge that the
-        // command was received successfully. The bridge can compare
-        // the echo to verify no corruption occurred.
-        //
-        // Build frame header in send_buf:
-        lda #SYNC_BYTE          // $FE — frame sync
-        sta send_buf+0          // send_buf[0] = SYNC
-        lda #FRAME_RESULT       // $52 ('R') — RESULT frame type
-        sta send_buf+1          // send_buf[1] = type
-        lda frame_len           // payload length = same as received command
-        sta send_buf+2          // send_buf[2] = length
-
-        // Initialize checksum with TYPE ^ LENGTH
-        lda #FRAME_RESULT       // start checksum with frame type
-        eor frame_len           // XOR with payload length
-        sta frame_chk           // store running checksum
-
-        // Copy payload from AGENT_RXBUF to send_buf and XOR into checksum
-        ldx #0                  // X = byte index
-fd_cp:  cpx frame_len           // have we copied all bytes?
-        beq fd_end              // yes → finish frame
-        lda AGENT_RXBUF,x      // load payload byte from receive buffer
-        sta send_buf+3,x       // copy to send buffer payload area
-        eor frame_chk           // XOR into running checksum
-        sta frame_chk           // update checksum
-        inx                     // next byte
-        jmp fd_cp               // continue copying
-
-fd_end:
-        // Append checksum and calculate total frame size
-        lda frame_chk           // final checksum value
-        sta send_buf+3,x       // store checksum byte after payload
-        txa                     // X = payload length (for size calculation)
-        clc
-        adc #4                  // total = payload + 4 (SYNC + TYPE + LEN + CHK)
-        sta send_total          // store total frame size
-
-        // ---- Burst-send the echo RESULT frame ----
-        ldx #RS232_DEV          // X = logical file number 2 (RS232)
-        jsr CHKOUT              // KERNAL: redirect output to RS232
-        ldy #0                  // Y = index into send_buf
-fd_send:
-        sty send_pos            // save Y (CHROUT may clobber it)
-        lda send_buf,y          // load next byte to send
-        jsr CHROUT              // KERNAL: send byte over RS232
-        ldy send_pos            // restore Y
-        iny                     // advance to next byte
-        cpy send_total          // have we sent all bytes?
-        bne fd_send             // no → send next byte
-        jsr CLRCHN              // KERNAL: reset I/O channels to defaults
+        // ---- Send echo RESULT frame via ring buffer ----
+        // CHROUT burst doesn't work on VICE RS232 (only 1 byte per
+        // CHKOUT session). Use serial_write (direct ring buffer)
+        // which bypasses KERNAL and lets the NMI transmit.
+        lda #FRAME_RESULT       // type byte for send_frame helper
+        jsr send_frame          // sends AGENT_RXBUF[0..frame_len-1] as frame
 
 fd_done:
-        rts                     // return to caller
+        rts
+
+// ---------------------------------------------------------
+// send_frame — send a frame using serial_write (ring buffer)
+//
+// Input: A = frame type byte
+//        AGENT_RXBUF[0..frame_len-1] = payload
+//        frame_len = payload length
+// Uses:  frame_chk, X, Y
+// ---------------------------------------------------------
+send_frame:
+        sta frame_chk           // save type byte, also start checksum
+
+        // write SYNC
+        lda #SYNC_BYTE
+        jsr serial_write
+
+        // write TYPE
+        lda frame_chk           // reload type byte
+        jsr serial_write
+
+        // write LEN, update checksum
+        lda frame_len
+        jsr serial_write
+        eor frame_chk
+        sta frame_chk
+
+        // write payload, update checksum
+        ldx #0
+sf_pay: cpx frame_len
+        beq sf_chk
+        lda AGENT_RXBUF,x
+        jsr serial_write
+        eor frame_chk
+        sta frame_chk
+        inx
+        jmp sf_pay
+
+        // write checksum
+sf_chk: lda frame_chk
+        jsr serial_write
+        rts
 
 // ---------------------------------------------------------
 // Send LLM message as FRAME_LLM frame (stub)
@@ -928,5 +863,6 @@ send_pos:     .byte 0   // current position during burst-send (saved across CHRO
 send_total:   .byte 0   // total bytes to send in current burst-send operation
 cur_page:     .byte $E0 // current page during KERNAL ROM copy ($E0-$FF), init to $E0
 saved_border: .byte 3   // original border color to restore after activity flash
+llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
 
 #import "serial.asm"

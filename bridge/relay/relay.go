@@ -65,11 +65,8 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 
 		switch f.Type {
 		case serial.FrameLLM:
-			// C64 asks us to call the LLM
+			// C64 asks us to call the LLM (payload is context, not a duplicate user msg)
 			log.Printf("relay: LLM_MSG from C64: %q", string(f.Payload))
-			if len(f.Payload) > 0 {
-				r.History.Append(userID, llm.Message{Role: "user", Content: string(f.Payload)})
-			}
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
