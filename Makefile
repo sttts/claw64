@@ -64,9 +64,15 @@ vice-vec: vectest
 vice-echo: echotest
 	$(VICE) $(VICE_RS) -autostartprgmode 1 $(ECHO_OUT)
 
-# run the Go bridge
+# run the Go bridge (auto-extracts Anthropic key from Keychain if not set)
 bridge:
-	cd bridge && go run .
+	@if [ -z "$$CLAW64_LLM_KEY" ] && [ "$${CLAW64_LLM:-anthropic}" = "anthropic" ]; then \
+		key=$$(security find-generic-password -s "Claude Code" -w 2>/dev/null) && \
+		case "$$key" in \
+			'{'*) CLAW64_LLM_KEY=$$(echo "$$key" | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])") ;; \
+			*) CLAW64_LLM_KEY="$$key" ;; \
+		esac && export CLAW64_LLM_KEY; \
+	fi && cd bridge && go run .
 
 # run the serial test tool (TCP server on port 25232)
 test-serial:
