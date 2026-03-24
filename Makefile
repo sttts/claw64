@@ -66,6 +66,7 @@ vice-echo: echotest
 
 # run the Go bridge (default: uses claude CLI for LLM, stdin for chat)
 bridge:
+	@-lsof -ti :25232 2>/dev/null | xargs kill 2>/dev/null; true
 	cd bridge && go run .
 
 # run the serial test tool (TCP server on port 25232)
