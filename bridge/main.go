@@ -24,7 +24,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/sttts/claw64/relay"
 	"github.com/sttts/claw64/chat"
@@ -156,35 +155,18 @@ func runBridge() {
 // testSerial sends a test EXEC frame and prints the RESULT (no LLM/chat).
 func testSerial() {
 	addr := env("CLAW64_SERIAL_ADDR", "127.0.0.1:25232")
+	// Listen waits for C64 handshake '!' — no sleep needed
 	link, err := serial.Listen(addr)
 	if err != nil {
 		log.Fatalf("serial: %v", err)
 	}
 	defer link.Close()
 
-	time.Sleep(25 * time.Second)
-
-	// warm up RS232 channel
-	warmup := make([]byte, 20)
-	for i := range warmup {
-		warmup[i] = 0x55
-	}
-	link.SendRaw(warmup)
-	time.Sleep(2 * time.Second)
-	link.DrainRead(500 * time.Millisecond)
-
-	// send EXEC byte-by-byte
+	// send EXEC via the standard Send (byte-by-byte with delays)
 	cmd := "PRINT 42"
 	log.Printf("send EXEC: %q", cmd)
-	frame := serial.Encode(serial.Frame{
-		Type:    serial.FrameExec,
-		Payload: []byte(cmd),
-	})
-	for _, b := range frame {
-		if err := link.SendRaw([]byte{b}); err != nil {
-			log.Fatalf("send: %v", err)
-		}
-		time.Sleep(200 * time.Millisecond)
+	if err := link.Send(serial.Frame{Type: serial.FrameExec, Payload: []byte(cmd)}); err != nil {
+		log.Fatalf("send: %v", err)
 	}
 
 	// receive echo RESULT
