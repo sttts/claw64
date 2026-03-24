@@ -7,14 +7,15 @@
 //
 // Environment variables:
 //
-//	CLAW64_SERIAL_ADDR    — serial TCP address (default: 127.0.0.1:25232)
-//	CLAW64_LLM_URL        — OpenAI-compatible endpoint (default: http://localhost:11434/v1/chat/completions)
-//	CLAW64_LLM_KEY        — API key (optional)
-//	CLAW64_LLM_MODEL      — model name (default: llama3)
-//	CLAW64_CHAT            — chat backend: "slack" or "whatsapp" (default: none, test mode)
-//	SLACK_BOT_TOKEN        — Slack bot token (xoxb-...)
-//	SLACK_APP_TOKEN        — Slack app-level token (xapp-...)
-//	CLAW64_WA_DB           — WhatsApp session DB path (default: whatsapp.db)
+//	CLAW64_SERIAL_ADDR  — serial TCP address (default: 127.0.0.1:25232)
+//	CLAW64_LLM          — LLM backend: "anthropic", "openai", "ollama" (default: anthropic)
+//	CLAW64_LLM_KEY      — API key (anthropic: auto from Keychain if empty; openai/ollama: optional)
+//	CLAW64_LLM_MODEL    — model name (default per backend)
+//	CLAW64_LLM_URL      — endpoint URL (only for openai/ollama)
+//	CLAW64_CHAT          — chat backend: "slack" or "whatsapp"
+//	SLACK_BOT_TOKEN      — Slack bot token (xoxb-...)
+//	SLACK_APP_TOKEN      — Slack app-level token (xapp-...)
+//	CLAW64_WA_DB         — WhatsApp session DB path (default: whatsapp.db)
 package main
 
 import (
@@ -32,13 +33,10 @@ import (
 )
 
 func main() {
-	// test-serial mode: send EXEC "PRINT 42", print result, exit
 	if len(os.Args) > 1 && os.Args[1] == "test-serial" {
 		testSerial()
 		return
 	}
-
-	// full bridge mode
 	runBridge()
 }
 
@@ -47,6 +45,39 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// newLLM creates the LLM client based on CLAW64_LLM env var.
+func newLLM() (llm.Completer, string) {
+	backend := env("CLAW64_LLM", "anthropic")
+	key := os.Getenv("CLAW64_LLM_KEY")
+	model := os.Getenv("CLAW64_LLM_MODEL")
+
+	switch backend {
+	case "anthropic":
+		c := llm.NewAnthropic(key, model)
+		return c, fmt.Sprintf("anthropic model=%s", c.Model)
+
+	case "openai":
+		url := env("CLAW64_LLM_URL", "https://api.openai.com/v1/chat/completions")
+		if model == "" {
+			model = "gpt-4o"
+		}
+		return &llm.OpenAIClient{URL: url, APIKey: key, Model: model},
+			fmt.Sprintf("openai url=%s model=%s", url, model)
+
+	case "ollama":
+		url := env("CLAW64_LLM_URL", "http://localhost:11434/v1/chat/completions")
+		if model == "" {
+			model = "llama3"
+		}
+		return &llm.OpenAIClient{URL: url, Model: model},
+			fmt.Sprintf("ollama url=%s model=%s", url, model)
+
+	default:
+		log.Fatalf("unknown LLM backend: %q (use \"anthropic\", \"openai\", or \"ollama\")", backend)
+		return nil, ""
+	}
 }
 
 func runBridge() {
@@ -61,12 +92,8 @@ func runBridge() {
 	}
 	defer link.Close()
 
-	// configure LLM client
-	llmClient := &llm.Client{
-		URL:    env("CLAW64_LLM_URL", "http://localhost:11434/v1/chat/completions"),
-		APIKey: env("CLAW64_LLM_KEY", ""),
-		Model:  env("CLAW64_LLM_MODEL", "llama3"),
-	}
+	// configure LLM
+	llmClient, llmDesc := newLLM()
 
 	// create agent
 	ag := &agent.Agent{
@@ -94,19 +121,18 @@ func runBridge() {
 		dbPath := env("CLAW64_WA_DB", "whatsapp.db")
 		waCh, err := chat.NewWhatsApp(dbPath)
 		if err != nil {
-			log.Fatalf("whatsapp init: %v", err)
+			log.Fatalf("whatsapp: %v", err)
 		}
 		ch = waCh
 	default:
 		log.Fatalf("unknown chat backend: %q (use \"slack\" or \"whatsapp\")", backend)
 	}
 
-	log.Printf("bridge: starting with chat=%s serial=%s llm=%s model=%s",
-		ch.Name(), addr, llmClient.URL, llmClient.Model)
+	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, addr)
 
 	// run chat — blocks until ctx is cancelled
 	err = ch.Start(ctx, func(ctx context.Context, userID, text string) (string, error) {
-		log.Printf("bridge: message from %s: %q", userID, text)
+		log.Printf("bridge: [%s] %q", userID, text)
 		reply, err := ag.HandleMessage(ctx, userID, text)
 		if err != nil {
 			log.Printf("bridge: agent error: %v", err)
@@ -129,7 +155,6 @@ func testSerial() {
 	}
 	defer link.Close()
 
-	// wait for agent to initialize
 	time.Sleep(25 * time.Second)
 
 	// warm up RS232 channel
@@ -141,7 +166,7 @@ func testSerial() {
 	time.Sleep(2 * time.Second)
 	link.DrainRead(500 * time.Millisecond)
 
-	// send EXEC byte-by-byte with delays
+	// send EXEC byte-by-byte
 	cmd := "PRINT 42"
 	log.Printf("send EXEC: %q", cmd)
 	frame := serial.Encode(serial.Frame{

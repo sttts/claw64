@@ -21,7 +21,7 @@ var retryBackoff = []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * 
 // and the C64 serial link.
 type Agent struct {
 	Link    *serial.Link
-	LLM     *llm.Client
+	LLM     llm.Completer
 	History *History
 }
 
