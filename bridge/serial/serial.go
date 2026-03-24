@@ -67,15 +67,18 @@ func Listen(addr string) (*Link, error) {
 	}
 }
 
-// Send writes a frame to the C64.
+// Send writes a frame to the C64, byte-by-byte with short delays.
+// Burst writes cause first-byte corruption on VICE RS232.
 func (l *Link) Send(f Frame) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	data := Encode(f)
-	_, err := l.conn.Write(data)
-	if err != nil {
-		return fmt.Errorf("send %s: %w", TypeName(f.Type), err)
+	for _, b := range data {
+		if _, err := l.conn.Write([]byte{b}); err != nil {
+			return fmt.Errorf("send %s: %w", TypeName(f.Type), err)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	return nil
 }
