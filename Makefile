@@ -29,7 +29,7 @@ ECHO_OUT    = c64/echotest.prg
 VEC_SRC     = c64/vectest.asm
 VEC_OUT     = c64/vectest.prg
 
-.PHONY: assemble echotest vice vice-echo bridge test-serial clean clean-all
+.PHONY: assemble echotest vice vice-echo bridge run test-serial clean clean-all
 
 # download KickAssembler if not present
 $(KICKASS_JAR):
@@ -63,6 +63,15 @@ vice-vec: vectest
 # launch VICE with the echo test
 vice-echo: echotest
 	$(VICE) $(VICE_RS) -autostartprgmode 1 $(ECHO_OUT)
+
+# launch everything: build, start bridge in background, start VICE
+# Bridge listens first, then VICE connects when C64 opens RS232.
+run: assemble
+	@-lsof -ti :25232 2>/dev/null | xargs kill 2>/dev/null; true
+	@-pkill -f "$(VICE).*$(ASM_OUT)" 2>/dev/null; true
+	cd bridge && go run . &
+	@sleep 1
+	$(VICE) $(VICE_RS) $(VICE_MON) -autostart $(ASM_OUT) -keybuf "sys 49152\n"
 
 # run the Go bridge (default: uses claude CLI for LLM, stdin for chat)
 bridge:

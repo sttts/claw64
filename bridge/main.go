@@ -98,11 +98,7 @@ func runBridge() {
 	}
 	defer link.Close()
 
-	// wait for C64 agent to start (keybuf SYS at ~20s)
-	log.Println("waiting for C64 agent to initialize...")
-	time.Sleep(25 * time.Second)
-
-	// warm up RS232 channel
+	// warm up RS232 channel (VICE just connected = C64 agent is running)
 	warmup := make([]byte, 20)
 	for i := range warmup {
 		warmup[i] = 0x55
