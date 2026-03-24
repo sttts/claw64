@@ -46,25 +46,37 @@ func (c *AnthropicClient) token() (string, error) {
 		return c.cachedToken, nil
 	}
 
-	// extract from macOS Keychain (same entry Claude Code uses)
-	out, err := exec.Command("security", "find-generic-password", "-s", "Claude Code", "-w").Output()
+	// extract from macOS Keychain (Claude Code stores credentials here)
+	out, err := exec.Command("security", "find-generic-password", "-s", "Claude Code-credentials", "-w").Output()
 	if err != nil {
 		return "", fmt.Errorf("keychain lookup failed (is Claude Code installed?): %w", err)
 	}
 	raw := bytes.TrimSpace(out)
 
-	// try OAuth JSON format: {"accessToken":"...","expiresAt":"..."}
+	// Claude Code stores: {"claudeAiOauth":{"accessToken":"sk-ant-...","expiresAt":"..."}}
 	var creds struct {
+		ClaudeAiOauth struct {
+			AccessToken string `json:"accessToken"`
+			ExpiresAt   string `json:"expiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if json.Unmarshal(raw, &creds) == nil && creds.ClaudeAiOauth.AccessToken != "" {
+		if creds.ClaudeAiOauth.ExpiresAt != "" {
+			if t, err := time.Parse(time.RFC3339, creds.ClaudeAiOauth.ExpiresAt); err == nil && time.Now().After(t) {
+				return "", fmt.Errorf("OAuth token expired at %s", creds.ClaudeAiOauth.ExpiresAt)
+			}
+		}
+		c.cachedToken = creds.ClaudeAiOauth.AccessToken
+		return c.cachedToken, nil
+	}
+
+	// try flat OAuth format: {"accessToken":"...","expiresAt":"..."}
+	var flat struct {
 		AccessToken string `json:"accessToken"`
 		ExpiresAt   string `json:"expiresAt"`
 	}
-	if json.Unmarshal(raw, &creds) == nil && creds.AccessToken != "" {
-		if creds.ExpiresAt != "" {
-			if t, err := time.Parse(time.RFC3339, creds.ExpiresAt); err == nil && time.Now().After(t) {
-				return "", fmt.Errorf("OAuth token expired at %s", creds.ExpiresAt)
-			}
-		}
-		c.cachedToken = creds.AccessToken
+	if json.Unmarshal(raw, &flat) == nil && flat.AccessToken != "" {
+		c.cachedToken = flat.AccessToken
 		return c.cachedToken, nil
 	}
 

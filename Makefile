@@ -67,9 +67,9 @@ vice-echo: echotest
 # run the Go bridge (auto-extracts Anthropic key from Keychain if not set)
 bridge:
 	@if [ -z "$$CLAW64_LLM_KEY" ] && [ "$${CLAW64_LLM:-anthropic}" = "anthropic" ]; then \
-		key=$$(security find-generic-password -s "Claude Code" -w 2>/dev/null) && \
+		key=$$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null) && \
 		case "$$key" in \
-			'{'*) CLAW64_LLM_KEY=$$(echo "$$key" | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])") ;; \
+			'{'*) CLAW64_LLM_KEY=$$(echo "$$key" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('claudeAiOauth',d).get('accessToken',d.get('accessToken','')))") ;; \
 			*) CLAW64_LLM_KEY="$$key" ;; \
 		esac && export CLAW64_LLM_KEY; \
 	fi && cd bridge && go run .
