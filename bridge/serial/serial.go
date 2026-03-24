@@ -30,7 +30,8 @@ func Listen(addr string) (*Link, error) {
 
 	l := &Link{ln: ln}
 
-	// accept connections until we get a stable one
+	// VICE sends a probe connection (connects then drops immediately),
+	// then the real connection. Accept until one stays alive for 2s.
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -39,30 +40,29 @@ func Listen(addr string) (*Link, error) {
 		}
 		log.Printf("serial: connected from %s", conn.RemoteAddr())
 
-		// check if connection stays alive for 1 second
-		conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-		buf := make([]byte, 1)
-		_, err = conn.Read(buf)
-		conn.SetReadDeadline(time.Time{}) // clear deadline
+		// wait 2 seconds — if connection survives, it's real
+		time.Sleep(2 * time.Second)
+		conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		buf := make([]byte, 256)
+		n, err := conn.Read(buf)
+		conn.SetReadDeadline(time.Time{})
 
 		if err != nil {
-			// connection dropped or timed out with no data — probe
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// timeout = stable, no data yet — this is the real connection
+				// timeout = alive, no data yet — good
 				l.conn = conn
 				log.Printf("serial: connection stable")
 				return l, nil
 			}
-			// connection reset — VICE probe, try again
-			log.Printf("serial: probe connection dropped, waiting for next")
+			// connection dropped — VICE probe
+			log.Printf("serial: probe dropped, waiting for next")
 			conn.Close()
 			continue
 		}
 
-		// got data immediately — this is the real connection
-		// put the byte back by wrapping in a multi-reader... actually just use it
+		// got data — connection is alive and active
+		log.Printf("serial: connected (got %d bytes)", n)
 		l.conn = conn
-		log.Printf("serial: connection established (got first byte 0x%02X)", buf[0])
 		return l, nil
 	}
 }
