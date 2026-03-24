@@ -103,10 +103,7 @@ func runBridge() {
 	}
 
 	// select chat backend
-	backend := env("CLAW64_CHAT", "")
-	if backend == "" {
-		log.Fatal("CLAW64_CHAT not set (use \"slack\" or \"whatsapp\")")
-	}
+	backend := env("CLAW64_CHAT", "stdin")
 
 	var ch chat.Channel
 	switch backend {
@@ -124,8 +121,10 @@ func runBridge() {
 			log.Fatalf("whatsapp: %v", err)
 		}
 		ch = waCh
+	case "stdin":
+		ch = chat.NewStdin()
 	default:
-		log.Fatalf("unknown chat backend: %q (use \"slack\" or \"whatsapp\")", backend)
+		log.Fatalf("unknown chat backend: %q (use \"slack\", \"whatsapp\", or \"stdin\")", backend)
 	}
 
 	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, addr)
