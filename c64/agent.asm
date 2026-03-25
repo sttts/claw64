@@ -38,11 +38,11 @@
 .const PROCPORT = $01
 
 // Temporary 256-byte buffer used during KERNAL ROM copy.
-// Located at $C500, safely in our agent's memory space.
-.const TMPBUF   = $C700
+// Located at $CA00, past all agent buffers.
+.const TMPBUF   = $CA00
 
 // Buffer for building outgoing serial frames before burst-sending.
-// Located at $C600 (AGENT_TXBUF), above the receive buffer.
+// Located at $C900 (AGENT_TXBUF), above the receive buffer.
 .const send_buf = AGENT_TXBUF
 
 // Agent state machine constants.
@@ -93,7 +93,7 @@ cp:
         ldy #0                  // Y = byte offset within the 256-byte page
 cp_rdl:
 cp_rd:  lda $E000,y             // read byte from KERNAL ROM (address is self-modified)
-        sta TMPBUF,y            // store in temporary buffer at $C500
+        sta TMPBUF,y            // store in temporary buffer at $CA00
         iny                     // next byte
         bne cp_rdl              // loop until Y wraps from $FF to $00 (256 bytes)
 
