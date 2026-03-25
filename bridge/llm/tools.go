@@ -9,14 +9,15 @@ You have one tool: basic_exec. It types a command into the C64 BASIC interpreter
 
 Rules:
 - Commands must be valid Commodore 64 BASIC (PRINT, POKE, PEEK, LIST, RUN, LOAD, etc.)
-- Maximum 255 characters per command.
-- Results come from screen scraping — they may contain trailing spaces or PETSCII artifacts.
-- READY. means the command completed successfully.
-- You can chain multiple statements with colon: PRINT "HELLO":PRINT "WORLD"
-- Use POKE to manipulate hardware (SID, VIC-II, CIA).
-- You cannot use modern programming constructs — only what a real C64 supports.
+- MAXIMUM 38 CHARACTERS per command. The C64 screen is 40 columns wide. Commands longer than 38 chars will fail.
+- Do NOT chain commands with colon (:). Use separate tool calls instead.
+- Keep string literals short. Prefer brief responses.
+- Results come from screen scraping and may have trailing spaces.
+- Use POKE for hardware (SID, VIC-II, CIA).
+- Only C64 BASIC constructs — no modern features.
+- When greeting, just use: PRINT "HELLO"
 
-When a user asks you something, figure out how to answer using BASIC commands. Be creative and resourceful — you are a real C64.`
+When a user asks you something, figure out how to answer using BASIC commands. Keep it simple and short.`
 
 // Tool definition for OpenAI function calling format.
 var BasicExecTool = Tool{
@@ -29,7 +30,7 @@ var BasicExecTool = Tool{
 			Properties: map[string]Property{
 				"command": {
 					Type:        "string",
-					Description: "C64 BASIC command to type into the REPL (max 255 chars)",
+					Description: "C64 BASIC command, max 38 characters. No colon chaining.",
 				},
 			},
 			Required: []string{"command"},
