@@ -83,14 +83,21 @@ install:
         // ($35) and still have KERNAL code available — but now we
         // can also PATCH it (which we do at $E5D1 below).
         //
-        // Copy KERNAL ROM ($E0-$FF) to RAM FIRST, then BASIC ROM ($A0-$BF).
-        // KERNAL must be copied first because NMI handler lives there —
-        // if NMI fires during the BASIC copy's write phase ($01=$35),
-        // the KERNAL code must already be in RAM.
-        lda #$E0                // start with KERNAL ROM
+        // Copy ROM to RAM: $A0-$CF (BASIC + agent area) and $E0-$FF (KERNAL).
+        // Skip $D0-$DF (I/O registers — must not read/write those).
+        // Both BASIC and KERNAL in RAM allows permanent $01=$35 mode.
+        lda #$A0
         sta cur_page
 
 cp:     lda cur_page
+        // skip I/O area ($D0-$DF)
+        cmp #$D0
+        bcc cp_do               // < $D0 → copy
+        cmp #$E0
+        bcs cp_do               // >= $E0 → copy
+        inc cur_page            // $D0-$DF → skip
+        jmp cp
+cp_do:
         sta cp_rd+2             // self-modify: set high byte of LDA $xx00,y below
         ldy #0                  // Y = byte offset within the 256-byte page
 cp_rdl:
@@ -120,18 +127,8 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         // Advance to next page
         inc cur_page
         lda cur_page
-        beq cp_kernal_done      // $FF→$00: KERNAL done, do BASIC next
-        cmp #$C0
-        beq cp_done             // $BF→$C0: BASIC done, all copying finished
-        jmp cp                  // continue copying
+        bne cp                  // loop until page wraps $FF→$00
 
-cp_kernal_done:
-
-        // Now copy BASIC ROM ($A0-$BF) — KERNAL is already in RAM,
-        // so NMI during the write phase ($01=$35) works correctly.
-        lda #$A0
-        sta cur_page
-        jmp cp
 cp_done:
         //
         // In the normal C64, the KERNAL main loop at $E5D7 processes
@@ -483,10 +480,9 @@ bl_key:
         // After processing, the KERNAL falls through to $E5D1 which we
         // patched during install to JMP to our 'reenter' label below.
         // This gives control back to our agent.
-        sei                     // disable IRQs during KERNAL key processing
         lda #%00110101          // ensure RAM mode — KERNAL patch at $E5D1
         sta $01                 // only works from RAM, not ROM
-        jmp $E5D7               // KERNAL: process one keystroke from buffer
+        jmp $E5D4               // KERNAL: get key from buffer ($E632) then process
 
 // Re-entry point after KERNAL processes a keystroke.
 // The KERNAL's code at $E5D1 was patched to JMP here.
@@ -936,7 +932,7 @@ inj_len:      .byte 0   // total length of command to inject
 ready_timer:  .byte 0   // countdown timer for READY. detection (increments each loop)
 send_pos:     .byte 0   // current position during burst-send (saved across CHROUT calls)
 send_total:   .byte 0   // total bytes to send in current burst-send operation
-cur_page:     .byte $A0 // current page during ROM copy ($A0-$FF), init to $A0
+cur_page:     .byte $A0 // current page during ROM copy, init to $A0
 saved_border: .byte 3   // original border color to restore after activity flash
 
 // Screen codes for "READY." (used by self-modifying scan loop)
