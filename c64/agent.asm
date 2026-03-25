@@ -363,24 +363,13 @@ bl_nofold:
         jmp bl_kb               // proceed to keyboard processing step
 
 bl_inj_return:
-        // ---- Inject RETURN key to execute the command ----
-        //
-        // After all command characters have been injected, we inject
-        // a carriage return ($0D) which tells BASIC to execute the
-        // line that was "typed". This is equivalent to pressing RETURN.
-        lda #$0D                // $0D = carriage return (RETURN key in PETSCII)
-        sta KBUF                // place RETURN in keyboard buffer position 0
-        lda #1
-        sta KBUF_LEN            // tell KERNAL there's 1 key waiting
-
-        // Transition to AG_WAITING state — now we wait for BASIC to
-        // finish executing the command (signaled by READY. appearing
-        // on screen).
+        // All characters including RETURN have been injected.
+        // Transition to AG_WAITING — wait for BASIC to execute.
         lda #0
-        sta ready_timer         // reset the READY. detection timer
+        sta ready_timer
         lda #AG_WAITING
-        sta agent_state         // switch to WAITING state
-        jmp bl_kb               // proceed to keyboard processing
+        sta agent_state
+        jmp bl_kb
 
 bl_wait:
         // ---- Step 3: Wait for READY. prompt if in AG_WAITING state ----
@@ -793,14 +782,18 @@ fd_not_text:
         bne fd_done             // no → unknown frame type, ignore
 
         // ---- Start keystroke injection ----
-        // The EXEC payload (stored in AGENT_RXBUF by the parser) contains
-        // the BASIC command to execute, in ASCII.
-        lda frame_len           // length of the command text
-        sta inj_len             // set injection length
+        // Append RETURN ($0D) to the command in AGENT_RXBUF so the
+        // injection loop sends it as the last character. This ensures
+        // BASIC executes the command after all characters are typed.
+        ldx frame_len
+        lda #$0D                // RETURN key
+        sta AGENT_RXBUF,x      // append after last command char
+        inx
+        stx inj_len             // injection length = command + RETURN
         lda #0
-        sta inj_pos             // start injecting from position 0
-        lda #AG_INJECTING       // switch agent to INJECTING state
-        sta agent_state         // main loop will now drip-feed keystrokes
+        sta inj_pos             // start from position 0
+        lda #AG_INJECTING
+        sta agent_state
 
         // No echo RESULT — can't call send_frame from inside
         // frame_dispatch (VICE RS232 only handles one CHKOUT/CHROUT/CLRCHN
