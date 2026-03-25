@@ -239,6 +239,7 @@ cp_bas_wr:
         sta inj_len
         sta ready_timer
         sta llm_pending
+        sta busy
 
         // Save the current border color (don't change it)
         lda BORDER_COLOR
@@ -797,24 +798,19 @@ frame_dispatch:
         cmp #FRAME_MSG          // is it a MSG frame (user's chat message)?
         bne fd_not_msg          // no → check next type
 
-        // flash border yellow as visual indicator
-        lda #7                  // 7 = yellow
-        sta BORDER_COLOR
-
-        // set flag — main loop drip-sends the LLM_MSG frame (one byte
-        // per iteration). Can't send from here because VICE RS232 only
-        // handles one CHKOUT/CHROUT/CLRCHN per main loop iteration.
+        // start conversation — set busy flag for border animation
         lda #1
-        sta llm_pending
+        sta busy
+        sta llm_pending         // trigger LLM_MSG drip-send
         rts
 
 fd_not_msg:
         // ---- Check for TEXT frame ($54 = 'T') ----
         cmp #FRAME_TEXT         // is it a TEXT frame (LLM's final answer)?
         bne fd_not_text         // no → check next type
-        lda #5                  // 5 = green — visual indicator of LLM response
-        sta BORDER_COLOR        // flash border green (restored next main loop iteration)
-        rts                     // nothing else to do — bridge forwards to chat
+        lda #0
+        sta busy                // conversation done — stop border animation
+        rts
 
 fd_not_text:
         // ---- Check for EXEC frame ($45 = 'E') ----
@@ -985,6 +981,7 @@ saved_border: .byte 3   // original border color to restore after activity flash
 ready_codes:  .byte $12, $05, $01, $04, $19, $2E
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
+busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
 raster_offset:.byte 0   // rolling offset for raster gradient (increments each frame)
@@ -1001,9 +998,14 @@ raster_colors:
 // it as a color index. When idle (state 0), restores normal border.
 // ---------------------------------------------------------
 irq_raster:
-        lda agent_state
-        beq irq_idle
+        // Show animation when busy: agent processing OR drip-sending
+        lda busy
+        bne irq_busy
+        lda send_pos
+        cmp send_total
+        beq irq_idle            // not sending → check idle
 
+irq_busy:
         // Busy: cycle border color through gradient palette
         ldx raster_offset
         lda raster_colors,x
