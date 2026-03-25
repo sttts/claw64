@@ -83,19 +83,18 @@ install:
         // ($35) and still have KERNAL code available — but now we
         // can also PATCH it (which we do at $E5D1 below).
         //
-        // Copy ROM to RAM: $A0-$CF (BASIC + agent area) and $E0-$FF (KERNAL).
-        // Skip $D0-$DF (I/O registers — must not read/write those).
-        // Both BASIC and KERNAL in RAM allows permanent $01=$35 mode.
+        // Copy ALL ROM ($A0-$FF, skipping $D0-$DF I/O) to RAM.
+        // $01=$35 permanently: BASIC+KERNAL both run from RAM copies.
         lda #$A0
         sta cur_page
 
 cp:     lda cur_page
         // skip I/O area ($D0-$DF)
         cmp #$D0
-        bcc cp_do               // < $D0 → copy
+        bcc cp_do
         cmp #$E0
-        bcs cp_do               // >= $E0 → copy
-        inc cur_page            // $D0-$DF → skip
+        bcs cp_do
+        inc cur_page
         jmp cp
 cp_do:
         sta cp_rd+2             // self-modify: set high byte of LDA $xx00,y below
@@ -130,25 +129,18 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         bne cp                  // loop until page wraps $FF→$00
 
 cp_done:
-        //
-        // In the normal C64, the KERNAL main loop at $E5D7 processes
-        // keystrokes from the keyboard buffer. After processing, it
-        // falls through to $E5D1 which normally loops back to check
-        // for more keys. We PATCH $E5D1 to instead JMP to our 'reenter'
-        // label, which returns control to our agent's main loop.
-        //
-        // This is how the agent "hooks" into the KERNAL: we let the
-        // KERNAL process one keystroke, then it jumps back to us.
-        //
-        // Must write to RAM copy (ROM is read-only), so switch to $35.
+        // ---- Patch KERNAL at $E5D1 for agent re-entry ----
+        // The screen editor key loop runs: $E5CD → $E5D1 → $E5D4.
+        // We patch $E5D1 (STA $0292) with JMP reenter.
+        // Must write to RAM copy ($01=$35).
         lda #%00110101
         sta PROCPORT
-        lda #$4C                // $4C = JMP opcode
-        sta $E5D1               // patch: first byte becomes JMP
-        lda #<reenter           // low byte of our reenter routine address
-        sta $E5D2               // patch: JMP target low byte
-        lda #>reenter           // high byte of our reenter routine address
-        sta $E5D3               // patch: JMP target high byte
+        lda #$4C                // JMP opcode
+        sta $E5D1
+        lda #<reenter
+        sta $E5D2
+        lda #>reenter
+        sta $E5D3
 
         // ---- Initialize RS232 serial ----
         //
@@ -332,36 +324,27 @@ bl_inj_check:
         jmp bl_kb               // buffer still has keys → skip, let KERNAL process them
 
 bl_inj_do:
-        // Check if we've injected all characters of the command
-        ldx inj_pos             // X = current position in the command payload
-        cpx inj_len             // compare with total command length
-        beq bl_inj_return       // all chars done → inject RETURN key to execute
+        // Inject one character per main loop iteration
+        ldx inj_pos
+        cpx inj_len
+        beq bl_inj_done         // all chars sent (including RETURN)
 
-        // ---- Inject next character ----
-        //
-        // The command payload is stored in AGENT_RXBUF in ASCII.
-        // The C64 keyboard buffer expects PETSCII encoding.
-        // For letters: ASCII lowercase a-z ($61-$7A) must be converted
-        // to PETSCII uppercase A-Z ($41-$5A) by subtracting $20.
-        // (On the C64, uppercase letters are the default character set,
-        // and PETSCII uppercase = ASCII uppercase = $41-$5A.)
-        lda AGENT_RXBUF,x       // load next ASCII character from receive buffer
-        cmp #$61                // is it >= 'a' (ASCII lowercase)?
-        bcc bl_nofold           // no (it's a digit, symbol, or uppercase) → keep as-is
-        cmp #$7B                // is it > 'z' (above lowercase range)?
-        bcs bl_nofold           // yes → keep as-is
-        sec                     // set carry for subtraction
-        sbc #$20                // convert ASCII lowercase → uppercase ($61→$41, etc.)
+        lda AGENT_RXBUF,x      // load next ASCII character
+        cmp #$61                // lowercase a-z?
+        bcc bl_nofold
+        cmp #$7B
+        bcs bl_nofold
+        sec
+        sbc #$20                // convert lowercase → uppercase
 bl_nofold:
-        sta KBUF                // store character at keyboard buffer position 0 ($0277)
+        sta KBUF                // put in keyboard buffer position 0
         lda #1
-        sta KBUF_LEN            // tell KERNAL there's 1 character waiting to be processed
-        inc inj_pos             // advance to next character in the command
-        jmp bl_kb               // proceed to keyboard processing step
+        sta KBUF_LEN            // 1 char ready for KERNAL
+        inc inj_pos
+        jmp bl_kb               // let KERNAL process this char
 
-bl_inj_return:
+bl_inj_done:
         // All characters including RETURN have been injected.
-        // Transition to AG_WAITING — wait for BASIC to execute.
         lda #0
         sta ready_timer
         lda #AG_WAITING
@@ -472,25 +455,19 @@ bl_kb:
         jmp bloop               // buffer empty → loop back to poll serial
 
 bl_key:
-        // There are keys in the buffer. Disable interrupts and jump into
-        // the KERNAL's keyboard processing routine at $E5D7 (inside the
-        // KERNAL editor). This routine reads one key from the buffer and
-        // processes it (echoes to screen, handles RETURN, etc.).
-        //
-        // After processing, the KERNAL falls through to $E5D1 which we
-        // patched during install to JMP to our 'reenter' label below.
-        // This gives control back to our agent.
-        lda #%00110101          // ensure RAM mode — KERNAL patch at $E5D1
-        sta $01                 // only works from RAM, not ROM
-        jmp $E5D4               // KERNAL: get key from buffer ($E632) then process
+        // Enter the KERNAL screen editor key loop at $E5CD.
+        // $E5CD: LDA $C6 → $E5CF: STA $CC → $E5D1: (our JMP reenter)
+        // If KBUF has keys: $E5D4 falls through → process key →
+        // for RETURN: handler copies line, falls through to $E632
+        // which pushes Y/X, reads char, RTS to BASIC. BASIC executes.
+        // For non-RETURN: echoes char, loops back to $E5CD → $E5D1
+        // → JMP reenter → bloop.
+        jmp $E5D4               // KERNAL: after our patch, checks buffer
 
-// Re-entry point after KERNAL processes a keystroke.
-// The KERNAL's code at $E5D1 was patched to JMP here.
-// $0292 is the shift-mode flag — we store A to it (KERNAL leaves
-// a meaningful value in A) and then return to our main loop.
+// Re-entry from $E5D1 patch. The KERNAL key loop at $E5CD→$E5D1
+// hits our JMP reenter. We switch back to ROM mode and loop.
 reenter:
-        sta $0292               // restore shift-mode flag from KERNAL's value
-        jmp bloop               // back to our main loop
+        jmp bloop               // $01 stays $35 (RAM mode) permanently
 
 // ---------------------------------------------------------
 // Send screen content as RESULT frame
@@ -777,10 +754,34 @@ fd_not_text:
         cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
         bne fd_done             // no → unknown frame type, ignore
 
+        // ---- Clear old READY. from screen ----
+        // The scanner would find the old READY. before BASIC executes
+        // the new command. Replace 'R' ($12) at column 0 of each line.
+        ldx #24
+fd_clr: lda screen_lo,x
+        sta bl_rd+1             // self-modify LDA address
+        lda screen_hi,x
+        sta bl_rd+2
+        lda bl_rd+1             // save low byte
+        pha
+        // read column 0
+        lda $0400               // address was just patched into bl_rd
+        // but bl_rd is the SCAN instruction, not here. Use direct check:
+        pla
+        sta bl_rd+1             // restore
+        // Actually, just use the screen_lo/hi tables with Y=0:
+        // Can't use indirect (zp clobbered). Use self-mod write instead.
+        lda screen_lo,x
+        sta fd_clr_wr+1
+        lda screen_hi,x
+        sta fd_clr_wr+2
+        lda #$20                // space
+fd_clr_wr:
+        sta $0400               // address self-modified to line X, col 0
+        dex
+        bpl fd_clr
+
         // ---- Start keystroke injection ----
-        // Append RETURN ($0D) to the command in AGENT_RXBUF so the
-        // injection loop sends it as the last character. This ensures
-        // BASIC executes the command after all characters are typed.
         ldx frame_len
         lda #$0D                // RETURN key
         sta AGENT_RXBUF,x      // append after last command char
