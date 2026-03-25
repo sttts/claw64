@@ -334,6 +334,8 @@ bloop:
         sta rx_byte
         lda #0
         sta busy_timer          // reset timeout — serial activity
+        lda #1
+        sta dot_dir             // byte received → dots right
         jmp bl_got_data
 bl_no_data:
         pla                     // discard the 0
@@ -408,6 +410,8 @@ bl_send_check:
         inc send_pos
         lda #0
         sta busy_timer          // reset timeout — TX activity
+        lda #0
+        sta dot_dir             // byte sent → dots left
 
 bl_inj_check:
         // ---- Step 2: Inject keystrokes if in AG_INJECTING state ----
@@ -525,9 +529,7 @@ bl_rd:  lda $0400               // address self-modified by setup above
         jmp bl_rd_loop
 
 bl_ready_found:
-        // ---- READY. found! Sending RESULT → dots go left ----
-        lda #0
-        sta dot_dir             // left = sending
+        // ---- READY. found! Send RESULT frame ----
         jsr send_screen_result
         lda #0
         sta send_pos
@@ -855,7 +857,6 @@ frame_dispatch:
         lda #1
         sta busy
         sta llm_pending
-        sta dot_dir             // 1 = right (waiting to receive)
         lda #0
         sta busy_timer          // reset timeout
         lda $D015
@@ -875,10 +876,6 @@ fd_not_text:
         // ---- Check for EXEC frame ($45 = 'E') ----
         cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
         bne fd_done             // no → unknown frame type, ignore
-
-        // EXEC received = data coming in → dots go right
-        lda #1
-        sta dot_dir
 
         // ---- Start keystroke injection ----
         lda CURSOR_ROW
@@ -1110,16 +1107,15 @@ irq_raster:
         beq irq_idle
 
         // Busy — show and animate dots sprite
-        // Auto-timeout: clear busy after ~5 sec without serial activity.
+        // Hide dots after ~500ms without serial activity (30 frames).
         // Reset by serial RX and drip-send TX.
         inc busy_timer
         lda busy_timer
-        cmp #0                  // wrapped 255→0 = ~4.3 sec
-        bne irq_no_timeout
-        lda #0
-        sta busy
-        sta busy_timer
-        jmp irq_idle
+        cmp #30                 // 30 frames ≈ 500ms at 60Hz
+        bcc irq_no_timeout
+        lda #30
+        sta busy_timer          // cap timer (don't overflow)
+        jmp irq_idle            // hide dots until next byte
 irq_no_timeout:
 
         lda $D015
