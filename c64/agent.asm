@@ -987,6 +987,7 @@ busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
 raster_offset:.byte 0   // rolling offset for raster gradient (increments each frame)
+irq_last:     .byte 0   // last color written to $D020 (flicker reduction)
 
 // Color gradient table — 16 entries, blue-white-blue cycle
 raster_colors:
@@ -1008,26 +1009,32 @@ irq_raster:
         beq irq_idle            // not sending → check idle
 
 irq_busy:
-        // Scrolling raster bar: a gradient band moves down the screen.
-        // Lines within the bar show gradient colors, rest show normal.
+        // Scrolling raster bar with flicker reduction.
+        // Only write $D020 when the color changes from last write.
+        lda saved_border
+        sta BORDER_COLOR        // start with normal border
+        sta irq_last            // track last written color
         ldx #0
 irq_loop:
         lda $D012               // current raster line
         sec
-        sbc raster_offset       // subtract bar position → distance from bar top
+        sbc raster_offset       // distance from bar top
         cmp #32                 // within the 32-line bar?
-        bcs irq_outside         // no → normal border
-        lsr                     // 0-31 → 0-15 (index into 16-color table)
+        bcs irq_outside
+        lsr                     // 0-31 → 0-15
         tay
         lda raster_colors,y
-        sta BORDER_COLOR
-        jmp irq_next
+        jmp irq_write
 irq_outside:
         lda saved_border
+irq_write:
+        cmp irq_last            // same as last write?
+        beq irq_skip            // yes → don't write (reduces flicker)
         sta BORDER_COLOR
-irq_next:
+        sta irq_last
+irq_skip:
         inx
-        bne irq_loop            // 256 iterations across the frame
+        bne irq_loop
 
         // scroll direction: down when receiving (IDLE/waiting for LLM),
         // up when sending (INJECTING/drip-sending)
