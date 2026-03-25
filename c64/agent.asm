@@ -225,9 +225,9 @@ spr_cp1:lda spr_dots,x
         lda #2                  // color red
         sta $D027
 
-        // Sprite 1 (dots): red, to the LEFT of lobster
-        // Lobster at X=320. Dots start at X=290 (256+34).
-        lda #34                 // X low byte (256+34=290)
+        // Sprite 1 (dots): red, just left of lobster
+        // Lobster at X=320 (256+64). Dots at X=296 (256+40).
+        lda #40                 // X low byte (256+40=296)
         sta $D002
         lda #$3E                // Y near lobster center
         sta $D003
@@ -1117,22 +1117,24 @@ irq_raster:
         cmp send_total
         bne irq_right
 
-        // RECEIVING: dots move left (away from lobster)
+        // RECEIVING: dots move left (away from lobster), short range
+        // Lobster at X low=64. Dots range: 40-56 (just left of lobster)
         lda $D002
         sec
         sbc #4
-        bpl irq_set             // still positive → ok
-        lda #40                 // wrap back near lobster
+        cmp #40                 // past left limit?
+        bcs irq_set             // no → ok
+        lda #56                 // wrap back near lobster
         jmp irq_set
 
 irq_right:
-        // SENDING: dots move right (toward lobster)
+        // SENDING: dots move right (toward lobster), short range
         lda $D002
         clc
         adc #4
-        cmp #50                 // past lobster position?
+        cmp #56                 // past lobster?
         bcc irq_set
-        lda #0                  // wrap back to far left
+        lda #40                 // wrap back to left
 
 irq_set:
         sta $D002
