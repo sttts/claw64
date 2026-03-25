@@ -344,14 +344,18 @@ bl_got_data:
         lda rx_byte             // reload the received byte into A
         jsr frame_rx_byte       // feed byte to the frame protocol parser
 
-        // Echo received byte back to bridge
+        // Echo received byte (skip SYNC-like >= $7C after masking).
+        // Prevents echo from triggering bridge's frame parser.
         lda rx_byte
-        pha
+        and #$7F
+        cmp #$7C
+        bcs bl_skip_echo
         ldx #RS232_DEV
         jsr CHKOUT
-        pla
+        lda rx_byte
         jsr CHROUT
         jsr CLRCHN
+bl_skip_echo:
 
 bl_inject:
         // ---- Drip-send pending frame (one byte per iteration) ----
@@ -410,7 +414,6 @@ bl_send_check:
         inc send_pos
         lda #0
         sta busy_timer          // reset timeout — TX activity
-        lda #0
         sta dot_dir             // byte sent → dots left
 
 bl_inj_check:
@@ -529,7 +532,9 @@ bl_rd:  lda $0400               // address self-modified by setup above
         jmp bl_rd_loop
 
 bl_ready_found:
-        // ---- READY. found! Send RESULT frame ----
+        // ---- READY. found! Sending RESULT → dots go left ----
+        lda #0
+        sta dot_dir             // left = sending
         jsr send_screen_result
         lda #0
         sta send_pos
@@ -857,6 +862,7 @@ frame_dispatch:
         lda #1
         sta busy
         sta llm_pending
+        sta dot_dir             // 1 = right (waiting to receive)
         lda #0
         sta busy_timer          // reset timeout
         lda $D015
@@ -876,6 +882,10 @@ fd_not_text:
         // ---- Check for EXEC frame ($45 = 'E') ----
         cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
         bne fd_done             // no → unknown frame type, ignore
+
+        // EXEC received = data coming in → dots go right
+        lda #1
+        sta dot_dir
 
         // ---- Start keystroke injection ----
         lda CURSOR_ROW
@@ -1108,7 +1118,7 @@ irq_raster:
 
         // Busy — show and animate dots sprite
         // Hide dots after ~500ms without serial activity (30 frames).
-        // Reset by serial RX and drip-send TX.
+        // Keep busy set so they reappear instantly on next byte.
         inc busy_timer
         lda busy_timer
         cmp #30                 // 30 frames ≈ 500ms at 60Hz

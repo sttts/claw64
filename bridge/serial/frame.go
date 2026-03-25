@@ -54,24 +54,26 @@ func Encode(f Frame) []byte {
 	buf[2] = byte(n)
 
 	// checksum: XOR of type, length, and all payload bytes
-	chk := f.Type ^ byte(n)
+	// mask bit 7 to match C64 parser (VICE corrupts bit 7 randomly)
+	chk := (f.Type & 0x7F) ^ (byte(n) & 0x7F)
 	for i := 0; i < n; i++ {
 		buf[3+i] = f.Payload[i]
-		chk ^= f.Payload[i]
+		chk ^= f.Payload[i] & 0x7F
 	}
 	buf[3+n] = chk
 	return buf
 }
 
-// readFiltered reads one byte from r, skipping keepalive ($55) bytes.
-// Also treats $FE as "resync" (returns it for SYNC hunting).
+// readFiltered reads one byte from r, skipping keepalive ($55) and
+// echo marker ($2E '.') bytes.
 func readFiltered(r io.Reader) (byte, error) {
 	var b [1]byte
 	for {
 		if _, err := io.ReadFull(r, b[:]); err != nil {
 			return 0, err
 		}
-		if b[0] != 0x55 { // skip keepalive
+		// skip keepalive and echo markers (bit 7 may be set by VICE)
+		if b[0]&0x7F != 0x55 && b[0]&0x7F != 0x2E {
 			return b[0], nil
 		}
 	}

@@ -100,12 +100,13 @@ func runBridge() {
 	// configure LLM
 	llmClient, llmDesc := newLLM()
 
-	// create agent
+	// create relay and enable char-by-char progress display
 	rl := &relay.Relay{
 		Link:    link,
 		LLM:     llmClient,
 		History: relay.NewHistory(),
 	}
+	rl.SetupProgress()
 
 	// select chat backend
 	backend := env("CLAW64_CHAT", "stdin")
@@ -141,7 +142,7 @@ func runBridge() {
 			log.Printf("     ! error: %v", err)
 			return "", err
 		}
-		log.Printf("C64 → USER:  %q", reply)
+		log.Printf("C64 → USER:  %s", reply)
 		return reply, nil
 	})
 	if err != nil && ctx.Err() == nil {

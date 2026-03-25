@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -17,8 +18,6 @@ import (
 // maxIterations caps the LLM loop to prevent infinite cycles.
 const maxIterations = 10
 
-// retry backoff durations for serial send failures.
-var retryBackoff = []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
 
 // Relay routes messages between chat, LLM, and the C64 serial link.
 // The C64 drives the agent loop; the relay just forwards.
@@ -30,6 +29,31 @@ type Relay struct {
 	lastToolCallID string
 }
 
+// logStream prints a log-style prefix without a trailing newline.
+// Characters can be appended to the same line afterwards.
+func logStream(format string, args ...any) {
+	ts := time.Now().Format("2006/01/02 15:04:05")
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(os.Stderr, "%s %s", ts, msg)
+}
+
+// SetupProgress installs a send-progress callback on the serial link
+// that prints payload bytes char-by-char as they are sent.
+func (r *Relay) SetupProgress() {
+	r.Link.OnSendByte = func(typeName string, payload []byte, idx int) {
+		if idx == -1 {
+			fmt.Fprintln(os.Stderr)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "%c", payload[idx])
+	}
+}
+
+// printRecvStream prints a received frame's payload appended to the current line.
+func printRecvStream(payload []byte) {
+	fmt.Fprintf(os.Stderr, "%s\n", payload)
+}
+
 // basicExecArgs is the JSON structure the LLM passes to basic_exec.
 type basicExecArgs struct {
 	Command string `json:"command"`
@@ -39,8 +63,8 @@ type basicExecArgs struct {
 func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (string, error) {
 	r.History.Append(userID, llm.Message{Role: "user", Content: text})
 
-	// send user message to C64
-	log.Printf("USER → C64:  MSG %q", text)
+	// send user message to C64 (header now, chars stream via callback)
+	logStream("USER → C64:  MSG ")
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
 	if err := r.sendWithRetry(msgFrame); err != nil {
 		return "", fmt.Errorf("send MSG: %w", err)
@@ -59,13 +83,15 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 
 		switch f.Type {
 		case serial.FrameLLM:
-			log.Printf("C64 → LLM:   %q", string(f.Payload))
+			logStream("C64 → LLM:   ")
+			printRecvStream(f.Payload)
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
 
 		case serial.FrameResult:
-			log.Printf("C64 → LLM:   RESULT %q", string(f.Payload))
+			logStream("C64 → LLM:   RESULT ")
+			printRecvStream(f.Payload)
 			// Prefix result so the LLM knows this is screen output, not human input
 			result := "[C64 screen output]: " + string(f.Payload)
 			if len(f.Payload) == 0 {
@@ -116,12 +142,15 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 
 	// text response — send to C64, which forwards to user
 	if len(resp.ToolCalls) == 0 {
-		log.Printf("LLM → C64:  TEXT %q", resp.Content)
+		logStream("LLM → C64:  TEXT ")
 		if resp.Content != "" {
 			textFrame := serial.Frame{Type: serial.FrameText, Payload: []byte(resp.Content)}
 			if err := r.sendWithRetry(textFrame); err != nil {
+				fmt.Fprintln(os.Stderr)
 				log.Printf("     ! TEXT send failed: %v", err)
 			}
+		} else {
+			fmt.Fprintln(os.Stderr, "(empty)")
 		}
 		r.lastText = resp.Content
 		return nil
@@ -153,7 +182,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 		if len(cmd) > 80 {
 			cmd = cmd[:80]
 		}
-		log.Printf("LLM → C64:  EXEC %q", cmd)
+		logStream("LLM → C64:  EXEC ")
 
 		r.lastToolCallID = tc.ID
 
@@ -190,6 +219,7 @@ func (r *Relay) recvFromC64(ctx context.Context) (serial.Frame, error) {
 }
 
 func (r *Relay) sendWithRetry(f serial.Frame) error {
+	var retryBackoff = []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
 	var err error
 	for i, backoff := range retryBackoff {
 		err = r.Link.Send(f)
