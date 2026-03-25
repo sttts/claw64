@@ -1092,61 +1092,57 @@ spr_dots:
 // When idle: dots sprite hidden. Border is never touched.
 // ---------------------------------------------------------
 irq_raster:
-        // Animate lobster claw sprite when busy.
-        // Sprite 1 shows dots: move left when receiving, right when sending.
+        // Check if agent is busy (in a conversation cycle)
         lda busy
-        bne irq_animate
-        lda send_pos
-        cmp send_total
         beq irq_idle
 
-irq_animate:
-        // Ensure dots sprite is visible
+        // Busy — show and animate dots sprite
         lda $D015
         ora #%00000010          // enable sprite 1
         sta $D015
 
-        // Decrement frame counter; on zero, shift dots
+        // Advance animation every 4 frames
         dec anim_timer
-        bne irq_no_shift
-        lda #4                  // shift every 4 frames (~15 fps)
+        bne irq_done
+        lda #4
         sta anim_timer
 
-        // determine direction: sending (inject/drip) = right, else = left
+        // Direction: AG_INJECTING or drip-sending → dots move RIGHT
+        // (toward lobster = "sending"). Otherwise → dots move LEFT
+        // (away from lobster = "receiving/thinking").
         lda agent_state
         cmp #AG_INJECTING
-        beq irq_send_dir
+        beq irq_right
         lda send_pos
         cmp send_total
-        bne irq_send_dir
+        bne irq_right
 
-        // receiving: dots move LEFT (away from lobster, into screen)
+        // RECEIVING: dots move left (away from lobster)
         lda $D002
         sec
         sbc #4
-        bcs irq_recv_ok
-        lda #40                 // wrapped → reset near lobster
-irq_recv_ok:
-        jmp irq_store
+        bpl irq_set             // still positive → ok
+        lda #40                 // wrap back near lobster
+        jmp irq_set
 
-irq_send_dir:
-        // sending: dots move RIGHT (toward lobster)
+irq_right:
+        // SENDING: dots move right (toward lobster)
         lda $D002
         clc
         adc #4
-        cmp #50                 // past lobster? (256+50=306)
-        bcc irq_store
-        lda #0                  // reset to far left (256+0=256)
-irq_store:
-        sta $D002
+        cmp #50                 // past lobster position?
+        bcc irq_set
+        lda #0                  // wrap back to far left
 
-irq_no_shift:
+irq_set:
+        sta $D002
+irq_done:
         jmp (old_irq_lo)
 
 irq_idle:
-        // hide dots sprite when idle
+        // Not busy — hide dots sprite
         lda $D015
-        and #%11111101          // disable sprite 1
+        and #%11111101
         sta $D015
         jmp (old_irq_lo)
 
