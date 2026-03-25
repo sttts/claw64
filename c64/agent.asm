@@ -218,7 +218,7 @@ spr_cp1:lda spr_dots,x
 
         // Sprite 0 (lobster): red, in right border
         // X=336 (256+80), Y=$32. Lobster is 24px wide, sits in border.
-        lda #80                 // X low byte (256+80=336)
+        lda #64                 // X low byte (256+64=320)
         sta $D000
         lda #$32                // Y position (near top)
         sta $D001
@@ -227,7 +227,7 @@ spr_cp1:lda spr_dots,x
 
         // Sprite 1 (dots): red, to the RIGHT of lobster
         // X starts at 336+26=362 (256+106), same Y as lobster center
-        lda #106                // X low byte (256+106=362)
+        lda #90                 // X low byte (256+90=346)
         sta $D002
         lda #$3E                // Y near lobster center
         sta $D003
@@ -1124,9 +1124,9 @@ irq_animate:
         lda $D002
         clc
         adc #6
-        cmp #130                // past far right? (256+130=386)
+        cmp #114                // past far right? (256+114=370)
         bcc irq_store
-        lda #106                // reset near lobster (256+106=362)
+        lda #90                 // reset near lobster (256+90=346)
         jmp irq_store
 
 irq_send_dir:
@@ -1134,9 +1134,9 @@ irq_send_dir:
         lda $D002
         sec
         sbc #6
-        cmp #106                // past lobster? (256+106=362)
+        cmp #90                 // past lobster? (256+90=346)
         bcs irq_store
-        lda #130                // reset to far right
+        lda #114                // reset to far right
 irq_store:
         sta $D002
 
