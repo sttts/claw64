@@ -986,9 +986,9 @@ old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
 raster_offset:.byte 0   // rolling offset for raster gradient (increments each frame)
 
-// Color gradient table (16 entries, smooth cycling)
+// Color gradient table — 16 entries, blue-white-blue cycle
 raster_colors:
-        .byte 0,11,12,15,1,15,12,11,0,6,14,3,1,3,14,6
+        .byte 6,14,3,1,15,12,11,0,0,11,12,15,1,3,14,6
 
 // ---------------------------------------------------------
 // IRQ handler — raster bar effect during serial activity
@@ -1006,14 +1006,31 @@ irq_raster:
         beq irq_idle            // not sending → check idle
 
 irq_busy:
-        // Busy: cycle border color through gradient palette
-        ldx raster_offset
-        lda raster_colors,x
+        // Raster gradient: tight loop changes $D020 as the beam scans.
+        // Each iteration reads the current raster line ($D012), maps it
+        // to a color via the gradient table, and writes $D020.
+        // ~256 iterations × ~15 cycles = ~4ms per frame (20% CPU).
+        ldx #0
+irq_loop:
+        lda $D012               // current raster line (changes as beam moves)
+        lsr
+        lsr
+        lsr                     // divide by 8 → ~32 color bands
+        clc
+        adc raster_offset       // add rolling offset for animation
+        and #$0F                // wrap to 16-entry table
+        tay
+        lda raster_colors,y
         sta BORDER_COLOR
         inx
-        txa
-        and #$0F                // wrap at 16
-        sta raster_offset
+        bne irq_loop            // loop 256 times across the frame
+
+        // advance offset for rolling effect
+        inc raster_offset
+
+        // restore border for the rest of the frame
+        lda saved_border
+        sta BORDER_COLOR
 
         jmp (old_irq_lo)
 
