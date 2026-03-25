@@ -78,13 +78,17 @@ func (c *ClaudeCLIClient) Complete(ctx context.Context, messages []Message, tool
 	text := strings.TrimSpace(string(out))
 	log.Printf("LLM  →    :  %s", text)
 
-	// check if response is a tool call
-	if strings.HasPrefix(text, "{") {
+	// check if response contains a tool call (first line might be JSON)
+	firstLine := text
+	if i := strings.Index(text, "\n"); i >= 0 {
+		firstLine = strings.TrimSpace(text[:i])
+	}
+	if strings.HasPrefix(firstLine, "{") {
 		var tc struct {
 			Tool    string `json:"tool"`
 			Command string `json:"command"`
 		}
-		if json.Unmarshal([]byte(text), &tc) == nil && tc.Tool == "basic_exec" && tc.Command != "" {
+		if json.Unmarshal([]byte(firstLine), &tc) == nil && tc.Tool == "basic_exec" && tc.Command != "" {
 			return Message{
 				Role: "assistant",
 				ToolCalls: []ToolCall{{
