@@ -196,22 +196,21 @@ cp_bas_wr:
         // We put sprite data at $0340 (ptr $0D) and $0380 (ptr $0E).
         // These are in the cassette buffer area (safe to use).
 
-        // Copy claw sprite data to $0340
+        // Copy sprite data to cassette buffer area
+        // Frame 1 (claws open) → $0340, frame 2 (claws closed) → $03C0
+        // Dots → $0380
         ldx #62
-spr_cp0:lda spr_claw,x
+spr_cp0:lda spr_claw1,x
         sta $0340,x
+        lda spr_dots,x
+        sta $0380,x
+        lda spr_claw2,x
+        sta $03C0,x
         dex
         bpl spr_cp0
 
-        // Copy dots sprite data to $0380
-        ldx #62
-spr_cp1:lda spr_dots,x
-        sta $0380,x
-        dex
-        bpl spr_cp1
-
         // Set sprite pointers
-        lda #$0D                // $0340 / 64 = $0D
+        lda #$0D                // $0340 / 64 = $0D (claw frame 1)
         sta $07F8               // sprite 0 data pointer
         lda #$0E                // $0380 / 64 = $0E
         sta $07F9               // sprite 1 data pointer
@@ -1055,10 +1054,11 @@ old_irq_hi:   .byte 0   // saved IRQ vector high byte
 anim_timer:   .byte 5   // frames between dot shifts
 dot_dir:      .byte 1   // 0=left (sending), 1=right (receiving)
 busy_timer:   .byte 0   // frames since last serial activity (auto-clear at 30)
+claw_timer:   .byte 30  // frames between claw animation toggles
 
 // Lobster sprite data — 24x21 pixels, 63 bytes
-// Lobster sprite — based on pixel art reference
-spr_claw:
+// Lobster frame 1 — claws open
+spr_claw1:
         .byte %00100000, %00000100, %00000000  // row 0:  antennae
         .byte %00010000, %00001000, %00000000  // row 1:  antennae
         .byte %01010000, %00001010, %00000000  // row 2:  claw tips
@@ -1067,6 +1067,30 @@ spr_claw:
         .byte %11011100, %00111011, %00000000  // row 5:  claws + head
         .byte %01101110, %01110110, %00000000  // row 6:  arms
         .byte %00110111, %11101100, %00000000  // row 7:  shoulders
+        .byte %00011111, %11111000, %00000000  // row 8:  body top
+        .byte %00001111, %11110000, %00000000  // row 9:  body
+        .byte %00011011, %11011000, %00000000  // row 10: eyes
+        .byte %00011111, %11111000, %00000000  // row 11: body
+        .byte %00001111, %11110000, %00000000  // row 12: body
+        .byte %00011111, %11111000, %00000000  // row 13: body wide
+        .byte %00001111, %11110000, %00000000  // row 14: body
+        .byte %00010111, %11101000, %00000000  // row 15: legs
+        .byte %00100011, %11000100, %00000000  // row 16: legs outer
+        .byte %00000111, %11100000, %00000000  // row 17: tail
+        .byte %00001111, %11110000, %00000000  // row 18: tail fan
+        .byte %00011010, %01011000, %00000000  // row 19: tail fins
+        .byte %00110000, %00001100, %00000000  // row 20: tail tips
+
+// Lobster frame 2 — claws closed (pinching)
+spr_claw2:
+        .byte %00100000, %00000100, %00000000  // row 0:  antennae
+        .byte %00010000, %00001000, %00000000  // row 1:  antennae
+        .byte %00110000, %00001100, %00000000  // row 2:  claw tips (closer)
+        .byte %01111000, %00011110, %00000000  // row 3:  claws closing
+        .byte %01011000, %00011010, %00000000  // row 4:  claws grip
+        .byte %01111100, %00111110, %00000000  // row 5:  claws + head
+        .byte %00111110, %01111100, %00000000  // row 6:  arms (closer)
+        .byte %00011111, %11111000, %00000000  // row 7:  shoulders
         .byte %00011111, %11111000, %00000000  // row 8:  body top
         .byte %00001111, %11110000, %00000000  // row 9:  body
         .byte %00011011, %11011000, %00000000  // row 10: eyes
@@ -1163,6 +1187,17 @@ irq_right:
 irq_set:
         sta $D002
 irq_done:
+        // ---- Lobster claw animation (always runs) ----
+        // Toggle sprite pointer between frame 1 ($0D) and frame 2 ($0F)
+        // every ~30 frames for a pinching animation.
+        dec claw_timer
+        bne irq_exit
+        lda #30
+        sta claw_timer
+        lda $07F8
+        eor #$02                // toggle $0D ↔ $0F
+        sta $07F8
+irq_exit:
         jmp (old_irq_lo)
 
 irq_idle:
@@ -1170,6 +1205,6 @@ irq_idle:
         lda $D015
         and #%11111101
         sta $D015
-        jmp (old_irq_lo)
+        jmp irq_done            // still animate claw
 
 #import "serial.asm"
