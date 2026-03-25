@@ -218,7 +218,7 @@ spr_cp1:lda spr_dots,x
 
         // Sprite 0 (lobster): red, in right border
         // X=336 (256+80), Y=$32. Lobster is 24px wide, sits in border.
-        lda #64                 // X low byte (256+64=320)
+        lda #68                 // X low byte (256+68=324)
         sta $D000
         lda #$32                // Y position (near top)
         sta $D001
@@ -227,7 +227,7 @@ spr_cp1:lda spr_dots,x
 
         // Sprite 1 (dots): red, just left of lobster
         // Lobster at X=320 (256+64). Dots at X=296 (256+40).
-        lda #40                 // X low byte (256+40=296)
+        lda #44                 // X low byte (256+44=300)
         sta $D002
         lda #$36                // Y near lobster center (8px higher)
         sta $D003
@@ -332,6 +332,8 @@ bloop:
         beq bl_no_data          // same → GETIN returned 0 = no data
         pla                     // different → got real data (even if 0)
         sta rx_byte
+        lda #0
+        sta busy_timer          // reset timeout — serial activity
         jmp bl_got_data
 bl_no_data:
         pla                     // discard the 0
@@ -847,12 +849,13 @@ frame_dispatch:
         cmp #FRAME_MSG          // is it a MSG frame (user's chat message)?
         bne fd_not_msg          // no → check next type
 
-        // start conversation — sending LLM_MSG (dots go left)
+        // start conversation — C64 sends LLM_MSG then waits for response
         lda #1
         sta busy
         sta llm_pending
+        sta dot_dir             // 1 = right (waiting to receive)
         lda #0
-        sta dot_dir             // left = sending
+        sta busy_timer          // reset timeout
         lda $D015
         ora #%00000010
         sta $D015
@@ -1042,6 +1045,7 @@ old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
 anim_timer:   .byte 5   // frames between dot shifts
 dot_dir:      .byte 1   // 0=left (sending), 1=right (receiving)
+busy_timer:   .byte 0   // frames since last serial activity (auto-clear at 30)
 
 // Lobster sprite data — 24x21 pixels, 63 bytes
 // Based on pixel art lobster: claws up, body center, tail down
@@ -1104,6 +1108,19 @@ irq_raster:
         beq irq_idle
 
         // Busy — show and animate dots sprite
+        // Auto-timeout: clear busy after ~500ms (30 frames at 60Hz).
+        // Each serial frame re-sets busy_timer to 0, so animation
+        // continues as long as frames keep arriving.
+        inc busy_timer
+        lda busy_timer
+        cmp #30                 // 30 frames ≈ 500ms
+        bcc irq_no_timeout
+        lda #0
+        sta busy
+        sta busy_timer
+        jmp irq_idle
+irq_no_timeout:
+
         lda $D015
         ora #%00000010          // enable sprite 1
         sta $D015
@@ -1122,9 +1139,9 @@ irq_raster:
         lda $D002
         sec
         sbc #2
-        cmp #46                 // left limit (10px range)
+        cmp #50                 // left limit (10px range)
         bcs irq_set
-        lda #56                 // wrap back near lobster
+        lda #60                 // wrap back near lobster
         jmp irq_set
 
 irq_right:
@@ -1132,9 +1149,9 @@ irq_right:
         lda $D002
         clc
         adc #2
-        cmp #56                 // right limit (near lobster)
+        cmp #60                 // right limit (near lobster)
         bcc irq_set
-        lda #46                 // wrap back to far left
+        lda #50                 // wrap back to far left
 
 irq_set:
         sta $D002
