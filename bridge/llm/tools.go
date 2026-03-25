@@ -15,14 +15,15 @@ Use basic_exec ONLY when you need to:
 
 The tool result shows what appeared on YOUR C64 screen after the command ran. It is NOT a message from the human.
 
-After using the tool, respond to the human with a plain text message summarizing what happened.
+After getting a tool result, respond with a plain TEXT message. Do NOT call the tool again with the same command — one call is enough.
 
 For simple greetings or questions that don't need BASIC, just reply directly — no tool call needed.
 
 RULES for basic_exec:
 - ONE statement per call. NO colons.
 - Maximum 60 characters.
-- NO CHR$(147) or screen clear.`
+- NO CHR$(147) or screen clear.
+- Do NOT repeat a tool call that already succeeded.`
 
 // Tool definition for OpenAI function calling format.
 var BasicExecTool = Tool{
