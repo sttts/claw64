@@ -181,15 +181,10 @@ cp_bas_wr:
         lda #>reenter
         sta $E5D3
 
-        // Save border color BEFORE hooking IRQ (IRQ handler uses saved_border)
-        // Read $D020, mask to 4 bits. Default C64 = $0E (light blue).
-        lda #%00110111          // switch to ROM mode briefly to read I/O cleanly
-        sta PROCPORT
-        lda BORDER_COLOR
-        and #$0F
+        // Set saved border to light blue ($0E) — the C64 default.
+        // Reading $D020 at this point is unreliable due to PROCPORT state.
+        lda #$0E
         sta saved_border
-        lda #%00110101          // back to RAM mode
-        sta PROCPORT
 
         // ---- Hook IRQ for raster bar effect ----
         // When the agent is busy (injecting, waiting), the IRQ handler
@@ -1034,9 +1029,22 @@ irq_next:
         inx
         bne irq_loop            // 256 iterations across the frame
 
-        // scroll the bar downward (2 pixels per frame for smooth motion)
+        // scroll direction: down when receiving (IDLE/waiting for LLM),
+        // up when sending (INJECTING/drip-sending)
+        lda agent_state
+        cmp #AG_INJECTING
+        beq irq_up
+        lda send_pos
+        cmp send_total
+        bne irq_up
+        // receiving/waiting: scroll down
         inc raster_offset
         inc raster_offset
+        jmp irq_done
+irq_up: // sending/injecting: scroll up
+        dec raster_offset
+        dec raster_offset
+irq_done:
 
         jmp (old_irq_lo)
 
