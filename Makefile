@@ -24,6 +24,8 @@ KICKASS_ZIP  = build/KickAssembler.zip
 # Source files
 ASM_SRC     = c64/agent.asm
 ASM_OUT     = c64/agent.prg
+LOADER_SRC  = c64/loader.asm
+LOADER_OUT  = c64/claw64.prg
 ECHO_SRC    = c64/echotest.asm
 ECHO_OUT    = c64/echotest.prg
 VEC_SRC     = c64/vectest.asm
@@ -39,9 +41,10 @@ $(KICKASS_JAR):
 	@rm -f $(KICKASS_ZIP)
 	@test -f $(KICKASS_JAR) || { echo "ERROR: KickAss.jar not found after unzip"; exit 1; }
 
-# assemble the C64 agent
+# assemble the C64 agent (standalone for dev, loader for production)
 assemble: $(KICKASS_JAR)
 	java -jar $(KICKASS_JAR) -o $(ASM_OUT) $(ASM_SRC)
+	java -jar $(KICKASS_JAR) -o $(LOADER_OUT) $(LOADER_SRC)
 
 # assemble the echo test
 echotest: $(KICKASS_JAR)
@@ -50,7 +53,7 @@ echotest: $(KICKASS_JAR)
 # launch VICE with the agent and RS232 enabled
 # Agent is auto-loaded but not auto-run. Type SYS 49152 to start.
 vice: assemble
-	$(VICE) $(VICE_RS) $(VICE_MON) -autostart $(ASM_OUT) -keybuf "sys 49152\n"
+	$(VICE) $(VICE_RS) $(VICE_MON) -autostart $(LOADER_OUT)
 
 # assemble the vector test
 vectest: $(KICKASS_JAR)
@@ -71,7 +74,7 @@ run: assemble
 	@-pkill -f "$(VICE).*$(ASM_OUT)" 2>/dev/null; true
 	@# Start VICE in background (output suppressed), poll until bridge is listening
 	@(while ! nc -z 127.0.0.1 25232 2>/dev/null; do sleep 0.2; done; \
-	  $(VICE) $(VICE_RS) -autostart $(ASM_OUT) -keybuf "sys 49152\n" \
+	  $(VICE) $(VICE_RS) -autostart $(LOADER_OUT) \
 	  > /dev/null 2>&1) &
 	cd bridge && go run .
 

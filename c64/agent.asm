@@ -22,7 +22,11 @@
 // This is above BASIC RAM ($0800-$9FFF) so the agent doesn't interfere
 // with BASIC programs. The PRG file header tells the C64 loader to
 // place this code at $C000.
-*= AGENT_BASE
+// Set origin unless included from loader.asm (which uses .pseudopc)
+#if !LOADER_MODE
+    *= AGENT_BASE
+#endif
+
 
 // Processor port at zero-page $01 controls the C64 memory map.
 // Bits 0-2 select which ROMs/IO are visible:
