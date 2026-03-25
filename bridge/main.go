@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 
 	"github.com/sttts/claw64/relay"
 	"github.com/sttts/claw64/chat"
@@ -86,8 +85,7 @@ func newLLM() (llm.Completer, string) {
 }
 
 func runBridge() {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
+	ctx := context.Background()
 
 	// connect serial
 	addr := env("CLAW64_SERIAL_ADDR", "127.0.0.1:25232")
