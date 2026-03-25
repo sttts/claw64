@@ -181,6 +181,19 @@ cp_bas_wr:
         lda #>reenter
         sta $E5D3
 
+        // ---- Hook IRQ for raster bar effect ----
+        // When the agent is busy (injecting, waiting), the IRQ handler
+        // creates a rolling color gradient in the border. When idle,
+        // border stays at the normal color.
+        lda IRQ_LO
+        sta old_irq_lo
+        lda IRQ_HI
+        sta old_irq_hi
+        lda #<irq_raster
+        sta IRQ_LO
+        lda #>irq_raster
+        sta IRQ_HI
+
         // ---- Initialize RS232 serial ----
         //
         // serial_init calls KERNAL routines (OPEN, SETLFS, SETNAM) which
@@ -227,9 +240,9 @@ cp_bas_wr:
         sta ready_timer
         sta llm_pending
 
-        // Set border cyan
-        lda #3
-        sta BORDER_COLOR
+        // Save the current border color (don't change it)
+        lda BORDER_COLOR
+        and #$0F                // mask to 0-15
         sta saved_border
 
         // Prime keyboard with dummy RETURN (first command fix)
@@ -250,10 +263,6 @@ cp_bas_wr:
 //   4. Let KERNAL process any pending keystrokes, then loop
 // ---------------------------------------------------------
 bloop:
-        // Restore border color to default (cancels any previous activity flash)
-        lda saved_border
-        sta BORDER_COLOR
-
         // ---- Step 1: Receive one serial byte ----
         //
         // Use KERNAL CHKIN/GETIN/CLRCHN (the only path that works with
@@ -278,11 +287,6 @@ bl_no_data:
         pla                     // discard the 0
         jmp bl_inject           // no data → skip
 bl_got_data:
-
-        // Flash border white on serial activity (like a modem LED)
-        lda #1                  // 1 = white
-        sta BORDER_COLOR
-
         lda rx_byte             // reload the received byte into A
         jsr frame_rx_byte       // feed byte to the frame protocol parser
 
@@ -981,5 +985,46 @@ saved_border: .byte 3   // original border color to restore after activity flash
 ready_codes:  .byte $12, $05, $01, $04, $19, $2E
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
+old_irq_lo:   .byte 0   // saved IRQ vector low byte
+old_irq_hi:   .byte 0   // saved IRQ vector high byte
+raster_offset:.byte 0   // rolling offset for raster gradient (increments each frame)
+
+// Color gradient table (16 entries, smooth cycling)
+raster_colors:
+        .byte 0,11,12,15,1,15,12,11,0,6,14,3,1,3,14,6
+
+// ---------------------------------------------------------
+// IRQ handler — raster bar effect during serial activity
+//
+// When agent_state != 0 (busy), creates a rolling color gradient
+// in the border by reading $D012 (current raster line) and using
+// it as a color index. When idle (state 0), restores normal border.
+// ---------------------------------------------------------
+irq_raster:
+        lda agent_state
+        beq irq_idle
+
+        // Busy: raster gradient in border
+        lda $D012               // current raster line (0-255)
+        lsr                     // divide by 2 (coarser bars)
+        lsr                     // divide by 4
+        lsr                     // divide by 8
+        clc
+        adc raster_offset       // add rolling offset
+        and #$0F                // mask to 0-15 (table index)
+        tax
+        lda raster_colors,x     // get color from gradient table
+        sta BORDER_COLOR        // set border color
+
+        // Increment offset each frame for rolling effect
+        inc raster_offset
+
+        jmp (old_irq_lo)        // chain to original IRQ handler
+
+irq_idle:
+        // Idle: restore normal border color
+        lda saved_border
+        sta BORDER_COLOR
+        jmp (old_irq_lo)
 
 #import "serial.asm"
