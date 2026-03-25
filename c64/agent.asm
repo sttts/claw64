@@ -64,10 +64,6 @@
 install:
         // Set border color to green (5) as a visual indicator that
         // installation has started. The C64 VIC-II chip's border
-        // color register at $D020 controls the screen border color.
-        lda #5
-        sta BORDER_COLOR
-
         // Disable interrupts during setup. SEI sets the interrupt
         // disable flag so IRQ handlers won't fire while we modify
         // the memory map and patch KERNAL code.
@@ -181,15 +177,7 @@ cp_bas_wr:
         lda #>reenter
         sta $E5D3
 
-        // Set saved border to light blue ($0E) — the C64 default.
-        // Reading $D020 at this point is unreliable due to PROCPORT state.
-        lda #$0E
-        sta saved_border
-
-        // ---- Hook IRQ for raster bar effect ----
-        // When the agent is busy (injecting, waiting), the IRQ handler
-        // creates a rolling color gradient in the border. When idle,
-        // border stays at the normal color.
+        // ---- Hook IRQ for sprite animation ----
         lda IRQ_LO
         sta old_irq_lo
         lda IRQ_HI
@@ -305,7 +293,7 @@ spr_cp1:lda spr_dots,x
         sta llm_pending
         sta busy
 
-        // (saved_border already set before IRQ hook install)
+        // border is not touched by the agent
 
         // Prime keyboard with dummy RETURN (first command fix)
         lda #$0D
@@ -534,8 +522,6 @@ bl_rd:  lda $0400               // address self-modified by setup above
 
 bl_ready_found:
         // ---- READY. found! ----
-        lda #5                  // GREEN border = READY. found
-        sta BORDER_COLOR
         jsr send_screen_result  // builds frame in send_buf, sets send_total
         lda #0
         sta send_pos            // start drip-send from byte 0
@@ -1039,7 +1025,7 @@ ready_timer:  .byte 0   // countdown timer for READY. detection (increments each
 send_pos:     .byte 0   // current position during burst-send (saved across CHROUT calls)
 send_total:   .byte 0   // total bytes to send in current burst-send operation
 cur_page:     .byte $A0 // current page during ROM copy, init to $A0
-saved_border: .byte $0E // default C64 border (light blue), overwritten at install
+// saved_border removed — agent never touches the border
 
 // Screen codes for "READY." (used by self-modifying scan loop)
 ready_codes:  .byte $12, $05, $01, $04, $19, $2E
@@ -1050,30 +1036,30 @@ old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
 anim_timer:   .byte 5   // frames between dot shifts
 
-// Lobster claw sprite data — 24x21 pixels, 63 bytes
-// Open pincer shape, facing left
+// Lobster sprite data — 24x21 pixels, 63 bytes
+// Based on pixel art lobster: claws up, body center, tail down
 spr_claw:
-        .byte %00000110, %00000000, %00000000  // row 0
-        .byte %00001111, %00000000, %00000000  // row 1
-        .byte %00011111, %10000000, %00000000  // row 2
-        .byte %00111111, %11000000, %00000000  // row 3
-        .byte %01111100, %11100000, %00000000  // row 4
-        .byte %11110000, %01110000, %00000000  // row 5
-        .byte %11100000, %00111000, %00000000  // row 6
-        .byte %11000000, %00011100, %00000000  // row 7
-        .byte %11000000, %00001110, %00000000  // row 8
-        .byte %01100000, %00001111, %00000000  // row 9
-        .byte %00110000, %00011111, %10000000  // row 10: body
-        .byte %01100000, %00001111, %00000000  // row 11
-        .byte %11000000, %00001110, %00000000  // row 12
-        .byte %11000000, %00011100, %00000000  // row 13
-        .byte %11100000, %00111000, %00000000  // row 14
-        .byte %11110000, %01110000, %00000000  // row 15
-        .byte %01111100, %11100000, %00000000  // row 16
-        .byte %00111111, %11000000, %00000000  // row 17
-        .byte %00011111, %10000000, %00000000  // row 18
-        .byte %00001111, %00000000, %00000000  // row 19
-        .byte %00000110, %00000000, %00000000  // row 20
+        .byte %01100000, %00000110, %00000000  // row 0:  claws tips
+        .byte %11110000, %00001111, %00000000  // row 1:  claws open
+        .byte %11111000, %00011111, %00000000  // row 2:  claws wider
+        .byte %11011100, %00111011, %00000000  // row 3:  claws inner
+        .byte %11001110, %01110011, %00000000  // row 4:  claws close
+        .byte %01100111, %11100110, %00000000  // row 5:  arms
+        .byte %00110011, %11001100, %00000000  // row 6:  shoulders
+        .byte %00011001, %10011000, %00000000  // row 7:  neck
+        .byte %00001101, %10110000, %00000000  // row 8:  head top
+        .byte %00000111, %11100000, %00000000  // row 9:  head
+        .byte %00000111, %11100000, %00000000  // row 10: head
+        .byte %00001111, %11110000, %00000000  // row 11: body wide
+        .byte %00000111, %11100000, %00000000  // row 12: body
+        .byte %00001111, %11110000, %00000000  // row 13: body wide
+        .byte %00000111, %11100000, %00000000  // row 14: body
+        .byte %00000011, %11000000, %00000000  // row 15: tail start
+        .byte %00000101, %10100000, %00000000  // row 16: tail fins
+        .byte %00001001, %10010000, %00000000  // row 17: tail spread
+        .byte %00010001, %10001000, %00000000  // row 18: tail wide
+        .byte %00010000, %00001000, %00000000  // row 19: tail tips
+        .byte %00000000, %00000000, %00000000  // row 20: empty
 
 // Dots sprite data — three small dots in a row
 spr_dots:
@@ -1100,11 +1086,10 @@ spr_dots:
         .byte %00000000, %00000000, %00000000  // row 20
 
 // ---------------------------------------------------------
-// IRQ handler — raster bar effect during serial activity
+// IRQ handler — animate dots sprite during serial activity
 //
-// When agent_state != 0 (busy), creates a rolling color gradient
-// in the border by reading $D012 (current raster line) and using
-// it as a color index. When idle (state 0), restores normal border.
+// When busy: dots sprite moves left (receiving) or right (sending).
+// When idle: dots sprite hidden. Border is never touched.
 // ---------------------------------------------------------
 irq_raster:
         // Animate lobster claw sprite when busy.
@@ -1161,12 +1146,10 @@ irq_no_shift:
         jmp (old_irq_lo)
 
 irq_idle:
-        // hide dots sprite, restore border
+        // hide dots sprite when idle
         lda $D015
         and #%11111101          // disable sprite 1
         sta $D015
-        lda saved_border
-        sta BORDER_COLOR        // restore normal border
         jmp (old_irq_lo)
 
 #import "serial.asm"
