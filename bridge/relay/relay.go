@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/sttts/claw64/llm"
@@ -141,11 +142,19 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			})
 			continue
 		}
-		log.Printf("LLM → C64:  EXEC %q", args.Command)
+		// sanitize: strip newlines, take first line only, truncate to 80 chars
+		cmd := args.Command
+		if i := strings.IndexAny(cmd, "\n\r"); i >= 0 {
+			cmd = cmd[:i]
+		}
+		if len(cmd) > 80 {
+			cmd = cmd[:80]
+		}
+		log.Printf("LLM → C64:  EXEC %q", cmd)
 
 		r.lastToolCallID = tc.ID
 
-		execFrame := serial.Frame{Type: serial.FrameExec, Payload: []byte(args.Command)}
+		execFrame := serial.Frame{Type: serial.FrameExec, Payload: []byte(cmd)}
 		if err := r.sendWithRetry(execFrame); err != nil {
 			return fmt.Errorf("send EXEC: %w", err)
 		}
