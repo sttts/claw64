@@ -385,8 +385,11 @@ bl_wait:
         // of each screen line, avoiding multiplication at runtime.
         ldx #24                 // X = line number, start at bottom (line 24)
 bl_scan:
-        // Self-modifying code for screen reads. With PROCPORT=$35
-        // enforced by IRQ hook, this is safe (no KERNAL ROM overwrites).
+        // Only check lines BELOW where the cursor was when injection started.
+        // This prevents matching the old READY. that was already on screen.
+        cpx scan_start
+        bcc bl_scan_next        // skip lines at or above injection start
+        beq bl_scan_next
         lda screen_lo,x
         sta bl_rd+1             // patch LDA address low byte
         lda screen_hi,x
@@ -462,12 +465,11 @@ bl_key:
         // which pushes Y/X, reads char, RTS to BASIC. BASIC executes.
         // For non-RETURN: echoes char, loops back to $E5CD → $E5D1
         // → JMP reenter → bloop.
-        jmp $E5D4               // KERNAL: after our patch, checks buffer
+        jmp $E5D4               // KERNAL: check buffer (after our $E5D1 patch)
 
-// Re-entry from $E5D1 patch. The KERNAL key loop at $E5CD→$E5D1
-// hits our JMP reenter. We switch back to ROM mode and loop.
+// Re-entry from $E5D1 patch.
 reenter:
-        jmp bloop               // $01 stays $35 (RAM mode) permanently
+        jmp bloop
 
 // ---------------------------------------------------------
 // Send screen content as RESULT frame
@@ -754,34 +756,12 @@ fd_not_text:
         cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
         bne fd_done             // no → unknown frame type, ignore
 
-        // ---- Clear old READY. from screen ----
-        // The scanner would find the old READY. before BASIC executes
-        // the new command. Replace 'R' ($12) at column 0 of each line.
-        ldx #24
-fd_clr: lda screen_lo,x
-        sta bl_rd+1             // self-modify LDA address
-        lda screen_hi,x
-        sta bl_rd+2
-        lda bl_rd+1             // save low byte
-        pha
-        // read column 0
-        lda $0400               // address was just patched into bl_rd
-        // but bl_rd is the SCAN instruction, not here. Use direct check:
-        pla
-        sta bl_rd+1             // restore
-        // Actually, just use the screen_lo/hi tables with Y=0:
-        // Can't use indirect (zp clobbered). Use self-mod write instead.
-        lda screen_lo,x
-        sta fd_clr_wr+1
-        lda screen_hi,x
-        sta fd_clr_wr+2
-        lda #$20                // space
-fd_clr_wr:
-        sta $0400               // address self-modified to line X, col 0
-        dex
-        bpl fd_clr
-
         // ---- Start keystroke injection ----
+        // Save cursor row so READY. scanner only checks BELOW this line
+        // (prevents matching the old READY. that's already on screen).
+        lda CURSOR_ROW          // $D6 = current cursor row (0-24)
+        sta scan_start          // scanner will only check rows > scan_start
+
         ldx frame_len
         lda #$0D                // RETURN key
         sta AGENT_RXBUF,x      // append after last command char
@@ -939,5 +919,6 @@ saved_border: .byte 3   // original border color to restore after activity flash
 // Screen codes for "READY." (used by self-modifying scan loop)
 ready_codes:  .byte $12, $05, $01, $04, $19, $2E
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
+scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 
 #import "serial.asm"
