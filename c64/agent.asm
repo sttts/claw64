@@ -199,6 +199,63 @@ cp_bas_wr:
         lda #>irq_raster
         sta IRQ_HI
 
+        // ---- Set up lobster claw sprites ----
+        // Sprite 0: claw (always visible, top-right)
+        // Sprite 1: dots (animated when busy, hidden when idle)
+        //
+        // Sprite data pointers: last bytes of screen RAM ($07F8-$07FF)
+        // Each pointer × 64 = address of 63-byte sprite data.
+        // We put sprite data at $0340 (ptr $0D) and $0380 (ptr $0E).
+        // These are in the cassette buffer area (safe to use).
+
+        // Copy claw sprite data to $0340
+        ldx #62
+spr_cp0:lda spr_claw,x
+        sta $0340,x
+        dex
+        bpl spr_cp0
+
+        // Copy dots sprite data to $0380
+        ldx #62
+spr_cp1:lda spr_dots,x
+        sta $0380,x
+        dex
+        bpl spr_cp1
+
+        // Set sprite pointers
+        lda #$0D                // $0340 / 64 = $0D
+        sta $07F8               // sprite 0 data pointer
+        lda #$0E                // $0380 / 64 = $0E
+        sta $07F9               // sprite 1 data pointer
+
+        // Sprite 0 (claw): red, top-right corner
+        lda #$58+280            // X position (high bit needed for >255)
+        sta $D000               // sprite 0 X low
+        lda #$32                // Y position (near top)
+        sta $D001               // sprite 0 Y
+        lda #2                  // color red
+        sta $D027               // sprite 0 color
+
+        // Sprite 1 (dots): red, same Y, starts at right
+        lda #$58+200            // X position
+        sta $D002               // sprite 1 X low
+        lda #$3A                // Y position (slightly below claw center)
+        sta $D003               // sprite 1 Y
+        lda #2                  // color red
+        sta $D028               // sprite 1 color
+
+        // Handle X high bit (bit 8) for sprites positioned > 255
+        lda #%00000001          // sprite 0 needs high X bit
+        sta $D010               // X MSB register
+
+        // Enable sprite 0 (claw always visible), sprite 1 off initially
+        lda #%00000001
+        sta $D015               // sprite enable
+
+        // Init animation timer
+        lda #5
+        sta anim_timer
+
         // ---- Initialize RS232 serial ----
         //
         // serial_init calls KERNAL routines (OPEN, SETLFS, SETNAM) which
@@ -800,10 +857,13 @@ frame_dispatch:
         cmp #FRAME_MSG          // is it a MSG frame (user's chat message)?
         bne fd_not_msg          // no → check next type
 
-        // start conversation — set busy flag for border animation
+        // start conversation — set busy flag, enable dots sprite
         lda #1
         sta busy
-        sta llm_pending         // trigger LLM_MSG drip-send
+        sta llm_pending
+        lda $D015               // enable sprite 1 (dots)
+        ora #%00000010
+        sta $D015
         rts
 
 fd_not_msg:
@@ -986,12 +1046,56 @@ scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= th
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
-raster_offset:.byte 0   // rolling offset for raster gradient (increments each frame)
-irq_last:     .byte 0   // last color written to $D020 (flicker reduction)
+anim_timer:   .byte 5   // frames between dot shifts
 
-// Color gradient table — 16 entries, blue-white-blue cycle
-raster_colors:
-        .byte 6,14,3,1,15,12,11,0,0,11,12,15,1,3,14,6
+// Lobster claw sprite data — 24x21 pixels, 63 bytes
+// Open pincer shape, facing left
+spr_claw:
+        .byte %00000110, %00000000, %00000000  // row 0
+        .byte %00001111, %00000000, %00000000  // row 1
+        .byte %00011111, %10000000, %00000000  // row 2
+        .byte %00111111, %11000000, %00000000  // row 3
+        .byte %01111100, %11100000, %00000000  // row 4
+        .byte %11110000, %01110000, %00000000  // row 5
+        .byte %11100000, %00111000, %00000000  // row 6
+        .byte %11000000, %00011100, %00000000  // row 7
+        .byte %11000000, %00001110, %00000000  // row 8
+        .byte %01100000, %00001111, %00000000  // row 9
+        .byte %00110000, %00011111, %10000000  // row 10: body
+        .byte %01100000, %00001111, %00000000  // row 11
+        .byte %11000000, %00001110, %00000000  // row 12
+        .byte %11000000, %00011100, %00000000  // row 13
+        .byte %11100000, %00111000, %00000000  // row 14
+        .byte %11110000, %01110000, %00000000  // row 15
+        .byte %01111100, %11100000, %00000000  // row 16
+        .byte %00111111, %11000000, %00000000  // row 17
+        .byte %00011111, %10000000, %00000000  // row 18
+        .byte %00001111, %00000000, %00000000  // row 19
+        .byte %00000110, %00000000, %00000000  // row 20
+
+// Dots sprite data — three small dots in a row
+spr_dots:
+        .byte %00000000, %00000000, %00000000  // row 0
+        .byte %00000000, %00000000, %00000000  // row 1
+        .byte %00000000, %00000000, %00000000  // row 2
+        .byte %00000000, %00000000, %00000000  // row 3
+        .byte %00000000, %00000000, %00000000  // row 4
+        .byte %00000000, %00000000, %00000000  // row 5
+        .byte %00000000, %00000000, %00000000  // row 6
+        .byte %00000000, %00000000, %00000000  // row 7
+        .byte %00000000, %00000000, %00000000  // row 8
+        .byte %11000000, %00110000, %00001100  // row 9: three dots
+        .byte %11000000, %00110000, %00001100  // row 10: three dots
+        .byte %00000000, %00000000, %00000000  // row 11
+        .byte %00000000, %00000000, %00000000  // row 12
+        .byte %00000000, %00000000, %00000000  // row 13
+        .byte %00000000, %00000000, %00000000  // row 14
+        .byte %00000000, %00000000, %00000000  // row 15
+        .byte %00000000, %00000000, %00000000  // row 16
+        .byte %00000000, %00000000, %00000000  // row 17
+        .byte %00000000, %00000000, %00000000  // row 18
+        .byte %00000000, %00000000, %00000000  // row 19
+        .byte %00000000, %00000000, %00000000  // row 20
 
 // ---------------------------------------------------------
 // IRQ handler — raster bar effect during serial activity
@@ -1001,63 +1105,60 @@ raster_colors:
 // it as a color index. When idle (state 0), restores normal border.
 // ---------------------------------------------------------
 irq_raster:
-        // Show animation when busy: agent processing OR drip-sending
+        // Animate lobster claw sprite when busy.
+        // Sprite 1 shows dots: move left when receiving, right when sending.
         lda busy
-        bne irq_busy
+        bne irq_animate
         lda send_pos
         cmp send_total
-        beq irq_idle            // not sending → check idle
+        beq irq_idle
 
-irq_busy:
-        // Scrolling raster bar with flicker reduction.
-        // Only write $D020 when the color changes from last write.
-        lda saved_border
-        sta BORDER_COLOR        // start with normal border
-        sta irq_last            // track last written color
-        ldx #0
-irq_loop:
-        lda $D012               // current raster line
-        sec
-        sbc raster_offset       // distance from bar top
-        cmp #32                 // within the 32-line bar?
-        bcs irq_outside
-        lsr                     // 0-31 → 0-15
-        tay
-        lda raster_colors,y
-        jmp irq_write
-irq_outside:
-        lda saved_border
-irq_write:
-        cmp irq_last            // same as last write?
-        beq irq_skip            // yes → don't write (reduces flicker)
-        sta BORDER_COLOR
-        sta irq_last
-irq_skip:
-        inx
-        bne irq_loop
+irq_animate:
+        // Move dots sprite (sprite 1) horizontally
+        // Decrement frame counter; on zero, shift dots
+        dec anim_timer
+        bne irq_no_shift
+        lda #5                  // shift every 5 frames (~12 fps)
+        sta anim_timer
 
-        // scroll direction: down when receiving (IDLE/waiting for LLM),
-        // up when sending (INJECTING/drip-sending)
+        // determine direction
         lda agent_state
         cmp #AG_INJECTING
-        beq irq_up
+        beq irq_send_dir
         lda send_pos
         cmp send_total
-        bne irq_up
-        // receiving/waiting: scroll down
-        inc raster_offset
-        inc raster_offset
-        jmp irq_done
-irq_up: // sending/injecting: scroll up
-        dec raster_offset
-        dec raster_offset
-irq_done:
+        bne irq_send_dir
 
+        // receiving: move sprite 1 leftward (toward claw)
+        lda $D002               // sprite 1 X position
+        sec
+        sbc #4
+        sta $D002
+        cmp #$40                // reached left edge?
+        bcs irq_no_shift
+        lda #$58+160            // reset to right side
+        sta $D002
+        jmp irq_no_shift
+
+irq_send_dir:
+        // sending: move sprite 1 rightward (away from claw)
+        lda $D002
+        clc
+        adc #4
+        sta $D002
+        cmp #$58+160            // reached right edge?
+        bcc irq_no_shift
+        lda #$40                // reset to left (near claw)
+        sta $D002
+
+irq_no_shift:
         jmp (old_irq_lo)
 
 irq_idle:
-        lda saved_border
-        sta BORDER_COLOR
+        // hide dots sprite when idle
+        lda $D015               // sprite enable register
+        and #%11111101          // disable sprite 1 (dots)
+        sta $D015
         jmp (old_irq_lo)
 
 #import "serial.asm"
