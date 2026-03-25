@@ -465,10 +465,15 @@ bl_key:
         // which pushes Y/X, reads char, RTS to BASIC. BASIC executes.
         // For non-RETURN: echoes char, loops back to $E5CD → $E5D1
         // → JMP reenter → bloop.
-        jmp $E5D4               // KERNAL: check buffer (after our $E5D1 patch)
+        jmp $E632               // BASIN entry: push Y/X, check CRSW, key loop
 
-// Re-entry from $E5D1 patch.
+// Re-entry from $E5D1 patch. The key loop goes $E5CD→$E5D1 (our JMP).
+// $E632 pushed Y/X at entry. We pop them so the stack stays balanced.
+// Next bl_key call re-enters at $E632 which pushes fresh Y/X.
 reenter:
+        sta $0292               // execute the original $E5D1 instruction
+        pla                     // pop X saved by $E632
+        pla                     // pop Y saved by $E632
         jmp bloop
 
 // ---------------------------------------------------------
