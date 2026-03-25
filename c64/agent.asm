@@ -182,9 +182,14 @@ cp_bas_wr:
         sta $E5D3
 
         // Save border color BEFORE hooking IRQ (IRQ handler uses saved_border)
+        // Read $D020, mask to 4 bits. Default C64 = $0E (light blue).
+        lda #%00110111          // switch to ROM mode briefly to read I/O cleanly
+        sta PROCPORT
         lda BORDER_COLOR
         and #$0F
         sta saved_border
+        lda #%00110101          // back to RAM mode
+        sta PROCPORT
 
         // ---- Hook IRQ for raster bar effect ----
         // When the agent is busy (injecting, waiting), the IRQ handler
@@ -1008,31 +1013,30 @@ irq_raster:
         beq irq_idle            // not sending → check idle
 
 irq_busy:
-        // Raster gradient: tight loop changes $D020 as the beam scans.
-        // Each iteration reads the current raster line ($D012), maps it
-        // to a color via the gradient table, and writes $D020.
-        // ~256 iterations × ~15 cycles = ~4ms per frame (20% CPU).
+        // Scrolling raster bar: a gradient band moves down the screen.
+        // Lines within the bar show gradient colors, rest show normal.
         ldx #0
 irq_loop:
-        lda $D012               // current raster line (changes as beam moves)
-        lsr
-        lsr
-        lsr                     // divide by 8 → ~32 color bands
-        clc
-        adc raster_offset       // add rolling offset for animation
-        and #$0F                // wrap to 16-entry table
+        lda $D012               // current raster line
+        sec
+        sbc raster_offset       // subtract bar position → distance from bar top
+        cmp #32                 // within the 32-line bar?
+        bcs irq_outside         // no → normal border
+        lsr                     // 0-31 → 0-15 (index into 16-color table)
         tay
         lda raster_colors,y
         sta BORDER_COLOR
-        inx
-        bne irq_loop            // loop 256 times across the frame
-
-        // advance offset for rolling effect
-        inc raster_offset
-
-        // restore border for the rest of the frame
+        jmp irq_next
+irq_outside:
         lda saved_border
         sta BORDER_COLOR
+irq_next:
+        inx
+        bne irq_loop            // 256 iterations across the frame
+
+        // scroll the bar downward (2 pixels per frame for smooth motion)
+        inc raster_offset
+        inc raster_offset
 
         jmp (old_irq_lo)
 
