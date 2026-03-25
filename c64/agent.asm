@@ -181,6 +181,11 @@ cp_bas_wr:
         lda #>reenter
         sta $E5D3
 
+        // Save border color BEFORE hooking IRQ (IRQ handler uses saved_border)
+        lda BORDER_COLOR
+        and #$0F
+        sta saved_border
+
         // ---- Hook IRQ for raster bar effect ----
         // When the agent is busy (injecting, waiting), the IRQ handler
         // creates a rolling color gradient in the border. When idle,
@@ -241,10 +246,7 @@ cp_bas_wr:
         sta llm_pending
         sta busy
 
-        // Save the current border color (don't change it)
-        lda BORDER_COLOR
-        and #$0F                // mask to 0-15
-        sta saved_border
+        // (saved_border already set before IRQ hook install)
 
         // Prime keyboard with dummy RETURN (first command fix)
         lda #$0D
@@ -975,7 +977,7 @@ ready_timer:  .byte 0   // countdown timer for READY. detection (increments each
 send_pos:     .byte 0   // current position during burst-send (saved across CHROUT calls)
 send_total:   .byte 0   // total bytes to send in current burst-send operation
 cur_page:     .byte $A0 // current page during ROM copy, init to $A0
-saved_border: .byte 3   // original border color to restore after activity flash
+saved_border: .byte $0E // default C64 border (light blue), overwritten at install
 
 // Screen codes for "READY." (used by self-modifying scan loop)
 ready_codes:  .byte $12, $05, $01, $04, $19, $2E
