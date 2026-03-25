@@ -229,7 +229,7 @@ spr_cp1:lda spr_dots,x
         // Lobster at X=320 (256+64). Dots at X=296 (256+40).
         lda #40                 // X low byte (256+40=296)
         sta $D002
-        lda #$3E                // Y near lobster center
+        lda #$36                // Y near lobster center (8px higher)
         sta $D003
         lda #2                  // color red
         sta $D028
@@ -521,10 +521,12 @@ bl_rd:  lda $0400               // address self-modified by setup above
         jmp bl_rd_loop
 
 bl_ready_found:
-        // ---- READY. found! ----
-        jsr send_screen_result  // builds frame in send_buf, sets send_total
+        // ---- READY. found! Sending RESULT → dots go left ----
         lda #0
-        sta send_pos            // start drip-send from byte 0
+        sta dot_dir             // left = sending
+        jsr send_screen_result
+        lda #0
+        sta send_pos
         lda #AG_IDLE
         sta agent_state
         jmp bl_kb
@@ -845,11 +847,13 @@ frame_dispatch:
         cmp #FRAME_MSG          // is it a MSG frame (user's chat message)?
         bne fd_not_msg          // no → check next type
 
-        // start conversation — set busy flag, enable dots sprite
+        // start conversation — sending LLM_MSG (dots go left)
         lda #1
         sta busy
         sta llm_pending
-        lda $D015               // enable sprite 1 (dots)
+        lda #0
+        sta dot_dir             // left = sending
+        lda $D015
         ora #%00000010
         sta $D015
         rts
@@ -867,10 +871,12 @@ fd_not_text:
         cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
         bne fd_done             // no → unknown frame type, ignore
 
+        // EXEC received = data coming in → dots go right
+        lda #1
+        sta dot_dir
+
         // ---- Start keystroke injection ----
-        // Save cursor row so READY. scanner only checks BELOW this line
-        // (prevents matching the old READY. that's already on screen).
-        lda CURSOR_ROW          // $D6 = current cursor row (0-24)
+        lda CURSOR_ROW
         sta scan_start          // scanner will only check rows > scan_start
 
         ldx frame_len
@@ -1035,6 +1041,7 @@ busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
 anim_timer:   .byte 5   // frames between dot shifts
+dot_dir:      .byte 1   // 0=left (sending), 1=right (receiving)
 
 // Lobster sprite data — 24x21 pixels, 63 bytes
 // Based on pixel art lobster: claws up, body center, tail down
@@ -1107,34 +1114,27 @@ irq_raster:
         lda #4
         sta anim_timer
 
-        // Direction: AG_INJECTING or drip-sending → dots move RIGHT
-        // (toward lobster = "sending"). Otherwise → dots move LEFT
-        // (away from lobster = "receiving/thinking").
-        lda agent_state
-        cmp #AG_INJECTING
-        beq irq_right
-        lda send_pos
-        cmp send_total
+        // dot_dir: 0=left (sending out), 1=right (receiving in)
+        lda dot_dir
         bne irq_right
 
-        // RECEIVING: dots move left (away from lobster), short range
-        // Lobster at X low=64. Dots range: 40-56 (just left of lobster)
+        // LEFT: dots move away from lobster (sending)
         lda $D002
         sec
-        sbc #4
-        cmp #40                 // past left limit?
-        bcs irq_set             // no → ok
+        sbc #2
+        cmp #46                 // left limit (10px range)
+        bcs irq_set
         lda #56                 // wrap back near lobster
         jmp irq_set
 
 irq_right:
-        // SENDING: dots move right (toward lobster), short range
+        // RIGHT: dots move toward lobster (receiving)
         lda $D002
         clc
-        adc #4
-        cmp #56                 // past lobster?
+        adc #2
+        cmp #56                 // right limit (near lobster)
         bcc irq_set
-        lda #40                 // wrap back to left
+        lda #46                 // wrap back to far left
 
 irq_set:
         sta $D002
