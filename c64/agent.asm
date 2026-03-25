@@ -129,13 +129,27 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         bne cp                  // loop until page wraps $FF→$00
 
 cp_done:
-        // ---- Patch KERNAL at $E5D1 for agent re-entry ----
-        // The screen editor key loop runs: $E5CD → $E5D1 → $E5D4.
-        // We patch $E5D1 (STA $0292) with JMP reenter.
-        // Must write to RAM copy ($01=$35).
+        // ---- Patch KERNAL at $E5D4 for agent re-entry ----
+        // The screen editor key loop: $E5CA→$E5CD→$E5CF→$E5D1→$E5D4.
+        // $E5D4 is BEQ $E5CD (loop when buffer empty = $C6=0).
+        // We patch $E5D4 to BEQ reenter instead. This ONLY fires
+        // when the buffer is empty. When keys are present, the
+        // KERNAL processes them normally (falls through to $E5D6+).
+        // This avoids hijacking the key processing path.
         lda #%00110101
         sta PROCPORT
-        lda #$4C                // JMP opcode
+        // $E5D4 is F0 F7 (BEQ $E5CD, relative offset -9)
+        // Replace with F0 xx where xx = offset to reenter
+        // Actually BEQ is limited to -128..+127 range. reenter is
+        // far away. Use a different approach: replace with JMP.
+        // $E5D4-$E5D5 is 2 bytes (BEQ). Not enough for JMP (3 bytes).
+        // Patch $E5D1 instead (3 bytes) but make it conditional:
+        // Replace STA $0292 with a trampoline that checks $C6 and
+        // either loops to our agent or falls through.
+        //
+        // Simpler: keep $E5D1 patch as JMP, but JMP to a trampoline
+        // that does: STA $0292, LDA $C6, BEQ bloop, JMP $E5D4.
+        lda #$4C
         sta $E5D1
         lda #<reenter
         sta $E5D2
@@ -173,8 +187,15 @@ cp_done:
         sta BORDER_COLOR
         sta saved_border        // remember cyan as the default border color
 
-        // Re-enable interrupts — the agent main loop needs NMI for RS232
-        // and IRQ for the system (keyboard scanning, screen refresh, etc.)
+        // Prime the keyboard by injecting a dummy RETURN. The first
+        // command after install doesn't execute due to BASIN stack state.
+        // This burns that first-command issue on an empty line.
+        lda #$0D
+        sta KBUF
+        lda #1
+        sta KBUF_LEN
+
+        // Re-enable interrupts
         cli
 
         // ---- Send handshake byte to bridge ----
@@ -324,27 +345,38 @@ bl_inj_check:
         jmp bl_kb               // buffer still has keys → skip, let KERNAL process them
 
 bl_inj_do:
-        // Inject one character per main loop iteration
+        // Stuff up to 10 chars at once into the keyboard buffer.
+        // The KERNAL processes ALL buffered keys when bl_key runs.
+        // When RETURN ($0D) is in the batch, BASIC executes the line.
+        ldy #0                  // Y = position in KBUF
+bl_fill:
         ldx inj_pos
         cpx inj_len
-        beq bl_inj_done         // all chars sent (including RETURN)
+        beq bl_fill_done        // all chars stuffed
 
-        lda AGENT_RXBUF,x      // load next ASCII character
-        cmp #$61                // lowercase a-z?
+        lda AGENT_RXBUF,x
+        cmp #$61
         bcc bl_nofold
         cmp #$7B
         bcs bl_nofold
         sec
-        sbc #$20                // convert lowercase → uppercase
+        sbc #$20                // lowercase → uppercase
 bl_nofold:
-        sta KBUF                // put in keyboard buffer position 0
-        lda #1
-        sta KBUF_LEN            // 1 char ready for KERNAL
+        sta KBUF,y
+        iny
         inc inj_pos
-        jmp bl_kb               // let KERNAL process this char
+        cpy #10                 // buffer full?
+        bne bl_fill
 
-bl_inj_done:
-        // All characters including RETURN have been injected.
+bl_fill_done:
+        sty KBUF_LEN
+
+        // Check if all chars have been injected
+        ldx inj_pos
+        cpx inj_len
+        bne bl_kb               // more remaining → process this batch
+
+        // All injected (including RETURN) → transition to AG_WAITING
         lda #0
         sta ready_timer
         lda #AG_WAITING
@@ -458,30 +490,20 @@ bl_kb:
         jmp bloop               // buffer empty → loop back to poll serial
 
 bl_key:
-        // Enter the KERNAL screen editor key loop at $E5CD.
-        // $E5CD: LDA $C6 → $E5CF: STA $CC → $E5D1: (our JMP reenter)
-        // If KBUF has keys: $E5D4 falls through → process key →
-        // for RETURN: handler copies line, falls through to $E632
-        // which pushes Y/X, reads char, RTS to BASIC. BASIC executes.
-        // For non-RETURN: echoes char, loops back to $E5CD → $E5D1
-        // → JMP reenter → bloop.
-        // Push Y/X (matching what $E632 does) then enter key processing
-        // at $E5D6 (AFTER our $E5D1 patch, AFTER the BEQ check).
-        // The RETURN handler at $E674 will PLA/PLA/RTS using these.
-        tya
-        pha
-        txa
-        pha
-        jmp $E5D6               // SEI + key processing
+        // Keys in buffer — let the KERNAL process them naturally.
+        // Jump to $E5D4 (past our patch). The KERNAL reads from
+        // the buffer, echoes chars, handles RETURN normally.
+        jmp $E5D4               // KERNAL: BEQ $E5CD / fall through to process
 
-// Re-entry from $E5D1 patch. The key loop goes $E5CD→$E5D1 (our JMP).
-// $E632 pushed Y/X at entry. We pop them so the stack stays balanced.
-// Next bl_key call re-enters at $E632 which pushes fresh Y/X.
+// Trampoline from $E5D1 patch. Executes the original STA $0292,
+// then checks: if buffer empty → run agent; if keys → continue KERNAL.
 reenter:
-        sta $0292               // execute the original $E5D1 instruction
-        pla                     // pop X saved by $E632
-        pla                     // pop Y saved by $E632
-        jmp bloop
+        sta $0292               // original $E5D1 instruction
+        lda $C6                 // check keyboard buffer
+        bne reenter_keys        // keys waiting → let KERNAL process
+        jmp bloop               // empty → run agent loop
+reenter_keys:
+        jmp $E5D4               // continue KERNAL key loop
 
 // ---------------------------------------------------------
 // Send screen content as RESULT frame
