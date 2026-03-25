@@ -114,10 +114,14 @@ AG_WAITING    (2)  Waiting for READY. prompt after command execution.
 #### Keystroke injection
 
 The C64 keyboard buffer lives at $0277-$0280 (10 bytes max), with the
-current buffer length at $C6. The agent injects one character per loop
-iteration, waiting for BASIC to consume it ($C6 == 0) before adding more.
-ASCII lowercase is folded to uppercase (subtract $20 for $61-$7A).
-A carriage return ($0D) is appended to trigger execution.
+current buffer length at $C6. The agent batch-fills up to 10 characters
+at a time, letting the KERNAL screen editor process each batch. ASCII
+lowercase is folded to uppercase (subtract $20 for $61-$7A). A carriage
+return ($0D) is appended to trigger execution.
+
+Maximum command length: 80 characters (the C64 screen editor links at
+most 2 physical lines into one logical line). Text messages (MSG, TEXT,
+LLM_MSG frames) can be longer — up to 200 characters via multi-frame.
 
 #### Screen scraping
 
@@ -215,7 +219,7 @@ CLAW64_LLM_URL=...        (openai/ollama only)
       "properties": {
         "command": {
           "type": "string",
-          "description": "C64 BASIC command to type into the REPL (max 255 chars)"
+          "description": "C64 BASIC command to type into the REPL (max 80 chars)"
         }
       },
       "required": ["command"]
@@ -235,7 +239,8 @@ interpreter and returns whatever appears on screen afterward.
 
 Rules:
 - Commands must be valid Commodore 64 BASIC (PRINT, POKE, PEEK, LIST, etc.)
-- Maximum 255 characters per command.
+- Maximum 80 characters per BASIC command (C64 screen editor logical line limit).
+- Text messages (MSG, TEXT, LLM_MSG) can be up to 200 characters (multi-frame).
 - Results come from screen scraping — may contain trailing spaces.
 - READY. means the command completed successfully.
 - Chain statements with colon: PRINT "HELLO":PRINT "WORLD"
