@@ -8,13 +8,16 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // StdinChannel is a terminal-based chat backend for local testing.
-// First Ctrl-C clears the current input line. Second Ctrl-C quits.
+// First Ctrl-C clears the current input line. Second Ctrl-C within
+// 2 seconds quits. Counter resets after 2s or on any input.
 type StdinChannel struct {
 	mu       sync.Mutex
 	sigCount int
+	lastSig  time.Time
 }
 
 func NewStdin() *StdinChannel { return &StdinChannel{} }
@@ -34,7 +37,11 @@ func (s *StdinChannel) Start(ctx context.Context, handler MessageHandler) error 
 	go func() {
 		for range sigCh {
 			s.mu.Lock()
+			if time.Since(s.lastSig) > 1*time.Second {
+				s.sigCount = 0
+			}
 			s.sigCount++
+			s.lastSig = time.Now()
 			count := s.sigCount
 			s.mu.Unlock()
 
@@ -42,7 +49,6 @@ func (s *StdinChannel) Start(ctx context.Context, handler MessageHandler) error 
 				fmt.Println("\nbye.")
 				os.Exit(0)
 			}
-			// first Ctrl-C: clear line, show new prompt
 			fmt.Print("\nyou> ")
 		}
 	}()
