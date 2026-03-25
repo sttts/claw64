@@ -174,19 +174,6 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         lda #%00110101
         sta PROCPORT
 
-        // ---- Hook IRQ to force PROCPORT=$35 ----
-        // BASIC execution switches to $37 (ROM mode), making our $E5D1
-        // patch invisible. The IRQ fires 60x/sec and resets PROCPORT to
-        // $35 (RAM mode) so the KERNAL reads from our patched copy.
-        lda IRQ_LO
-        sta old_irq_lo
-        lda IRQ_HI
-        sta old_irq_hi
-        lda #<irq_hook
-        sta IRQ_LO
-        lda #>irq_hook
-        sta IRQ_HI
-
         // ---- Initialize agent state variables ----
         lda #0
         sta parse_state         // frame parser starts in HUNT mode (looking for SYNC)
@@ -964,14 +951,5 @@ saved_border: .byte 3   // original border color to restore after activity flash
 // Screen codes for "READY." (used by self-modifying scan loop)
 ready_codes:  .byte $12, $05, $01, $04, $19, $2E
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
-old_irq_lo:   .byte 0   // saved IRQ vector low byte
-old_irq_hi:   .byte 0   // saved IRQ vector high byte
-
-// IRQ hook — forces PROCPORT to $35 (RAM mode) so our $E5D1 patch works.
-// BASIC switches to $37 during execution, making the patch invisible.
-irq_hook:
-        lda #%00110101
-        sta $01                 // ensure KERNAL reads from RAM (patched)
-        jmp (old_irq_lo)       // chain to original IRQ handler
 
 #import "serial.asm"
