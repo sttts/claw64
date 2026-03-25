@@ -229,24 +229,26 @@ spr_cp1:lda spr_dots,x
         sta $07F9               // sprite 1 data pointer
 
         // Sprite 0 (claw): red, top-right corner
-        lda #$58+280            // X position (high bit needed for >255)
-        sta $D000               // sprite 0 X low
+        // VIC-II X coords: visible screen ~24-343. Right edge = ~320.
+        // X=304 (256+48): $D000=$30, MSB bit 0 set.
+        lda #48                 // X low byte (256+48=304)
+        sta $D000
         lda #$32                // Y position (near top)
-        sta $D001               // sprite 0 Y
+        sta $D001
         lda #2                  // color red
-        sta $D027               // sprite 0 color
+        sta $D027
 
-        // Sprite 1 (dots): red, same Y, starts at right
-        lda #$58+200            // X position
-        sta $D002               // sprite 1 X low
-        lda #$3A                // Y position (slightly below claw center)
-        sta $D003               // sprite 1 Y
+        // Sprite 1 (dots): red, same Y, starts near claw
+        lda #20                 // X low byte (256+20=276)
+        sta $D002
+        lda #$3A                // Y near claw center
+        sta $D003
         lda #2                  // color red
-        sta $D028               // sprite 1 color
+        sta $D028
 
-        // Handle X high bit (bit 8) for sprites positioned > 255
-        lda #%00000001          // sprite 0 needs high X bit
-        sta $D010               // X MSB register
+        // Both sprites need X high bit (X > 255)
+        lda #%00000011          // sprites 0 and 1 have X MSB set
+        sta $D010
 
         // Enable sprite 0 (claw always visible), sprite 1 off initially
         lda #%00000001
@@ -1114,14 +1116,18 @@ irq_raster:
         beq irq_idle
 
 irq_animate:
-        // Move dots sprite (sprite 1) horizontally
+        // Ensure dots sprite is visible
+        lda $D015
+        ora #%00000010          // enable sprite 1
+        sta $D015
+
         // Decrement frame counter; on zero, shift dots
         dec anim_timer
         bne irq_no_shift
-        lda #5                  // shift every 5 frames (~12 fps)
+        lda #4                  // shift every 4 frames (~15 fps)
         sta anim_timer
 
-        // determine direction
+        // determine direction: sending (inject/drip) = right, else = left
         lda agent_state
         cmp #AG_INJECTING
         beq irq_send_dir
@@ -1129,36 +1135,38 @@ irq_animate:
         cmp send_total
         bne irq_send_dir
 
-        // receiving: move sprite 1 leftward (toward claw)
-        lda $D002               // sprite 1 X position
+        // receiving: move dots leftward (toward claw)
+        lda $D002               // sprite 1 X low byte
         sec
-        sbc #4
+        sbc #6
         sta $D002
-        cmp #$40                // reached left edge?
-        bcs irq_no_shift
-        lda #$58+160            // reset to right side
+        // wrap: if X < 0 (underflow), reset to far right
+        bcs irq_no_shift        // no underflow → continue
+        lda #80                 // reset to right (256+80=336)
         sta $D002
         jmp irq_no_shift
 
 irq_send_dir:
-        // sending: move sprite 1 rightward (away from claw)
+        // sending: move dots rightward (away from claw)
         lda $D002
         clc
-        adc #4
+        adc #6
         sta $D002
-        cmp #$58+160            // reached right edge?
+        cmp #80                 // past right edge? (256+80=336)
         bcc irq_no_shift
-        lda #$40                // reset to left (near claw)
+        lda #0                  // reset to left (256+0=256)
         sta $D002
 
 irq_no_shift:
         jmp (old_irq_lo)
 
 irq_idle:
-        // hide dots sprite when idle
-        lda $D015               // sprite enable register
-        and #%11111101          // disable sprite 1 (dots)
+        // hide dots sprite, restore border
+        lda $D015
+        and #%11111101          // disable sprite 1
         sta $D015
+        lda saved_border
+        sta BORDER_COLOR        // restore normal border
         jmp (old_irq_lo)
 
 #import "serial.asm"
