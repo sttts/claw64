@@ -216,20 +216,20 @@ spr_cp1:lda spr_dots,x
         lda #$0E                // $0380 / 64 = $0E
         sta $07F9               // sprite 1 data pointer
 
-        // Sprite 0 (claw): red, top-right corner
-        // VIC-II X coords: visible screen ~24-343. Right edge = ~320.
-        // X=304 (256+48): $D000=$30, MSB bit 0 set.
-        lda #48                 // X low byte (256+48=304)
+        // Sprite 0 (lobster): red, in right border
+        // X=336 (256+80), Y=$32. Lobster is 24px wide, sits in border.
+        lda #80                 // X low byte (256+80=336)
         sta $D000
         lda #$32                // Y position (near top)
         sta $D001
         lda #2                  // color red
         sta $D027
 
-        // Sprite 1 (dots): red, same Y, starts near claw
-        lda #20                 // X low byte (256+20=276)
+        // Sprite 1 (dots): red, to the RIGHT of lobster
+        // X starts at 336+26=362 (256+106), same Y as lobster center
+        lda #106                // X low byte (256+106=362)
         sta $D002
-        lda #$3A                // Y near claw center
+        lda #$3E                // Y near lobster center
         sta $D003
         lda #2                  // color red
         sta $D028
@@ -1120,26 +1120,24 @@ irq_animate:
         cmp send_total
         bne irq_send_dir
 
-        // receiving: move dots leftward (toward claw)
-        lda $D002               // sprite 1 X low byte
-        sec
-        sbc #6
-        sta $D002
-        // wrap: if X < 0 (underflow), reset to far right
-        bcs irq_no_shift        // no underflow → continue
-        lda #80                 // reset to right (256+80=336)
-        sta $D002
-        jmp irq_no_shift
-
-irq_send_dir:
-        // sending: move dots rightward (away from claw)
+        // receiving: dots move RIGHT (away from lobster, into border)
         lda $D002
         clc
         adc #6
-        sta $D002
-        cmp #80                 // past right edge? (256+80=336)
-        bcc irq_no_shift
-        lda #0                  // reset to left (256+0=256)
+        cmp #130                // past far right? (256+130=386)
+        bcc irq_store
+        lda #106                // reset near lobster (256+106=362)
+        jmp irq_store
+
+irq_send_dir:
+        // sending: dots move LEFT (toward lobster)
+        lda $D002
+        sec
+        sbc #6
+        cmp #106                // past lobster? (256+106=362)
+        bcs irq_store
+        lda #130                // reset to far right
+irq_store:
         sta $D002
 
 irq_no_shift:
