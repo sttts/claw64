@@ -104,7 +104,7 @@ func (l *Link) Recv() (Frame, error) {
 		// skip echo'd bridge→C64 frames
 		switch f.Type {
 		case FrameMsg, FrameExec, FrameText:
-			log.Printf("recv: skipping echo'd %s frame", TypeName(f.Type))
+			// silently skip echo'd frames
 			continue
 		}
 		return f, nil

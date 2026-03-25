@@ -61,7 +61,7 @@ func (c *ClaudeCLIClient) Complete(ctx context.Context, messages []Message, tool
 		prompt.WriteString("Assistant: ")
 	}
 
-	log.Printf("claude-cli: calling claude -p --model %s", c.Model)
+	log.Printf("     → LLM:  claude -p --model %s", c.Model)
 
 	// call claude CLI
 	cmd := exec.CommandContext(ctx, "claude", "-p",
@@ -76,7 +76,7 @@ func (c *ClaudeCLIClient) Complete(ctx context.Context, messages []Message, tool
 	}
 
 	text := strings.TrimSpace(string(out))
-	log.Printf("claude-cli response: %s", text)
+	log.Printf("LLM  →    :  %s", text)
 
 	// check if response is a tool call
 	if strings.HasPrefix(text, "{") {

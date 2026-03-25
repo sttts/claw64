@@ -138,13 +138,11 @@ func runBridge() {
 
 	// run chat — blocks until ctx is cancelled
 	err = ch.Start(ctx, func(ctx context.Context, userID, text string) (string, error) {
-		log.Printf("bridge: [%s] %q", userID, text)
 		reply, err := rl.HandleMessage(ctx, userID, text)
 		if err != nil {
-			log.Printf("bridge: agent error: %v", err)
+			log.Printf("     ! error: %v", err)
 			return "", err
 		}
-		log.Printf("bridge: reply to %s: %q", userID, reply)
 		return reply, nil
 	})
 	if err != nil && ctx.Err() == nil {

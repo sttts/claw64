@@ -112,7 +112,7 @@ readType:
 	// compute checksum on masked (7-bit) values — VICE RS232 randomly
 	// sets bit 7 on transmitted bytes, which would corrupt raw checksums
 	chk := typ
-	log.Printf("  decode: type=0x%02X (%s)", typ, TypeName(typ))
+	// debug: log.Printf("  decode: type=0x%02X (%s)", typ, TypeName(typ))
 
 	// read length
 	rawLen, err := readFiltered(r)
@@ -153,11 +153,11 @@ readType:
 	}
 	cb := rawCb & 0x7F
 	if cb != chk {
-		log.Printf("  checksum fail: got 0x%02X want 0x%02X (raw 0x%02X)", cb, chk, rawCb)
+		// debug: log.Printf("  checksum fail: got 0x%02X want 0x%02X (raw 0x%02X)", cb, chk, rawCb)
 		if rawCb == SyncByte {
 			// the "checksum" byte was actually a SYNC — start of next frame
 			// don't consume it; instead, read TYPE directly
-			log.Printf("  checksum was SYNC — reading next frame inline")
+			// debug: log.Printf("  checksum was SYNC — reading next frame inline")
 			goto readType
 		}
 		return Decode(r)

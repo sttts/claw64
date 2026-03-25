@@ -179,7 +179,7 @@ func (c *AnthropicClient) Complete(ctx context.Context, messages []Message, tool
 	if err != nil {
 		return Message{}, fmt.Errorf("marshal: %w", err)
 	}
-	log.Printf("anthropic request: %s", string(body))
+	// debug: log.Printf("anthropic request: %s", string(body))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.URL, bytes.NewReader(body))
 	if err != nil {
