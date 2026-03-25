@@ -69,9 +69,10 @@ vice-echo: echotest
 run: assemble
 	@-lsof -ti :25232 2>/dev/null | xargs kill 2>/dev/null; true
 	@-pkill -f "$(VICE).*$(ASM_OUT)" 2>/dev/null; true
-	@# Start VICE in background, polling until bridge is listening
+	@# Start VICE in background (output suppressed), poll until bridge is listening
 	@(while ! nc -z 127.0.0.1 25232 2>/dev/null; do sleep 0.2; done; \
-	  $(VICE) $(VICE_RS) $(VICE_MON) -autostart $(ASM_OUT) -keybuf "sys 49152\n") &
+	  $(VICE) $(VICE_RS) -autostart $(ASM_OUT) -keybuf "sys 49152\n" \
+	  > /dev/null 2>&1) &
 	cd bridge && go run .
 
 # run the Go bridge (default: uses claude CLI for LLM, stdin for chat)
