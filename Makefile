@@ -74,7 +74,7 @@ run: assemble
 	@-pkill -f "$(VICE).*$(ASM_OUT)" 2>/dev/null; true
 	@# Start VICE in background (output suppressed), poll until bridge is listening
 	@(while ! nc -z 127.0.0.1 25232 2>/dev/null; do sleep 0.2; done; \
-	  $(VICE) $(VICE_RS) -autostart $(LOADER_OUT) \
+	  $(VICE) $(VICE_RS) $(VICE_MON) -autostart $(LOADER_OUT) \
 	  > /dev/null 2>&1) &
 	cd bridge && go run .
 
