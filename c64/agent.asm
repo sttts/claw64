@@ -83,20 +83,12 @@ install:
         // ($35) and still have KERNAL code available — but now we
         // can also PATCH it (which we do at $E5D1 below).
         //
-        // Copy ALL ROM ($A0-$FF, skipping $D0-$DF I/O) to RAM.
-        // $01=$35 permanently: BASIC+KERNAL both run from RAM copies.
-        lda #$A0
+        // Copy KERNAL ($E0-$FF) FIRST, then BASIC ($A0-$CF).
+        // KERNAL must be first: during BASIC copy, NMI may fire with
+        // $01=$35 and needs KERNAL code in RAM.
+        lda #$E0                // start with KERNAL
         sta cur_page
-
-cp:     lda cur_page
-        // skip I/O area ($D0-$DF)
-        cmp #$D0
-        bcc cp_do
-        cmp #$E0
-        bcs cp_do
-        inc cur_page
-        jmp cp
-cp_do:
+cp:
         sta cp_rd+2             // self-modify: set high byte of LDA $xx00,y below
         ldy #0                  // Y = byte offset within the 256-byte page
 cp_rdl:
@@ -128,7 +120,36 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         lda cur_page
         bne cp                  // loop until page wraps $FF→$00
 
-cp_done:
+        // KERNAL done ($E0-$FF). Now copy BASIC ($A0-$CF).
+        // Skip $D0-$DF (I/O) — KERNAL is already in RAM so NMI is safe.
+        lda #$A0
+        sta cur_page
+cp_bas: lda cur_page
+        sta cp_bas_rd+2         // patch read address high byte
+        ldy #0
+cp_bas_rdl:
+cp_bas_rd:
+        lda $A000,y             // self-modified: high byte patched above
+        sta TMPBUF,y
+        iny
+        bne cp_bas_rdl
+        lda cur_page
+        sta cp_bas_wr+2         // patch write address high byte
+        lda #%00110101
+        sta PROCPORT
+        ldy #0
+cp_bas_wrl:
+        lda TMPBUF,y
+cp_bas_wr:
+        sta $A000,y             // self-modified: high byte patched above
+        iny
+        bne cp_bas_wrl
+        lda #%00110111
+        sta PROCPORT
+        inc cur_page
+        lda cur_page
+        cmp #$D0                // stop at I/O area
+        bne cp_bas
         // ---- Patch KERNAL at $E5D4 for agent re-entry ----
         // The screen editor key loop: $E5CA→$E5CD→$E5CF→$E5D1→$E5D4.
         // $E5D4 is BEQ $E5CD (loop when buffer empty = $C6=0).
@@ -166,8 +187,23 @@ cp_done:
         cli                     // re-enable interrupts for KERNAL calls
         jsr serial_init         // open RS232 device 2 at 2400 baud 8N1
 
-        // After serial_init, switch back to RAM mode and disable IRQs
-        // for the rest of installation.
+        // Reset BASIC pointers — LOAD"AGENT",8,1 set $2D/$2E to $C485
+        // (end of our PRG). BASIC thinks variables start there, leaving
+        // negative free memory. Reset to $0803 (empty program).
+        lda #$03
+        sta $2D
+        lda #$08
+        sta $2E
+        // Also reset arrays and string pointers
+        sta $30
+        sta $32
+        lda #$03
+        sta $2F
+        sta $31
+        // Run CLR to fully reset BASIC's internal state
+        jsr $A659               // BASIC CLR routine
+
+        // After serial_init, switch back to RAM mode
         sei
         lda #%00110101
         sta PROCPORT
