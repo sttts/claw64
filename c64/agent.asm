@@ -406,6 +406,8 @@ bl_send_check:
         jsr CHROUT
         jsr CLRCHN
         inc send_pos
+        lda #0
+        sta busy_timer          // reset timeout — TX activity
 
 bl_inj_check:
         // ---- Step 2: Inject keystrokes if in AG_INJECTING state ----
@@ -1108,13 +1110,12 @@ irq_raster:
         beq irq_idle
 
         // Busy — show and animate dots sprite
-        // Auto-timeout: clear busy after ~500ms (30 frames at 60Hz).
-        // Each serial frame re-sets busy_timer to 0, so animation
-        // continues as long as frames keep arriving.
+        // Auto-timeout: clear busy after ~5 sec without serial activity.
+        // Reset by serial RX and drip-send TX.
         inc busy_timer
         lda busy_timer
-        cmp #30                 // 30 frames ≈ 500ms
-        bcc irq_no_timeout
+        cmp #0                  // wrapped 255→0 = ~4.3 sec
+        bne irq_no_timeout
         lda #0
         sta busy
         sta busy_timer
