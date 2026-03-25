@@ -1004,25 +1004,18 @@ irq_raster:
         lda agent_state
         beq irq_idle
 
-        // Busy: raster gradient in border
-        lda $D012               // current raster line (0-255)
-        lsr                     // divide by 2 (coarser bars)
-        lsr                     // divide by 4
-        lsr                     // divide by 8
-        clc
-        adc raster_offset       // add rolling offset
-        and #$0F                // mask to 0-15 (table index)
-        tax
-        lda raster_colors,x     // get color from gradient table
-        sta BORDER_COLOR        // set border color
+        // Busy: cycle border color through gradient palette
+        ldx raster_offset
+        lda raster_colors,x
+        sta BORDER_COLOR
+        inx
+        txa
+        and #$0F                // wrap at 16
+        sta raster_offset
 
-        // Increment offset each frame for rolling effect
-        inc raster_offset
-
-        jmp (old_irq_lo)        // chain to original IRQ handler
+        jmp (old_irq_lo)
 
 irq_idle:
-        // Idle: restore normal border color
         lda saved_border
         sta BORDER_COLOR
         jmp (old_irq_lo)
