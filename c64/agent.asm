@@ -83,20 +83,29 @@ install:
         // ($35) and still have KERNAL code available — but now we
         // can also PATCH it (which we do at $E5D1 below).
         //
-        // Strategy: for each 256-byte page from $E0 to $FF:
+        // Strategy: for each 256-byte page from $A0 to $FF:
         //   1. With ROM visible ($37): copy page to TMPBUF
         //   2. Switch to RAM visible ($35): copy TMPBUF back to same address
         //   3. Switch back to ROM visible ($37) for next page
         //
-        // We can't just read ROM and write directly because in $37 mode,
-        // reads come from ROM but writes go to underlying RAM — however
-        // self-modifying code changes the read address, and we need a
-        // staging buffer to avoid conflicts.
-        lda #$E0                // start at page $E0 (address $E000)
+        // Copies BOTH BASIC ROM ($A0-$BF) and KERNAL ROM ($E0-$FF) to RAM.
+        // This allows running in $35 mode permanently (BASIC from RAM copy
+        // + KERNAL from RAM copy with our $E5D1 patch).
+        lda #$A0                // start at page $A0 (BASIC ROM at $A000)
         sta cur_page            // cur_page tracks which 256-byte page we're copying
 
         // -- Phase 1: copy ROM page to TMPBUF --
-cp:     lda cur_page            // load current page number
+        // Skip $C0-$DF (our code + I/O area — not ROM, no copy needed)
+cp:     lda cur_page
+        cmp #$C0                // skip pages $C0-$DF
+        bcc cp_do               // below $C0 → copy (BASIC ROM)
+        cmp #$E0
+        bcs cp_do               // at/above $E0 → copy (KERNAL ROM)
+        // $C0-$DF: skip
+        inc cur_page
+        jmp cp
+
+cp_do:  lda cur_page            // load current page number
         sta cp_rd+2             // self-modify: set high byte of LDA $xx00,y below
         ldy #0                  // Y = byte offset within the 256-byte page
 cp_rdl:
@@ -164,6 +173,19 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         sei
         lda #%00110101
         sta PROCPORT
+
+        // ---- Hook IRQ to force PROCPORT=$35 ----
+        // BASIC execution switches to $37 (ROM mode), making our $E5D1
+        // patch invisible. The IRQ fires 60x/sec and resets PROCPORT to
+        // $35 (RAM mode) so the KERNAL reads from our patched copy.
+        lda IRQ_LO
+        sta old_irq_lo
+        lda IRQ_HI
+        sta old_irq_hi
+        lda #<irq_hook
+        sta IRQ_LO
+        lda #>irq_hook
+        sta IRQ_HI
 
         // ---- Initialize agent state variables ----
         lda #0
@@ -412,41 +434,29 @@ bl_wait:
         // of each screen line, avoiding multiplication at runtime.
         ldx #24                 // X = line number, start at bottom (line 24)
 bl_scan:
-        lda screen_lo,x        // load low byte of screen line X's address
-        sta $FB                 // store in zero-page pointer low byte ($FB)
-        lda screen_hi,x        // load high byte of screen line X's address
-        sta $FC                 // store in zero-page pointer high byte ($FC)
-                                // now ($FB)/$FC points to screen line X
+        // Self-modifying code for screen reads. With PROCPORT=$35
+        // enforced by IRQ hook, this is safe (no KERNAL ROM overwrites).
+        lda screen_lo,x
+        sta bl_rd+1             // patch LDA address low byte
+        lda screen_hi,x
+        sta bl_rd+2             // patch LDA address high byte
 
-        // Check each character of "READY." at columns 0-5
-        ldy #0                  // Y = column offset
-        lda ($FB),y             // read screen code at column 0
-        cmp #$12                // screen code for 'R'?
-        bne bl_scan_next        // no match → try next line
-        iny                     // Y = 1
-        lda ($FB),y             // read screen code at column 1
-        cmp #$05                // screen code for 'E'?
-        bne bl_scan_next
-        iny                     // Y = 2
-        lda ($FB),y             // read screen code at column 2
-        cmp #$01                // screen code for 'A'?
-        bne bl_scan_next
-        iny                     // Y = 3
-        lda ($FB),y             // read screen code at column 3
-        cmp #$04                // screen code for 'D'?
-        bne bl_scan_next
-        iny                     // Y = 4
-        lda ($FB),y             // read screen code at column 4
-        cmp #$19                // screen code for 'Y'?
-        bne bl_scan_next
-        iny                     // Y = 5
-        lda ($FB),y             // read screen code at column 5
-        cmp #$2E                // screen code for '.'?
-        bne bl_scan_next
+        // Check READY. at columns 0-5 using loop with self-modified LDA
+        ldy #0
+bl_rd_loop:
+bl_rd:  lda $0400               // address self-modified by setup above
+        cmp ready_codes,y
+        bne bl_scan_next        // mismatch → next line
+        iny
+        cpy #6
+        beq bl_ready_found      // all 6 matched!
+        inc bl_rd+1             // advance to next column
+        jmp bl_rd_loop
 
+bl_ready_found:
         // ---- READY. found! ----
-        // Build the RESULT frame in send_buf (screen scrape).
-        // The drip-send at bl_inject will transmit it one byte per iteration.
+        lda #5                  // GREEN border = READY. found
+        sta BORDER_COLOR
         jsr send_screen_result  // builds frame in send_buf, sets send_total
         lda #0
         sta send_pos            // start drip-send from byte 0
@@ -467,6 +477,8 @@ bl_scan_next:
         // BASIC didn't print READY. within 4 seconds. The command may
         // have hung or produced unexpected output. Send an error frame
         // so the bridge knows the command failed.
+        lda #2                  // RED border = timeout indicator
+        sta BORDER_COLOR
         jsr send_error          // send ERROR frame with zero-length payload
         lda #AG_IDLE            // return to IDLE state
         sta agent_state
@@ -501,6 +513,8 @@ bl_key:
         // patched during install to JMP to our 'reenter' label below.
         // This gives control back to our agent.
         sei                     // disable IRQs during KERNAL key processing
+        lda #%00110101          // ensure RAM mode — KERNAL patch at $E5D1
+        sta $01                 // only works from RAM, not ROM
         jmp $E5D7               // KERNAL: process one keystroke from buffer
 
 // Re-entry point after KERNAL processes a keystroke.
@@ -527,33 +541,23 @@ send_screen_result:
         // The output of the executed command is typically on the line
         // directly above the READY. prompt. Point ($FB/$FC) at that line.
         dex                     // X = line above READY. (the output line)
-        lda screen_lo,x        // low byte of output line's screen RAM address
-        sta $FB                 // store in zero-page pointer
-        lda screen_hi,x        // high byte of output line's screen RAM address
-        sta $FC                 // ($FB/$FC) now points to the output line
+        lda screen_lo,x
+        sta ssr_rd+1            // self-modify screen read address
+        lda screen_hi,x
+        sta ssr_rd+2
 
         // ---- Build RESULT frame header in send_buf ----
-        lda #SYNC_BYTE          // $FE — frame synchronization byte
-        sta send_buf+0          // send_buf[0] = SYNC
-        lda #FRAME_RESULT       // $52 ('R') — this is a RESULT frame
-        sta send_buf+1          // send_buf[1] = frame type
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda #FRAME_RESULT
+        sta send_buf+1
 
-        // ---- Copy screen line to send_buf+3, converting screen codes → ASCII ----
-        //
-        // C64 screen codes are a unique encoding (not ASCII, not PETSCII):
-        //   $00 = '@'          $01-$1A = 'A'-'Z'      $1B-$1F = symbols
-        //   $20 = space        $21-$3F = digits, punctuation, symbols
-        //   $40+ = graphics characters, reverse video, etc.
-        //
-        // We convert to ASCII for the bridge:
-        //   $00 (@ sign) → space (simplification: treat as blank)
-        //   $01-$1F (letters) → add $40 to get ASCII $41-$5A (A-Z)
-        //   $20-$3F (space/digits/symbols) → same in ASCII, keep as-is
-        //   $40+ (graphics) → space (no ASCII equivalent)
-        ldy #0                  // Y = column position on screen (0-39)
-        ldx #0                  // X = position in send_buf payload
+        // ---- Copy screen line to send_buf+3 ----
+        // Screen codes → ASCII: $01-$1A→A-Z, $20-$3F→as-is, else→space
+        ldy #0                  // Y = column
+        ldx #0                  // X = send_buf payload index
 ssr_copy:
-        lda ($FB),y             // read screen code at column Y
+ssr_rd: lda $0400,y             // self-modified base + Y offset for column
         beq ssr_space           // screen code $00 ('@') → treat as space
         cmp #$20                // is it < $20? (range $01-$1F = letters A-Z)
         bcc ssr_letter          // yes → convert letter screen code to ASCII
@@ -954,8 +958,20 @@ inj_len:      .byte 0   // total length of command to inject
 ready_timer:  .byte 0   // countdown timer for READY. detection (increments each loop)
 send_pos:     .byte 0   // current position during burst-send (saved across CHROUT calls)
 send_total:   .byte 0   // total bytes to send in current burst-send operation
-cur_page:     .byte $E0 // current page during KERNAL ROM copy ($E0-$FF), init to $E0
+cur_page:     .byte $A0 // current page during ROM copy ($A0-$FF), init to $A0
 saved_border: .byte 3   // original border color to restore after activity flash
+
+// Screen codes for "READY." (used by self-modifying scan loop)
+ready_codes:  .byte $12, $05, $01, $04, $19, $2E
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
+old_irq_lo:   .byte 0   // saved IRQ vector low byte
+old_irq_hi:   .byte 0   // saved IRQ vector high byte
+
+// IRQ hook — forces PROCPORT to $35 (RAM mode) so our $E5D1 patch works.
+// BASIC switches to $37 during execution, making the patch invisible.
+irq_hook:
+        lda #%00110101
+        sta $01                 // ensure KERNAL reads from RAM (patched)
+        jmp (old_irq_lo)       // chain to original IRQ handler
 
 #import "serial.asm"
