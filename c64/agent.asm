@@ -38,8 +38,8 @@
 .const PROCPORT = $01
 
 // Temporary 256-byte buffer used during KERNAL ROM copy.
-// Located at $CA00, past all agent buffers.
-.const TMPBUF   = $CA00
+// Located at $CF00, top of agent memory (below $D000 I/O).
+.const TMPBUF   = $CF00
 
 // Buffer for building outgoing serial frames before burst-sending.
 // Located at $C900 (AGENT_TXBUF), above the receive buffer.

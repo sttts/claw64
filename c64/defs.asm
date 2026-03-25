@@ -3,11 +3,11 @@
 // ================================================
 
 // Agent memory layout
-// Code + data + sprites + serial.asm extends to ~$C5E0.
-// Buffers must be above that — $C800+ leaves room for growth.
+// Code grows up from $C000. Buffers are pinned at the top of the
+// $C000-$CFFF block (below $D000 I/O). No overlap possible.
 .const AGENT_BASE    = $C000  // agent code starts here
-.const AGENT_RXBUF   = $C800  // 256-byte receive buffer
-.const AGENT_TXBUF   = $C900  // 256-byte transmit / inject buffer
+.const AGENT_RXBUF   = $CD00  // 256-byte receive buffer
+.const AGENT_TXBUF   = $CE00  // 256-byte transmit / inject buffer
 
 // KERNAL jump table
 .const SETLFS  = $FFBA
