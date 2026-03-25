@@ -200,54 +200,41 @@ cp_bas_wr:
         lda #$03
         sta $2F
         sta $31
-        // Run CLR to fully reset BASIC's internal state
-        jsr $A659               // BASIC CLR routine
+        // ---- Send handshake byte BEFORE switching to RAM mode ----
+        // Must send while $01=$37 (ROM) so KERNAL CHKOUT/CHROUT work
+        // with the file table set up by serial_init.
+        ldx #RS232_DEV
+        jsr CHKOUT              // set RS232 as output
+        lda #$21                // '!' handshake
+        jsr CHROUT              // send via RS232 (not screen)
+        jsr CLRCHN              // reset I/O
 
-        // After serial_init, switch back to RAM mode
+        // Switch to RAM mode and patch KERNAL
         sei
         lda #%00110101
         sta PROCPORT
 
         // ---- Initialize agent state variables ----
         lda #0
-        sta parse_state         // frame parser starts in HUNT mode (looking for SYNC)
-        sta agent_state         // agent starts IDLE (waiting for commands)
-        sta inj_pos             // keystroke injection position = 0
-        sta inj_len             // no keystrokes to inject yet
-        sta ready_timer         // READY. detection timer starts at 0
-        sta llm_pending         // no pending LLM_MSG
+        sta parse_state
+        sta agent_state
+        sta inj_pos
+        sta inj_len
+        sta ready_timer
+        sta llm_pending
 
-        // Save the current border color so we can restore it after flashes.
-        // Set border to cyan (3) = visual indicator that install is complete.
+        // Set border cyan
         lda #3
         sta BORDER_COLOR
-        sta saved_border        // remember cyan as the default border color
+        sta saved_border
 
-        // Prime the keyboard by injecting a dummy RETURN. The first
-        // command after install doesn't execute due to BASIN stack state.
-        // This burns that first-command issue on an empty line.
+        // Prime keyboard with dummy RETURN (first command fix)
         lda #$0D
         sta KBUF
         lda #1
         sta KBUF_LEN
 
-        // Re-enable interrupts
         cli
-
-        // ---- Send handshake byte to bridge ----
-        //
-        // Send a '!' ($21) character to let the bridge know the C64 agent
-        // is alive and ready. The bridge waits for this before sending commands.
-        //
-        // CHKOUT sets the RS232 device as the current output channel,
-        // CHROUT sends one byte through it, CLRCHN resets to default I/O.
-        // send handshake '!' via KERNAL (must use CHROUT, not ring buffer,
-        // because ring buffer writes don't produce TCP output on VICE)
-        ldx #RS232_DEV
-        jsr CHKOUT
-        lda #$21
-        jsr CHROUT
-        jsr CLRCHN
 
 // ---------------------------------------------------------
 // Main loop — runs forever, never returns
