@@ -141,6 +141,7 @@ func runBridge() {
 			log.Printf("     ! error: %v", err)
 			return "", err
 		}
+		log.Printf("C64 → USER:  %q", reply)
 		return reply, nil
 	})
 	if err != nil && ctx.Err() == nil {
