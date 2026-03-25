@@ -83,29 +83,14 @@ install:
         // ($35) and still have KERNAL code available — but now we
         // can also PATCH it (which we do at $E5D1 below).
         //
-        // Strategy: for each 256-byte page from $A0 to $FF:
-        //   1. With ROM visible ($37): copy page to TMPBUF
-        //   2. Switch to RAM visible ($35): copy TMPBUF back to same address
-        //   3. Switch back to ROM visible ($37) for next page
-        //
-        // Copies BOTH BASIC ROM ($A0-$BF) and KERNAL ROM ($E0-$FF) to RAM.
-        // This allows running in $35 mode permanently (BASIC from RAM copy
-        // + KERNAL from RAM copy with our $E5D1 patch).
-        lda #$A0                // start at page $A0 (BASIC ROM at $A000)
-        sta cur_page            // cur_page tracks which 256-byte page we're copying
+        // Copy KERNAL ROM ($E0-$FF) to RAM FIRST, then BASIC ROM ($A0-$BF).
+        // KERNAL must be copied first because NMI handler lives there —
+        // if NMI fires during the BASIC copy's write phase ($01=$35),
+        // the KERNAL code must already be in RAM.
+        lda #$E0                // start with KERNAL ROM
+        sta cur_page
 
-        // -- Phase 1: copy ROM page to TMPBUF --
-        // Skip $C0-$DF (our code + I/O area — not ROM, no copy needed)
 cp:     lda cur_page
-        cmp #$C0                // skip pages $C0-$DF
-        bcc cp_do               // below $C0 → copy (BASIC ROM)
-        cmp #$E0
-        bcs cp_do               // at/above $E0 → copy (KERNAL ROM)
-        // $C0-$DF: skip
-        inc cur_page
-        jmp cp
-
-cp_do:  lda cur_page            // load current page number
         sta cp_rd+2             // self-modify: set high byte of LDA $xx00,y below
         ldy #0                  // Y = byte offset within the 256-byte page
 cp_rdl:
@@ -133,11 +118,21 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         sta PROCPORT
 
         // Advance to next page
-        inc cur_page            // increment page counter ($E0 → $E1 → ... → $FF → $00)
+        inc cur_page
         lda cur_page
-        bne cp                  // loop until page wraps from $FF to $00 (all 32 pages done)
+        beq cp_kernal_done      // $FF→$00: KERNAL done, do BASIC next
+        cmp #$C0
+        beq cp_done             // $BF→$C0: BASIC done, all copying finished
+        jmp cp                  // continue copying
 
-        // ---- Patch KERNAL at $E5D1 for agent re-entry ----
+cp_kernal_done:
+
+        // Now copy BASIC ROM ($A0-$BF) — KERNAL is already in RAM,
+        // so NMI during the write phase ($01=$35) works correctly.
+        lda #$A0
+        sta cur_page
+        jmp cp
+cp_done:
         //
         // In the normal C64, the KERNAL main loop at $E5D7 processes
         // keystrokes from the keyboard buffer. After processing, it
@@ -525,9 +520,12 @@ reenter:
 // On entry: X = line number where READY. was found (from bl_scan)
 // ---------------------------------------------------------
 send_screen_result:
-        // The output of the executed command is typically on the line
-        // directly above the READY. prompt. Point ($FB/$FC) at that line.
-        dex                     // X = line above READY. (the output line)
+        // The output is typically 2 lines above READY.:
+        //   line N-2: output (e.g. " 42" or "HELLO")
+        //   line N-1: (blank — PRINT adds newline)
+        //   line N:   READY.
+        dex                     // skip blank line
+        dex                     // X = output line
         lda screen_lo,x
         sta ssr_rd+1            // self-modify screen read address
         lda screen_hi,x
