@@ -66,7 +66,12 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 
 		case serial.FrameResult:
 			log.Printf("C64 → LLM:   RESULT %q", string(f.Payload))
-			r.appendToolResult(userID, string(f.Payload))
+			// Prefix result so the LLM knows this is screen output, not human input
+			result := "[C64 screen output]: " + string(f.Payload)
+			if len(f.Payload) == 0 {
+				result = "[C64 screen output]: (empty)"
+			}
+			r.appendToolResult(userID, result)
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
