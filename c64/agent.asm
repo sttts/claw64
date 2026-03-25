@@ -1057,29 +1057,29 @@ dot_dir:      .byte 1   // 0=left (sending), 1=right (receiving)
 busy_timer:   .byte 0   // frames since last serial activity (auto-clear at 30)
 
 // Lobster sprite data — 24x21 pixels, 63 bytes
-// Based on pixel art lobster: claws up, body center, tail down
+// Lobster sprite — based on pixel art reference
 spr_claw:
-        .byte %01100000, %00000110, %00000000  // row 0:  claws tips
-        .byte %11110000, %00001111, %00000000  // row 1:  claws open
-        .byte %11111000, %00011111, %00000000  // row 2:  claws wider
-        .byte %11011100, %00111011, %00000000  // row 3:  claws inner
-        .byte %11001110, %01110011, %00000000  // row 4:  claws close
-        .byte %01100111, %11100110, %00000000  // row 5:  arms
-        .byte %00110011, %11001100, %00000000  // row 6:  shoulders
-        .byte %00011001, %10011000, %00000000  // row 7:  neck
-        .byte %00001101, %10110000, %00000000  // row 8:  head top
-        .byte %00000111, %11100000, %00000000  // row 9:  head
-        .byte %00000111, %11100000, %00000000  // row 10: head
-        .byte %00001111, %11110000, %00000000  // row 11: body wide
-        .byte %00000111, %11100000, %00000000  // row 12: body
-        .byte %00001111, %11110000, %00000000  // row 13: body wide
-        .byte %00000111, %11100000, %00000000  // row 14: body
-        .byte %00000011, %11000000, %00000000  // row 15: tail start
-        .byte %00000101, %10100000, %00000000  // row 16: tail fins
-        .byte %00001001, %10010000, %00000000  // row 17: tail spread
-        .byte %00010001, %10001000, %00000000  // row 18: tail wide
-        .byte %00010000, %00001000, %00000000  // row 19: tail tips
-        .byte %00000000, %00000000, %00000000  // row 20: empty
+        .byte %00100000, %00000100, %00000000  // row 0:  antennae
+        .byte %00010000, %00001000, %00000000  // row 1:  antennae
+        .byte %01010000, %00001010, %00000000  // row 2:  claw tips
+        .byte %11011000, %00011011, %00000000  // row 3:  claws open
+        .byte %10011000, %00011001, %00000000  // row 4:  claws grip
+        .byte %11011100, %00111011, %00000000  // row 5:  claws + head
+        .byte %01101110, %01110110, %00000000  // row 6:  arms
+        .byte %00110111, %11101100, %00000000  // row 7:  shoulders
+        .byte %00011111, %11111000, %00000000  // row 8:  body top
+        .byte %00001111, %11110000, %00000000  // row 9:  body
+        .byte %00011011, %11011000, %00000000  // row 10: eyes
+        .byte %00011111, %11111000, %00000000  // row 11: body
+        .byte %00001111, %11110000, %00000000  // row 12: body
+        .byte %00011111, %11111000, %00000000  // row 13: body wide
+        .byte %00001111, %11110000, %00000000  // row 14: body
+        .byte %00010111, %11101000, %00000000  // row 15: legs
+        .byte %00100011, %11000100, %00000000  // row 16: legs outer
+        .byte %00000111, %11100000, %00000000  // row 17: tail
+        .byte %00001111, %11110000, %00000000  // row 18: tail fan
+        .byte %00011010, %01011000, %00000000  // row 19: tail fins
+        .byte %00110000, %00001100, %00000000  // row 20: tail tips
 
 // Dots sprite data — three small dots in a row
 spr_dots:
