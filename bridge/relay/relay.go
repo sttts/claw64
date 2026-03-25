@@ -114,15 +114,13 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	}
 	r.History.Append(userID, resp)
 
-	// text response
+	// text response — send to C64, which forwards to user
 	if len(resp.ToolCalls) == 0 {
-		log.Printf("LLM → USER:  %q", resp.Content)
+		log.Printf("LLM → C64:  TEXT %q", resp.Content)
 		if resp.Content != "" {
 			textFrame := serial.Frame{Type: serial.FrameText, Payload: []byte(resp.Content)}
 			if err := r.sendWithRetry(textFrame); err != nil {
-				log.Printf("LLM → C64:   TEXT send failed: %v", err)
-			} else {
-				log.Printf("LLM → C64:   TEXT [%d bytes]", len(resp.Content))
+				log.Printf("     ! TEXT send failed: %v", err)
 			}
 		}
 		r.lastText = resp.Content
