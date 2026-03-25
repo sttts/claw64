@@ -497,11 +497,11 @@ bl_scan_next:
         // BASIC didn't print READY. within 4 seconds. The command may
         // have hung or produced unexpected output. Send an error frame
         // so the bridge knows the command failed.
-        lda #2                  // RED border = timeout indicator
-        sta BORDER_COLOR
         jsr send_error          // send ERROR frame with zero-length payload
-        lda #AG_IDLE            // return to IDLE state
+        lda #AG_IDLE
         sta agent_state
+        lda #0
+        sta busy                // stop border animation on timeout
 
 bl_kb:
         // ---- Step 4: Keyboard management & KERNAL key processing ----
