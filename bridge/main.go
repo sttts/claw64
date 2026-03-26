@@ -36,8 +36,9 @@ type CLI struct {
 type StdinCmd struct{}
 
 type SlackCmd struct {
-	BotToken string `name:"bot-token" required:"" help:"Slack bot token (xoxb-...)."`
-	AppToken string `name:"app-token" required:"" help:"Slack app token (xapp-...)."`
+	Workspace string `name:"workspace" help:"Slack workspace like team.slack.com. Uses the default slagent workspace if omitted."`
+	Channel   string `name:"channel" required:"" help:"Slack channel, DM target, or Slack channel ID."`
+	Topic     string `name:"topic" default:"Claw64" help:"Slack thread title."`
 }
 
 type WhatsAppCmd struct {
@@ -67,7 +68,7 @@ func main() {
 	case "stdin":
 		runChatBridge(cli, chat.NewStdin())
 	case "slack":
-		runChatBridge(cli, chat.NewSlack(cli.Slack.BotToken, cli.Slack.AppToken))
+		runChatBridge(cli, chat.NewSlack(cli.Slack.Workspace, cli.Slack.Channel, cli.Slack.Topic))
 	case "whatsapp":
 		waCh, err := chat.NewWhatsApp(cli.WhatsApp.DB)
 		if err != nil {

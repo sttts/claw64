@@ -33,7 +33,8 @@ get a working setup.
 
 ```bash
 cd bridge
-go run . slack --bot-token xoxb-... --app-token xapp-...
+go run . slack --channel '#claw64'
+go run . slack --workspace team.slack.com --channel @alice
 ```
 
 ### WhatsApp
@@ -227,8 +228,9 @@ LLM → Bridge:       plain text answer quoting the screenshot
 
 ### Slack
 
-Uses [slack-go](https://github.com/slack-go/slack) in Socket Mode.
-Requires `--bot-token` and `--app-token`.
+Uses [slagent](https://github.com/sttts/slagent) for Slack threads.
+Credentials are auto-extracted from the local Slack desktop app on first use.
+Requires `--channel`. `--workspace` is optional if a default slagent workspace exists.
 
 ### WhatsApp
 
