@@ -27,7 +27,8 @@ type Relay struct {
 	History        *History
 	SystemPrompt   string // received from C64
 	promptChunks   map[int]string
-	textBuf        []byte // accumulates multi-frame TEXT chunks
+	textBuf        []byte // accumulates multi-frame TEXT chunks (receive)
+	textOutQueue   []byte // pending TEXT data to send in chunks (send)
 	lastToolCallID string
 }
 
@@ -160,16 +161,20 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			}
 
 		case serial.FrameText:
-			// TEXT forwarded by C64 — accumulate chunks.
-			// Chunk of 120 bytes = more to come. Shorter = final.
+			// TEXT echoed by C64 — accumulate and send next chunk
 			fmt.Fprintln(os.Stderr) // newline after streamed payload
 			r.textBuf = append(r.textBuf, f.Payload...)
-			if len(f.Payload) < 120 {
-				text := string(r.textBuf)
-				r.textBuf = nil
-				return text, nil
+			if len(r.textOutQueue) > 0 {
+				// more chunks to send — wait for this echo, then send next
+				if err := r.sendNextTextChunk(); err != nil {
+					return "", err
+				}
+				continue
 			}
-			continue
+			// all chunks sent and echoed — return full text
+			text := string(r.textBuf)
+			r.textBuf = nil
+			return text, nil
 
 		case serial.FrameSystem:
 			fmt.Fprintln(os.Stderr) // newline after streamed payload
@@ -206,29 +211,15 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 
 	// text response — send to C64, which forwards to user
 	if len(resp.ToolCalls) == 0 {
-		logStream("LLM → C64:  TEXT ")
-		if resp.Content != "" {
-			// send in chunks of 120 bytes (frame max is 127 with 7-bit length)
-			payload := []byte(resp.Content)
-			for len(payload) > 0 {
-				chunk := payload
-				if len(chunk) > 120 {
-					chunk = chunk[:120]
-				}
-				payload = payload[len(chunk):]
-				textFrame := serial.Frame{Type: serial.FrameText, Payload: chunk}
-				if err := r.sendWithRetry(textFrame); err != nil {
-					fmt.Fprintln(os.Stderr)
-					log.Printf("     ! TEXT send failed: %v", err)
-					break
-				}
-			}
-		} else {
+		if resp.Content == "" {
+			logStream("LLM → C64:  TEXT ")
 			fmt.Fprintln(os.Stderr, "(empty)")
+			return nil
 		}
-		// C64 forwards each chunk back as TEXT frame.
-		// eventLoop concatenates until a chunk < 120 bytes (= final).
-		return nil
+		// queue TEXT chunks — eventLoop sends one at a time,
+		// waiting for C64 echo before sending the next
+		r.textOutQueue = []byte(resp.Content)
+		return r.sendNextTextChunk()
 	}
 
 	// tool calls
@@ -265,6 +256,25 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 		if err := r.sendWithRetry(execFrame); err != nil {
 			return fmt.Errorf("send EXEC: %w", err)
 		}
+	}
+	return nil
+}
+
+// sendNextTextChunk sends one 120-byte TEXT chunk from the queue.
+func (r *Relay) sendNextTextChunk() error {
+	if len(r.textOutQueue) == 0 {
+		return nil
+	}
+	chunk := r.textOutQueue
+	if len(chunk) > 120 {
+		chunk = chunk[:120]
+	}
+	r.textOutQueue = r.textOutQueue[len(chunk):]
+	logStream("LLM → C64:  TEXT ")
+	textFrame := serial.Frame{Type: serial.FrameText, Payload: chunk}
+	if err := r.sendWithRetry(textFrame); err != nil {
+		fmt.Fprintln(os.Stderr)
+		return fmt.Errorf("send TEXT: %w", err)
 	}
 	return nil
 }

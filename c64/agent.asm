@@ -602,12 +602,10 @@ reenter_keys:
 // On entry: X = line number where READY. was found (from bl_scan)
 // ---------------------------------------------------------
 send_screen_result:
-        // The output is typically 2 lines above READY.:
-        //   line N-2: output (e.g. " 42" or "HELLO")
-        //   line N-1: (blank — PRINT adds newline)
-        //   line N:   READY.
-        dex                     // skip blank line
-        dex                     // X = output line
+        // Output is on the line immediately above READY.:
+        //   PRINT 42 → line N-1=" 42", line N=READY.
+        //   POKE x,y → line N-1="" (no output), line N=READY.
+        dex                     // X = line above READY.
         lda screen_lo,x
         sta ssr_rd+1            // self-modify screen read address
         lda screen_hi,x
