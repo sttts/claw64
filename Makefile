@@ -41,9 +41,8 @@ $(KICKASS_JAR):
 	@rm -f $(KICKASS_ZIP)
 	@test -f $(KICKASS_JAR) || { echo "ERROR: KickAss.jar not found after unzip"; exit 1; }
 
-# assemble the C64 agent (standalone for dev, loader for production)
+# assemble the C64 loader (includes agent.asm via #import)
 assemble: $(KICKASS_JAR)
-	java -jar $(KICKASS_JAR) -o $(ASM_OUT) $(ASM_SRC)
 	java -jar $(KICKASS_JAR) -o $(LOADER_OUT) $(LOADER_SRC)
 
 # assemble the echo test
