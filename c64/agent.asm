@@ -1302,6 +1302,9 @@ anim_timer:   .byte 5   // frames between dot shifts
 dot_dir:      .byte 1   // 0=left (sending), 1=right (receiving)
 busy_timer:   .byte 0   // frames since last serial activity (auto-clear at 30)
 color_timer:  .byte 0   // free-running counter for lobster color pulse
+
+// color cycle for busy lobster: red → orange → yellow → white
+busy_colors:  .byte 2, 8, 7, 1
 claw_timer:   .byte 30  // frames between claw animation toggles
 
 // Lobster sprite data — 24x21 pixels, 63 bytes
@@ -1594,18 +1597,17 @@ irq_raster:
         beq irq_idle
 
         // Busy — pulse lobster color while the agent is working.
-        // Uses its own counter (not busy_timer which caps for dots).
         inc busy_timer
         inc color_timer
+        // cycle through colors: red→orange→yellow→white→yellow→orange→...
         lda color_timer
-        and #$08
-        beq irq_claw_red
-        lda #1                  // white
-        bne irq_set_claw_color
-irq_claw_red:
-        lda #2                  // red
-irq_set_claw_color:
-        sta $D027
+        lsr
+        lsr
+        lsr                     // divide by 8 (change every 8 frames)
+        and #$03                // 4 phases: 0,1,2,3
+        tax
+        lda busy_colors,x
+        sta $D027               // set lobster sprite color
 
         // Hide dots after ~500ms without serial activity (30 frames).
         // Keep busy set so they reappear instantly on next byte.
