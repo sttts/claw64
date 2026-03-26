@@ -1,7 +1,7 @@
 # Claw64
 
 An autonomous AI agent running on a Commodore 64. The C64 is the agent.
-BASIC is its tool. A tiny TSR (Terminate and Stay Resident) program
+BASIC and the visible text screen are its tools. A tiny TSR (Terminate and Stay Resident) program
 coexists with the BASIC REPL, receives messages from chat users, consults
 an LLM for decisions, and executes BASIC commands — reading the screen to
 see what happened.
@@ -13,7 +13,7 @@ agent loop runs on the C64.
 ## Architecture
 
 ```
-Chat user (Slack/WhatsApp/Signal)
+Chat user (Slack/WhatsApp/stdin)
         |
         v
 +------------------+
@@ -54,9 +54,14 @@ Receive MSG frame ("What is 6502*8?")
 (Bridge calls LLM on C64's behalf, using stored history)
   |
   v
-Receive EXEC or TEXT frame from bridge
+Receive EXEC, SCREENSHOT or TEXT frame from bridge
   |
   +---> TEXT frame: forward to user via bridge, return to IDLE
+  |
+  +---> SCREENSHOT frame:
+          Scrape the visible text screen
+          Send RESULT frame back to bridge
+          (Bridge feeds result to LLM, loops back)
   |
   +---> EXEC frame ("PRINT 6502*8"):
           Type into BASIC REPL (keystroke injection)
@@ -75,7 +80,7 @@ The bridge appends these to the history and calls the LLM again.
 
 ### C64 Agent (6502 Assembly)
 
-A ~2KB TSR that hooks into the KERNAL keyboard loop and runs alongside
+A TSR that hooks into the KERNAL keyboard loop and runs alongside
 the BASIC REPL. It has no screen UI of its own. The screen belongs to
 BASIC — the agent reads it as a tool output.
 
@@ -88,10 +93,10 @@ $0200-$03FF  System variables, keyboard buffer
 $0400-$07FF  Screen RAM (agent reads this to capture output)
 $0800-$9FFF  BASIC program + variables (untouched)
 $A000-$BFFF  BASIC ROM
-$C000-$C3FF  Agent code + data (~1KB)
-$C300-$C3FF  Receive buffer (256 bytes)
-$C400-$C4FF  Send buffer (256 bytes)
-$C500-$C5FF  Temp buffer (KERNAL copy)
+$C000-$CCFF  Agent code + data
+$CD00-$CDFF  Receive buffer (256 bytes)
+$CE00-$CEFF  Send buffer (256 bytes)
+$CF00-$CFFF  Temp / spare space
 $D000-$DFFF  I/O registers (VIC-II, SID, CIA)
 $E000-$FFFF  KERNAL ROM (copied to RAM for patching)
 ```
@@ -185,8 +190,8 @@ Implementations:
 
 - **Slack** via slack-go (`github.com/slack-go/slack`), Socket Mode.
 - **WhatsApp** via whatsmeow (`go.mau.fi/whatsmeow`), pure Go.
-- **Signal** via signal-cli subprocess (JSON-RPC).
-- **stdin** for local testing (terminal REPL).
+- **Signal** via signal-cli subprocess (planned, not implemented yet).
+- **stdin** for local testing (terminal REPL with colored prompts/logs).
 
 #### LLM backends
 
@@ -206,46 +211,24 @@ CLAW64_LLM_MODEL=...      (default per backend)
 CLAW64_LLM_URL=...        (openai/ollama only)
 ```
 
-#### Tool definition
+#### Tools
 
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "basic_exec",
-    "description": "Execute a C64 BASIC command and return screen output",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "command": {
-          "type": "string",
-          "description": "C64 BASIC command to type into the REPL (max 80 chars)"
-        }
-      },
-      "required": ["command"]
-    }
-  }
-}
-```
+- `basic_exec(command)` — execute one BASIC command and return the resulting screen output.
+- `text_screenshot()` — return the current visible text screen without running BASIC.
 
 #### System prompt
 
 ```
-You are a Commodore 64 computer from 1982. You interact with the world
-by typing BASIC commands into your own REPL.
+The soul lives on the C64 and is sent as chunked SYSTEM frames.
 
-You have one tool: basic_exec. It types a command into the C64 BASIC
-interpreter and returns whatever appears on screen afterward.
-
-Rules:
-- Commands must be valid Commodore 64 BASIC (PRINT, POKE, PEEK, LIST, etc.)
-- Maximum 80 characters per BASIC command (C64 screen editor logical line limit).
-- Text messages (MSG, TEXT, LLM_MSG) can be up to 200 characters (multi-frame).
-- Results come from screen scraping — may contain trailing spaces.
-- READY. means the command completed successfully.
-- Chain statements with colon: PRINT "HELLO":PRINT "WORLD"
-- Use POKE for hardware (SID, VIC-II, CIA).
-- Plain text only. No markdown.
+Current intent:
+- Speak as a machine from 1982.
+- Stay within 1982 knowledge. If asked about later facts, say you do not know them.
+- Use `basic_exec` for BASIC commands.
+- Use `text_screenshot` to inspect the visible text screen without running BASIC.
+- Tool results are screen output, not human messages.
+- Long scrolling output may only show the tail.
+- Show screenshot output as quoted text or fenced code when alignment matters.
 ```
 
 ### Serial Protocol
@@ -277,10 +260,11 @@ Total overhead: 4 bytes per frame.
 Bridge -> C64:
   'M' (0x4D)  MSG         User's chat message text
   'E' (0x45)  EXEC        Tool call: BASIC command to execute
+  'P' (0x50)  SCREENSHOT  Request current visible text screen
   'T' (0x54)  TEXT        LLM's final text response (forward to user)
 
 C64 -> Bridge:
-  'R' (0x52)  RESULT      Tool result: screen scrape (cursor to READY.)
+  'R' (0x52)  RESULT      Tool result: EXEC output or screenshot text
   'L' (0x4C)  LLM_MSG     Message to append to LLM conversation
   'X' (0x58)  ERROR       Tool call timed out or failed
   'S' (0x53)  SYSTEM      System prompt chunk (sent on first MSG)
@@ -301,12 +285,12 @@ All payloads are plain text. No JSON, no quoting, no escaping.
 #### Multi-frame messages
 
 Frame payload is limited to 120 bytes (length field is 7-bit, max 127,
-with headroom). Messages longer than 120 bytes are split into multiple
-frames of the same type. Convention: if LENGTH == 120, more frames
-follow. LENGTH < 120 means the final (or only) frame. The receiver
-concatenates payloads until a short frame arrives.
+with headroom). SYSTEM and RESULT use an in-band chunk header:
+`[chunk_index, total_chunks, text...]`. TEXT is chunked as repeated
+120-byte frames, and the bridge waits for each echoed chunk before
+sending the next one.
 
-Used by: TEXT (LLM responses), SYSTEM (prompt chunks).
+Used by: TEXT, SYSTEM, RESULT.
 
 #### SYNC recovery and bit masking
 
@@ -341,8 +325,9 @@ Used by: TEXT (LLM responses), SYSTEM (prompt chunks).
 7. C64 scrapes screen, sends RESULT:   R | " 52016"
 8. Bridge feeds tool result to LLM.
 9. LLM returns text: "6502 * 8 = 52016"
-10. Bridge sends TEXT frame to C64:     T | "6502 * 8 = 52016"
-11. Bridge sends text to chat user.
+10. Bridge sends TEXT frames to C64, one chunk at a time.
+11. C64 forwards TEXT back to bridge.
+12. Bridge sends text to the chat user.
 ```
 
 The C64 can inject context at any point:
@@ -387,9 +372,9 @@ Build:       make assemble / make vice / make bridge
 ### In scope (MVP)
 
 - C64 TSR agent in 6502 assembly.
-- Frame protocol (MSG/EXEC/TEXT/RESULT/LLM_MSG/ERROR/HEARTBEAT).
+- Frame protocol (MSG/EXEC/SCREENSHOT/TEXT/RESULT/LLM_MSG/ERROR/HEARTBEAT/SYSTEM).
 - Bridge in Go: LLM proxy + chat relay + serial link.
-- One tool: `basic_exec`.
+- Two tools: `basic_exec`, `text_screenshot`.
 - Multi-user chat support.
 - VICE development environment.
 

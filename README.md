@@ -6,7 +6,7 @@
 
 > **WIP** — Work in progress. Not ready for use.
 
-The Commodore 64 is the agent. BASIC is its tool.
+The Commodore 64 is the agent. BASIC and the visible text screen are its tools.
 
 Claw64 turns a Commodore 64 into an autonomous AI agent. The C64 receives
 messages from chat users, consults an LLM for decisions, and acts by typing
@@ -17,7 +17,7 @@ behalf of the C64, which cannot reach the internet at 2400 baud.
 ## Architecture
 
 ```
-                    Chat (Slack/WhatsApp/Signal/stdin)
+                    Chat (Slack/WhatsApp/stdin)
                               │
                               ▼
                  ┌──────────────────────┐
@@ -47,9 +47,12 @@ behalf of the C64, which cannot reach the internet at 2400 baud.
 │  │         Send LLM_MSG ──▶ bridge calls LLM       │  │
 │  │           │                                     │  │
 │  │           ▼                                     │  │
-│  │    ┌── Receive EXEC or TEXT from bridge          │  │
+│  │    ┌── Receive EXEC, SCREENSHOT or TEXT          │  │
 │  │    │                                            │  │
 │  │    │──▶ TEXT: forward to user, back to IDLE     │  │
+│  │    │                                            │  │
+│  │    │──▶ SCREENSHOT: scrape visible text screen   │  │
+│  │    │              send RESULT, loop back        │  │
 │  │    │                                            │  │
 │  │    └──▶ EXEC: inject keystrokes into BASIC ──┐  │  │
 │  │                                              │  │  │
@@ -72,10 +75,15 @@ behalf of the C64, which cannot reach the internet at 2400 baud.
 │  │  POKE 53281,3     → change hardware             │  │
 │  │  LIST / LOAD / RUN → inspect and run programs   │  │
 │  │                                                 │  │
-│  │  Screen RAM ($0400) is the "return value"       │  │
+│  │  Visible text screen is also inspectable        │  │
+│  │  directly via text_screenshot                   │  │
 │  └─────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────┘
 ```
+
+At startup, the loader shows a lobster logo in multicolor bitmap mode for
+roughly two seconds before restoring the normal BASIC text screen and
+starting the agent.
 
 ## Serial Protocol
 
@@ -89,7 +97,7 @@ The bridge translates frames to HTTP/chat APIs — it never decides anything.
 └──────┴──────┴────────┴─────────────┴──────┘
 ```
 
-All payloads are plain text. No JSON, no quoting.
+Payloads are raw bytes. Text-carrying frames use plain text payloads.
 
 ### Frame types
 
@@ -97,10 +105,11 @@ All payloads are plain text. No JSON, no quoting.
 Bridge → C64:
   M  MSG         User's chat message ("What is 6502*8?")
   E  EXEC        Tool call: BASIC command to execute ("PRINT 6502*8")
+  P  SCREENSHOT  Request current visible text screen
   T  TEXT        LLM's final answer, forward to chat user
 
 C64 → Bridge:
-  R  RESULT      Tool result: screen scrape (old cursor to READY.)
+  R  RESULT      Tool result (EXEC output or screenshot text)
   L  LLM_MSG     Context message for the LLM
   X  ERROR       Tool call timed out
   T  TEXT        LLM's answer forwarded back to user (C64 relays it)
@@ -113,8 +122,10 @@ LLM→bridge→C64→bridge→user. The C64 forwards every TEXT frame back.
 The system prompt — the C64's soul — lives in the C64's memory. On the
 first message, it's sent as chunked SYSTEM frames before the LLM_MSG.
 
-Messages longer than 120 bytes are split into multiple frames. A frame
-with LENGTH=120 means more chunks follow. LENGTH<120 means final chunk.
+SYSTEM and RESULT use a 2-byte chunk header: `[chunk_index, total_chunks]`.
+TEXT is chunked by the bridge into 120-byte payload frames and reassembled
+after the C64 echoes them back. The bridge waits for each TEXT echo before
+sending the next chunk.
 
 ### Example flow
 
@@ -136,6 +147,19 @@ Bridge → LLM:      (feeds tool result back)
 LLM → Bridge:      "6502 * 8 = 52016"
 Bridge → C64:      T │ 6502 * 8 = 52016        ← final answer
 Bridge → Slack:    "6502 * 8 = 52016"
+```
+
+Screenshot-only flow:
+
+```
+User:               "Do a screenshot"
+Bridge → C64:       M │ Do a screenshot
+C64 → Bridge:       L │ Do a screenshot
+LLM → Bridge:       tool_call: text_screenshot()
+Bridge → C64:       P │
+C64 → Bridge:       R │ [chunked visible text screen]
+Bridge → LLM:       (feeds screenshot text back)
+LLM → Bridge:       plain text answer quoting the screenshot
 ```
 
 ## Getting Started
@@ -189,7 +213,7 @@ CLAW64_CHAT=whatsapp         # scans QR on first run
 |----------|---------|-------|
 | Slack | [slack-go](https://github.com/slack-go/slack) | Socket Mode |
 | WhatsApp | [whatsmeow](https://github.com/tulir/whatsmeow) | Pure Go, multi-device |
-| stdin | (built-in) | Terminal REPL for testing |
+| stdin | (built-in) | Terminal REPL with colored prompts/logs |
 
 ## LLM Backends
 
@@ -209,12 +233,14 @@ CLAW64_CHAT=whatsapp         # scans QR on first run
 | Frame Protocol (C64 + Go) | :white_check_mark: |
 | Keystroke Injection | :white_check_mark: |
 | Screen Scraping + READY. Detection | :white_check_mark: |
+| Startup Loader Logo | :white_check_mark: |
+| Tool: text_screenshot | :white_check_mark: |
 | Bridge LLM Client | :white_check_mark: |
 | Bridge Relay (orchestrator) | :white_check_mark: |
 | Chat: Slack | :white_check_mark: |
 | Chat: WhatsApp | :white_check_mark: |
 | Chat: Signal | |
-| Agent Loop (MSG→LLM→EXEC→RESULT) | :construction: |
+| Agent Loop (MSG→LLM→EXEC/SCREENSHOT→RESULT) | :construction: |
 | Robustness + Polish | |
 
 See [SPEC.md](SPEC.md) for the full specification.
