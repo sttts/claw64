@@ -1301,6 +1301,7 @@ old_irq_hi:   .byte 0   // saved IRQ vector high byte
 anim_timer:   .byte 5   // frames between dot shifts
 dot_dir:      .byte 1   // 0=left (sending), 1=right (receiving)
 busy_timer:   .byte 0   // frames since last serial activity (auto-clear at 30)
+color_timer:  .byte 0   // free-running counter for lobster color pulse
 claw_timer:   .byte 30  // frames between claw animation toggles
 
 // Lobster sprite data — 24x21 pixels, 63 bytes
@@ -1593,9 +1594,10 @@ irq_raster:
         beq irq_idle
 
         // Busy — pulse lobster color while the agent is working.
-        // This runs the entire time busy is set, even when dots are hidden.
+        // Uses its own counter (not busy_timer which caps for dots).
         inc busy_timer
-        lda busy_timer
+        inc color_timer
+        lda color_timer
         and #$08
         beq irq_claw_red
         lda #1                  // white
