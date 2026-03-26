@@ -16,7 +16,7 @@ import (
 )
 
 // maxIterations caps the LLM loop to prevent infinite cycles.
-const maxIterations = 10
+// No iteration limit — the event loop runs until TEXT is returned or an error occurs.
 
 
 // Relay routes messages between chat, LLM, and the C64 serial link.
@@ -128,7 +128,7 @@ func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (
 
 // eventLoop waits for C64 frames and reacts.
 func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
-	for i := 0; i < maxIterations; i++ {
+	for {
 		f, err := r.recvFromC64(ctx)
 		if err != nil {
 			return "", err
@@ -188,8 +188,6 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			log.Printf("C64 → ???:   unknown frame 0x%02X", f.Type)
 		}
 	}
-
-	return "", fmt.Errorf("event loop exceeded %d iterations", maxIterations)
 }
 
 // callAndDispatch calls the LLM and dispatches the response to the C64.

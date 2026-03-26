@@ -594,10 +594,10 @@ bl_key:
 // Patched into $E8EA (KERNAL scroll routine). Executes the original
 // first 3 bytes (LDA $AC / PHA) then jumps back to $E8ED.
 scroll_hook:
-        lda scan_start
-        beq sh_skip             // already at 0 → don't underflow
+        // Allow scan_start to wrap to $FF — the scraper does
+        // scan_start+1 which wraps $FF→$00 (line 0). This way
+        // when the command scrolls off the top, we read from line 0.
         dec scan_start
-sh_skip:
         lda $AC                 // original $E8EA instruction
         pha                     // original $E8EB instruction
         jmp $E8ED               // continue scroll routine
@@ -1334,13 +1334,22 @@ ssp_copy:
         cpy ssp_text_len
         beq ssp_build_chk
 ssp_rd: lda $C000              // self-modified
-        // PETSCII lowercase ($C1-$DA) → ASCII ($61-$7A)
+        // PETSCII $C1-$DA (uppercase in source) → ASCII $41-$5A
         cmp #$C1
-        bcc ssp_noc             // < $C1 → not lowercase
+        bcc ssp_chk_lo
         cmp #$DB
-        bcs ssp_noc             // >= $DB → not lowercase
+        bcs ssp_noc
         sec
-        sbc #$60                // $C1→$61, $DA→$7A
+        sbc #$80                // $C1→$41('A'), $DA→$5A('Z')
+        jmp ssp_noc
+ssp_chk_lo:
+        // PETSCII $41-$5A (lowercase in source) → ASCII $61-$7A
+        cmp #$41
+        bcc ssp_noc
+        cmp #$5B
+        bcs ssp_noc
+        clc
+        adc #$20                // $41→$61('a'), $5A→$7A('z')
 ssp_noc:
         sta send_buf+5,y
         inc ssp_rd+1
