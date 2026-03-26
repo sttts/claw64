@@ -177,6 +177,17 @@ cp_bas_wr:
         lda #>reenter
         sta $E5D3
 
+        // ---- Patch scroll routine to track scan_start ----
+        // $E8EA is the KERNAL screen scroll-up routine, called from
+        // three places. Patch first 3 bytes with JMP to our hook.
+        // Original bytes: A5 AC 48 (LDA $AC / PHA)
+        lda #$4C                // JMP
+        sta $E8EA
+        lda #<scroll_hook
+        sta $E8EB
+        lda #>scroll_hook
+        sta $E8EC
+
         // ---- Hook IRQ for sprite animation ----
         lda IRQ_LO
         sta old_irq_lo
@@ -578,6 +589,18 @@ bl_key:
         // Jump to $E5D4 (past our patch). The KERNAL reads from
         // the buffer, echoes chars, handles RETURN normally.
         jmp $E5D4               // KERNAL: BEQ $E5CD / fall through to process
+
+// Scroll hook — decrement scan_start when the screen scrolls up.
+// Patched into $E8EA (KERNAL scroll routine). Executes the original
+// first 3 bytes (LDA $AC / PHA) then jumps back to $E8ED.
+scroll_hook:
+        lda scan_start
+        beq sh_skip             // already at 0 → don't underflow
+        dec scan_start
+sh_skip:
+        lda $AC                 // original $E8EA instruction
+        pha                     // original $E8EB instruction
+        jmp $E8ED               // continue scroll routine
 
 // Trampoline from $E5D1 patch. Executes the original STA $0292,
 // then checks: if buffer empty → run agent; if keys → continue KERNAL.
