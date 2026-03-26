@@ -1,0 +1,40 @@
+version: 2
+
+builds:
+  - id: claw64-bridge
+    dir: .
+    main: ./cmd/claw64-bridge
+    binary: claw64-bridge
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - id: bridge
+    builds:
+      - claw64-bridge
+    name_template: "claw64-bridge_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+      - c64/claw64.prg
+      - c64/agent.prg
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  extra_files:
+    - glob: c64/claw64.prg
+    - glob: c64/agent.prg

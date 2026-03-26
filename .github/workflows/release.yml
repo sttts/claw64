@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Resolve the slagent replace directive for CI builds
+      - name: Checkout slagent
+        uses: actions/checkout@v4
+        with:
+          repository: sttts/slagent
+          path: _slagent
+
+      - name: Fix slagent replace path
+        run: |
+          # Point replace to the checked-out slagent copy
+          sed -i 's|replace github.com/sttts/slagent => ..|replace github.com/sttts/slagent => ./_slagent|' go.mod
+
+      # Build C64 PRG files (make assemble auto-downloads KickAssembler)
+      - name: Assemble C64 agent
+        run: make assemble
+
+      # Auto-tag: v2026.03.26-1 (date + counter)
+      - name: Create tag
+        id: tag
+        run: |
+          DATE=$(date +%Y.%m.%d)
+          # find existing tags for today and increment
+          COUNTER=1
+          while git rev-parse "v${DATE}-${COUNTER}" >/dev/null 2>&1; do
+            COUNTER=$((COUNTER + 1))
+          done
+          TAG="v${DATE}-${COUNTER}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          git tag "$TAG"
+          git push origin "$TAG"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
