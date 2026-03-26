@@ -1592,18 +1592,9 @@ irq_raster:
         lda busy
         beq irq_idle
 
-        // Busy — show and animate dots sprite
-        // Hide dots after ~500ms without serial activity (30 frames).
-        // Keep busy set so they reappear instantly on next byte.
+        // Busy — pulse lobster color while the agent is working.
+        // This runs the entire time busy is set, even when dots are hidden.
         inc busy_timer
-        lda busy_timer
-        cmp #30                 // 30 frames ≈ 500ms at 60Hz
-        bcc irq_no_timeout
-        lda #30
-        sta busy_timer          // cap timer (don't overflow)
-        jmp irq_idle            // hide dots until next byte
-irq_no_timeout:
-        // Pulse the lobster color while the agent is working.
         lda busy_timer
         and #$08
         beq irq_claw_red
@@ -1614,6 +1605,15 @@ irq_claw_red:
 irq_set_claw_color:
         sta $D027
 
+        // Hide dots after ~500ms without serial activity (30 frames).
+        // Keep busy set so they reappear instantly on next byte.
+        lda busy_timer
+        cmp #30
+        bcc irq_no_timeout
+        lda #30
+        sta busy_timer          // cap (don't overflow)
+        jmp irq_hide_dots       // hide dots but keep pulsing lobster
+irq_no_timeout:
         lda $D015
         ora #%00000010          // enable sprite 1
         sta $D015
@@ -1662,9 +1662,16 @@ irq_done:
 irq_exit:
         jmp (old_irq_lo)
 
+irq_hide_dots:
+        // Hide dots sprite but keep lobster pulsing (busy still set)
+        lda $D015
+        and #%11111101
+        sta $D015
+        jmp irq_done
+
 irq_idle:
-        // Not busy — hide dots sprite
-        lda #2                  // idle lobster stays red
+        // Not busy — hide dots, lobster back to red
+        lda #2
         sta $D027
         lda $D015
         and #%11111101
