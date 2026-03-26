@@ -1,7 +1,7 @@
 # Claw64 — Agent Rules
 
 ## Project
-The Commodore 64 is the agent. BASIC is its tool. A tiny TSR in 6502 assembly types commands into the BASIC REPL and reads the screen to see what happened. A Go bridge connects the C64 to chat platforms and an LLM over serial.
+The Commodore 64 is the agent. BASIC is its tool. A tiny TSR in 6502 assembly types commands into the BASIC REPL and reads the screen to see what happened. A Go bridge connects the C64 to chat platforms and an LLM over serial. The bridge is a pure relay — no shortcuts, all data flows through the C64.
 
 ## Structure
 ```
@@ -10,27 +10,32 @@ Makefile                     — Build system (auto-downloads KickAssembler)
 
 c64/
   defs.asm                   — Constants, zero-page allocations, memory map
-  agent.asm                  — Main: IRQ hook, state machine, entry point
+  agent.asm                  — Main: IRQ hook, state machine, entry point,
+                               frame parser, keystroke injection, screen scrape,
+                               system prompt, PETSCII→ASCII conversion
   serial.asm                 — KERNAL RS232 init, byte read/write
-  frame.asm                  — Frame parser (state machine) and builder
-  inject.asm                 — Keystroke injection into BASIC keyboard buffer
-  screen.asm                 — READY. detection, screen scrape, screen-code-to-ASCII
+  loader.asm                 — BASIC stub + copy routine + logo display
+  assets/                    — Logo bitmap data (Koala format)
+
+cmd/claw64-bridge/
+  main.go                    — Entry point, config, wiring
 
 bridge/
-  main.go                    — Entry point, config, wiring
   serial/serial.go           — TCP connection to VICE, frame send/recv
   serial/frame.go            — Frame types, marshal/unmarshal, checksum
-  llm/llm.go                 — OpenAI-compatible chat completions client
-  llm/tools.go               — basic_exec tool definition, system prompt
+  llm/llm.go                 — Completer interface
+  llm/tools.go               — basic_exec + text_screenshot tools, system prompt
+  llm/anthropic.go           — Anthropic Messages API client
+  llm/claude_cli.go          — Claude CLI backend (shells out to claude)
+  llm/openai.go              — OpenAI-compatible chat completions client
   chat/chat.go               — Channel interface
-  chat/slagent.go            — Slack via slagent library
+  chat/slack.go              — Slack via slagent library
   chat/whatsapp.go           — WhatsApp via whatsmeow
   chat/signal.go             — Signal via signal-cli subprocess
-  agent/agent.go             — Orchestrator: conversation loop, tool queue, retry
-  agent/history.go           — Per-user conversation history
-
-tools/
-  serialtest.go              — Standalone serial test tool
+  chat/stdin.go              — Terminal REPL with Ctrl-C handling
+  relay/relay.go             — Message relay: conversation loop, tool dispatch
+  relay/history.go           — Per-user conversation history
+  termstyle/style.go         — Terminal output styling
 ```
 
 Module: `github.com/sttts/claw64`
@@ -50,18 +55,26 @@ Module: `github.com/sttts/claw64`
 ## Build
 - C64 agent: `make assemble` (auto-downloads KickAssembler, requires Java)
 - VICE launch: `make vice` (requires `brew install --cask vice`)
-- Bridge: `make bridge` (requires Go)
+- Full stack: `make run` (assembles, starts bridge + VICE, kills VICE on exit)
+- Bridge only: `make bridge` (requires Go)
 - Serial test: `make test-serial`
 
 ## Architecture Notes
-- C64 agent is a TSR at $C000, hooks IRQ at $0314/$0315, invisible to user.
-- Serial protocol: SYNC(0xFF) + SUBTYPE(1) + LENGTH(1) + PAYLOAD(0-255) + CHK(XOR).
-- Frame types: EXEC(0x01), RESULT(0x02), ERROR(0x03), HEARTBEAT(0x04).
+- C64 agent is a TSR at $C000, hooks KERNAL at $E5D1 and IRQ at $0314/$0315, invisible to user.
+- Serial protocol: SYNC(0xFE) + TYPE(1) + LENGTH(1) + PAYLOAD(0-120) + CHK(XOR).
+- Frame types: MSG('M'), EXEC('E'), TEXT('T'), RESULT('R'), LLM_MSG('L'), ERROR('X'), SYSTEM('S'), HEARTBEAT('H').
+- Multi-frame: payload of 120 bytes = more chunks follow, shorter = final.
 - RS232 at 2400 baud via C64 userport. VICE maps to TCP localhost:25232.
-- Bridge speaks OpenAI chat completions protocol to any LLM provider.
-- Chat channels: slagent (Slack), whatsmeow (WhatsApp), signal-cli (Signal).
-- Tool calls are sequential — bridge queues, one at a time.
-- Retry policy: 3 attempts, 500ms/1s/2s backoff.
+- Bridge sends bytes with 25ms spacing (one C64 main loop iteration for PAL/NTSC).
+- Echo: C64 echoes received bytes (SYNC-filtered) to keep VICE TX alive for drip-send.
+- KERNAL patches: $E5D1 (agent reentry), $E8EA (scroll tracking for scan_start).
+- System prompt (the C64's soul) stored in agent.asm, sent as SYSTEM frames on first MSG.
+- TEXT responses flow LLM→bridge→C64→bridge→user (no bridge shortcuts).
+- Buffers pinned at top of $C000-$CFFF block: RXBUF=$CD00, TXBUF=$CE00.
+- Tools: basic_exec (run BASIC), text_screenshot (read screen without executing).
+- Chat channels: Slack, WhatsApp, Signal, stdin.
+- LLM backends: Anthropic API, Claude CLI, OpenAI-compatible, Ollama.
+- Lobby splash: multicolor bitmap logo shown during loader copy phase.
 
 ## 6502 Assembly Style
 - Use KickAssembler syntax (// comments, .const, #import, *= for origin).
