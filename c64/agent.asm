@@ -602,10 +602,17 @@ reenter_keys:
 // On entry: X = line number where READY. was found (from bl_scan)
 // ---------------------------------------------------------
 send_screen_result:
-        // Output is on the line immediately above READY.:
-        //   PRINT 42 → line N-1=" 42", line N=READY.
-        //   POKE x,y → line N-1="" (no output), line N=READY.
-        dex                     // X = line above READY.
+        // Command was typed at scan_start. Output starts at scan_start+1.
+        // If READY. is at scan_start+1, there's no output (POKE, SYS).
+        // Otherwise read scan_start+1 (the first output line).
+        // X = READY. line. Check if output line (scan_start+1) == READY. line
+        lda scan_start
+        clc
+        adc #1                  // A = scan_start+1 (first output line)
+        stx frame_chk           // save READY. line in temp
+        cmp frame_chk           // output line == READY. line?
+        beq ssr_empty           // yes → no output (POKE, SYS)
+        tax                     // X = output line to read
         lda screen_lo,x
         sta ssr_rd+1            // self-modify screen read address
         lda screen_hi,x
