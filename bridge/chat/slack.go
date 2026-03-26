@@ -1,9 +1,11 @@
 package chat
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/sttts/slagent"
@@ -33,19 +35,23 @@ func NewSlack(workspace, target, topic string) *SlackChannel {
 func (s *SlackChannel) Name() string { return "slack" }
 
 func (s *SlackChannel) Start(ctx context.Context, handler MessageHandler) error {
-	sc, resolved, display, ownerID, err := s.connect()
+	sc, resolved, threadTS, display, ownerID, err := s.connect()
 	if err != nil {
 		return err
 	}
 
 	thread := slagent.NewThread(sc, resolved, slagent.WithOwner(ownerID))
-	url, err := thread.Start(s.threadTopic(display))
-	if err != nil {
-		return fmt.Errorf("slack: start thread: %w", err)
+	if threadTS != "" {
+		thread.Resume(threadTS)
+		log.Printf("slack: workspace=%s target=%s thread=%s", workspaceLabel(s.workspace), display, s.target)
+	} else {
+		url, err := thread.Start(s.threadTopic(display))
+		if err != nil {
+			return fmt.Errorf("slack: start thread: %w", err)
+		}
+		log.Printf("slack: workspace=%s target=%s thread=%s", workspaceLabel(s.workspace), display, url)
 	}
 	s.thread = thread
-
-	log.Printf("slack: workspace=%s target=%s thread=%s", workspaceLabel(s.workspace), display, url)
 
 	for {
 		messages, err := thread.Replies(ctx)
@@ -105,14 +111,17 @@ func (s *SlackChannel) handleSlackMessage(ctx context.Context, handler MessageHa
 	return err
 }
 
-func (s *SlackChannel) connect() (*slagentclient.Client, string, string, string, error) {
+func (s *SlackChannel) connect() (*slagentclient.Client, string, string, string, string, error) {
+	if s.workspace == "" {
+		s.workspace = workspaceFromURL(s.target)
+	}
 	if err := ensureSlackCredentials(s.workspace); err != nil {
-		return nil, "", "", "", err
+		return nil, "", "", "", "", err
 	}
 
 	creds, err := credential.Load(s.workspace)
 	if err != nil {
-		return nil, "", "", "", fmt.Errorf("slack credentials: %w", err)
+		return nil, "", "", "", "", fmt.Errorf("slack credentials: %w", err)
 	}
 
 	sc := slagentclient.New(creds.EffectiveToken(), creds.Cookie)
@@ -120,25 +129,33 @@ func (s *SlackChannel) connect() (*slagentclient.Client, string, string, string,
 
 	resolver, err := slagentchannel.New(sc)
 	if err != nil {
-		return nil, "", "", "", fmt.Errorf("slack resolver: %w", err)
+		return nil, "", "", "", "", fmt.Errorf("slack resolver: %w", err)
 	}
 
-	resolved, display, err := resolveSlackTarget(resolver, s.target)
+	resolved, threadTS, display, err := resolveSlackTarget(resolver, s.target)
 	if err != nil {
-		return nil, "", "", "", err
+		return nil, "", "", "", "", err
 	}
 
 	auth, err := sc.AuthTest()
 	if err != nil {
-		return nil, "", "", "", fmt.Errorf("slack auth test: %w", err)
+		return nil, "", "", "", "", fmt.Errorf("slack auth test: %w", err)
 	}
 
-	return sc, resolved, display, auth.UserID, nil
+	return sc, resolved, threadTS, display, auth.UserID, nil
 }
 
 func (s *SlackChannel) threadTopic(display string) string {
 	if s.topic != "" {
 		return s.topic
+	}
+
+	fmt.Fprintf(os.Stderr, "📝 Topic for %s: ", display)
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line != "" {
+		return line
 	}
 	return fmt.Sprintf("Claw64 session in %s", display)
 }
@@ -181,20 +198,24 @@ func ensureSlackCredentials(workspace string) error {
 	return nil
 }
 
-func resolveSlackTarget(resolver *slagentchannel.Client, target string) (string, string, error) {
+func resolveSlackTarget(resolver *slagentchannel.Client, target string) (string, string, string, error) {
+	if ch, threadTS := parseThreadTarget(target); ch != "" {
+		return ch, threadTS, target, nil
+	}
+
 	switch {
 	case strings.HasPrefix(target, "@"):
 		id, err := resolver.ResolveUserChannel(strings.TrimPrefix(target, "@"))
-		return id, target, err
+		return id, "", target, err
 	case isSlackID(target):
-		return target, target, nil
+		return target, "", target, nil
 	default:
 		id, err := resolver.ResolveChannelByName(target)
 		display := target
 		if !strings.HasPrefix(display, "#") {
 			display = "#" + display
 		}
-		return id, display, err
+		return id, "", display, err
 	}
 }
 
@@ -203,6 +224,52 @@ func workspaceKey(url string) string {
 	url = strings.TrimPrefix(url, "http://")
 	url = strings.TrimSuffix(url, "/")
 	return url
+}
+
+func workspaceFromURL(u string) string {
+	u = strings.TrimPrefix(u, "https://")
+	u = strings.TrimPrefix(u, "http://")
+	if idx := strings.Index(u, "/"); idx >= 0 {
+		return u[:idx]
+	}
+	return ""
+}
+
+func parseThreadTarget(value string) (ch, threadTS string) {
+	if value == "" || !strings.Contains(value, "/archives/") {
+		return "", ""
+	}
+
+	if idx := strings.LastIndex(value, "#"); idx >= 0 {
+		value = value[:idx]
+	}
+
+	parts := strings.Split(value, "/")
+	for i, p := range parts {
+		if p != "archives" || i+1 >= len(parts) {
+			continue
+		}
+		ch = parts[i+1]
+		if i+2 >= len(parts) {
+			return ch, ""
+		}
+
+		tsRaw := parts[i+2]
+		if idx := strings.Index(tsRaw, "?"); idx >= 0 {
+			tsRaw = tsRaw[:idx]
+		}
+		tsRaw = strings.TrimPrefix(tsRaw, "p")
+		if tsRaw == "" {
+			return ch, ""
+		}
+		if len(tsRaw) > 6 {
+			threadTS = tsRaw[:len(tsRaw)-6] + "." + tsRaw[len(tsRaw)-6:]
+		} else {
+			threadTS = tsRaw
+		}
+		return ch, threadTS
+	}
+	return "", ""
 }
 
 func workspaceLabel(workspace string) string {

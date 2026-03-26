@@ -33,8 +33,9 @@ get a working setup.
 
 ```bash
 cd bridge
-go run . slack --channel '#claw64'
-go run . slack --workspace team.slack.com --channel @alice
+go run . slack '#claw64'
+go run . slack @alice
+go run . slack 'https://team.slack.com/archives/C123/p1234567890123456'
 ```
 
 ### WhatsApp
@@ -230,7 +231,9 @@ LLM → Bridge:       plain text answer quoting the screenshot
 
 Uses [slagent](https://github.com/sttts/slagent) for Slack threads.
 Credentials are auto-extracted from the local Slack desktop app on first use.
-Requires `--channel`. `--workspace` is optional if a default slagent workspace exists.
+Accepts a thread URL, `@user`, `#channel`, or a Slack channel ID as the positional target.
+`--workspace` is optional if a default slagent workspace exists.
+For new threads, the bridge prompts for a topic unless `--topic` is given.
 
 ### WhatsApp
 

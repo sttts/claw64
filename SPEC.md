@@ -189,6 +189,7 @@ type Channel interface {
 Implementations:
 
 - **Slack**: slagent-backed Slack thread backend with local credential extraction.
+  Target may be a thread URL, `@user`, `#channel`, or a Slack channel ID.
 - **WhatsApp**: whatsmeow multi-device backend.
 - **Signal**: signal-cli subprocess backend, polling with `receive` and replying with `send`.
 - **stdin**: local terminal REPL backend with colored prompts/logs.
@@ -206,7 +207,7 @@ Configuration via environment variables:
 
 ```
 claw64-bridge [global flags] stdin
-claw64-bridge [global flags] slack --channel ... [--workspace ...] [--topic ...]
+claw64-bridge [global flags] slack TARGET [--workspace ...] [--topic ...]
 claw64-bridge [global flags] whatsapp [--db whatsapp.db]
 claw64-bridge [global flags] signal --account ... [--config ...]
 
