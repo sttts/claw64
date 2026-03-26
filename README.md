@@ -2,6 +2,11 @@
   <img src="logo-834c95f.png" width="50%" alt="Claw64">
 </p>
 
+[![Release](https://github.com/sttts/claw64/actions/workflows/release.yml/badge.svg)](https://github.com/sttts/claw64/actions/workflows/release.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/sttts/claw64)](https://goreportcard.com/report/github.com/sttts/claw64)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Vibe Coded](https://img.shields.io/badge/100%25-vibe_coded-blueviolet)
+
 # Claw64
 
 The Commodore 64 is the agent. BASIC and the visible text screen are its tools.
