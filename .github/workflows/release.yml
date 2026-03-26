@@ -25,10 +25,6 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # Drop local replace directive so Go fetches slagent from GitHub
-      - name: Resolve dependencies
-        run: go mod edit -dropreplace github.com/sttts/slagent && go mod tidy
-
       # Build C64 PRG files (make assemble auto-downloads KickAssembler)
       - name: Assemble C64 agent
         run: make assemble

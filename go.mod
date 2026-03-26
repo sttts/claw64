@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/alecthomas/kong v1.14.0
 	github.com/mattn/go-isatty v0.0.20
-	github.com/sttts/slagent v0.0.0
+	github.com/sttts/slagent v0.0.0-20260321213917-88ff923e0b56
 	go.mau.fi/whatsmeow v0.0.0-20260322133016-ce4daa5e5a86
 	modernc.org/sqlite v1.47.0
 )
@@ -39,5 +39,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/sttts/slagent => ..
