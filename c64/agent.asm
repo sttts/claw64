@@ -1628,6 +1628,16 @@ irq_raster:
         sta busy_timer          // cap timer (don't overflow)
         jmp irq_idle            // hide dots until next byte
 irq_no_timeout:
+        // Pulse the lobster color while the agent is working.
+        lda busy_timer
+        and #$08
+        beq irq_claw_red
+        lda #10                 // light red
+        bne irq_set_claw_color
+irq_claw_red:
+        lda #2                  // red
+irq_set_claw_color:
+        sta $D027
 
         lda $D015
         ora #%00000010          // enable sprite 1
@@ -1679,6 +1689,8 @@ irq_exit:
 
 irq_idle:
         // Not busy — hide dots sprite
+        lda #2                  // idle lobster stays red
+        sta $D027
         lda $D015
         and #%11111101
         sta $D015
