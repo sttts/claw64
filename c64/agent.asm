@@ -371,16 +371,22 @@ bl_skip_echo:
 
 bl_inject:
         // ---- Build next frame in send_buf if drip-send is idle ----
-        // Priority: SYSTEM prompt chunks → LLM_MSG
+        // Priority: SYSTEM prompt chunks → RESULT chunks → LLM_MSG
         lda send_pos
         cmp send_total
         bne bl_send_check       // drip-send busy → just send
 
         // check if prompt chunks need sending
         lda prompt_pending
-        beq bl_chk_llm
+        beq bl_chk_result
         jsr build_next_prompt_chunk
         jmp bl_send_check       // start drip-sending
+
+bl_chk_result:
+        lda result_pending
+        beq bl_chk_llm
+        jsr build_next_result_chunk
+        jmp bl_send_check
 
 bl_chk_llm:
         lda llm_pending
@@ -543,9 +549,7 @@ bl_ready_found:
         // ---- READY. found! Sending RESULT → dots go left ----
         lda #0
         sta dot_dir             // left = sending
-        jsr send_screen_result
-        lda #0
-        sta send_pos
+        jsr prepare_result_chunks
         lda #AG_IDLE
         sta agent_state
         jmp bl_kb
@@ -622,129 +626,260 @@ reenter_keys:
         jmp $E5D4               // continue KERNAL key loop
 
 // ---------------------------------------------------------
-// Send screen content as RESULT frame
+// Prepare screen content as chunked RESULT frames
 //
 // Scrapes the visible screen line just above where READY. was found
-// (the command output), converts screen codes to ASCII, builds a
-// RESULT frame, and burst-sends it over RS232.
-//
-// Frame format: SYNC(1) + TYPE(1) + LENGTH(1) + PAYLOAD(0-40) + CHK(1)
-// Checksum = XOR of TYPE, LENGTH, and all PAYLOAD bytes.
+// (the command output), converts screen codes to ASCII, and sends it
+// as one or more RESULT frames with [chunk_index,total_chunks,text...].
 //
 // On entry: X = line number where READY. was found (from bl_scan)
 // ---------------------------------------------------------
-send_screen_result:
-        // Scrape all lines from scan_start+1 through READY. line (X, inclusive).
-        // Each line: convert screen codes to ASCII, trim trailing spaces, add \n.
-        // On entry: X = line where READY. was found.
+prepare_result_chunks:
+        // Compute total result length so we know how many chunks to send.
         stx ssr_end_line        // save READY. line (inclusive)
-
-        // ---- Build RESULT frame header in send_buf ----
-        lda #SYNC_BYTE
-        sta send_buf+0
-        lda #FRAME_RESULT
-        sta send_buf+1
-
         lda scan_start
         clc
         adc #1
         sta ssr_cur_line        // current line = scan_start+1
-        ldx #0                  // X = send_buf payload index
+        lda #0
+        sta ssr_total_lo
+        sta ssr_total_hi
 
-ssr_next_line:
-        // set up screen read address for current line
-        ldy ssr_cur_line
-        lda screen_lo,y
-        sta ssr_rd+1
-        lda screen_hi,y
-        sta ssr_rd+2
-
-        // copy 40 columns, converting screen codes to ASCII
-        ldy #0
-ssr_copy:
-ssr_rd: lda $0400,y             // self-modified
-        beq ssr_space           // $00 ('@') → space
-        cmp #$20
-        bcc ssr_letter          // $01-$1F → letters A-Z
-        cmp #$40
-        bcc ssr_ok              // $20-$3F → as-is (space/digits/symbols)
-        jmp ssr_space           // $40+ → space
-
-ssr_letter:
+prc_count_line:
+        ldx ssr_cur_line
+        jsr ssr_line_len
         clc
-        adc #$40                // screen code → ASCII uppercase
-        jmp ssr_ok
+        adc ssr_total_lo
+        sta ssr_total_lo
+        lda ssr_total_hi
+        adc #0
+        sta ssr_total_hi
 
-ssr_space:
-        lda #$20
-
-ssr_ok:
-        sta send_buf+3,x
-        inx
-        iny
-        cpy #40
-        bne ssr_copy
-
-        // trim trailing spaces from this line
-ssr_trim:
-        dex
-        bmi ssr_trimmed         // entire line blank
-        lda send_buf+3,x
-        cmp #$20
-        beq ssr_trim
-        inx                     // X = position after last non-space
-ssr_trimmed:
-        // if not the last line, add newline separator
         lda ssr_cur_line
         cmp ssr_end_line
-        beq ssr_done            // last line → don't add newline
-        lda #$0A                // newline
-        sta send_buf+3,x
-        inx
-        // check payload size limit (120 bytes max)
-        cpx #120
-        bcs ssr_done            // at limit → stop
-
-        // advance to next line
+        beq prc_count_done
+        inc ssr_total_lo
+        bne prc_count_nocarry
+        inc ssr_total_hi
+prc_count_nocarry:
         inc ssr_cur_line
-        jmp ssr_next_line
+        jmp prc_count_line
 
-ssr_done:
-        stx send_buf+2          // payload length
+prc_count_done:
+        lda #0
+        sta result_chunk
+        sta result_col
 
-        // ---- Compute XOR checksum over type + length + payload ----
-        // Checksum = TYPE ^ LENGTH ^ PAYLOAD[0] ^ PAYLOAD[1] ^ ...
-        lda #FRAME_RESULT       // start with frame type byte
-        eor send_buf+2          // XOR with length byte
-        sta frame_chk           // running checksum
-        ldy #0                  // Y = payload byte index
-ssr_chk:
-        cpy send_buf+2          // have we XORed all payload bytes?
-        beq ssr_chk_done        // yes → done
-        lda send_buf+3,y       // load payload byte at index Y
-        eor frame_chk           // XOR into running checksum
-        sta frame_chk           // store updated checksum
-        iny                     // next payload byte
-        jmp ssr_chk             // continue checksum loop
+        // total_chunks = max(1, ceil(total_len / CHUNK_MAX))
+        lda #0
+        sta result_total_chunks
+        lda ssr_total_lo
+        ora ssr_total_hi
+        bne prc_chunk_loop
+        lda #1
+        sta result_total_chunks
+        jmp prc_init_send
 
-ssr_chk_done:
-        lda frame_chk           // load final checksum value
-        sta send_buf+3,y       // store checksum byte right after payload
+prc_chunk_loop:
+        inc result_total_chunks
+        lda ssr_total_hi
+        bne prc_chunk_sub
+        lda ssr_total_lo
+        cmp #120
+        bcc prc_init_send
+prc_chunk_sub:
+        sec
+        lda ssr_total_lo
+        sbc #120
+        sta ssr_total_lo
+        lda ssr_total_hi
+        sbc #0
+        sta ssr_total_hi
+        jmp prc_chunk_loop
 
-        // ---- Calculate total frame size ----
-        // Total = SYNC(1) + TYPE(1) + LENGTH(1) + PAYLOAD(n) + CHK(1) = n + 4
-        lda send_buf+2          // load payload length
+prc_init_send:
+        lda scan_start
         clc
-        adc #4                  // add 4 for header (3 bytes) + checksum (1 byte)
-        sta send_total          // store total number of bytes to send
+        adc #1
+        sta result_line
+        lda #1
+        sta result_pending
+        jsr build_next_result_chunk
+        rts
 
-        // Frame is built in send_buf. Caller sets send_pos=0 to
-        // trigger drip-send at bl_inject (one byte per iteration).
+// ---------------------------------------------------------
+// build_next_result_chunk — build one RESULT frame in send_buf
+//
+// Uses persistent result_line/result_col state to continue scraping where
+// the previous chunk stopped. Payload format:
+//   [chunk_index, total_chunks, text...]
+// ---------------------------------------------------------
+build_next_result_chunk:
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda #FRAME_RESULT
+        sta send_buf+1
+        lda result_chunk
+        sta send_buf+3
+        lda result_total_chunks
+        sta send_buf+4
+        ldy #0                  // Y = text byte count within this chunk
+
+brc_next_line:
+        lda result_line
+        cmp ssr_end_line
+        bcc brc_have_line
+        beq brc_have_line
+        jmp brc_finish
+
+brc_have_line:
+        sty ssr_text_len_tmp
+        ldx result_line
+        jsr ssr_line_len
+        sta ssr_line_len_tmp
+        ldy ssr_text_len_tmp
+
+brc_copy:
+        cpy #120
+        beq brc_finish
+        lda result_col
+        cmp ssr_line_len_tmp
+        bcc brc_copy_char
+        beq brc_maybe_newline
+        jmp brc_advance_line
+
+brc_maybe_newline:
+        lda result_line
+        cmp ssr_end_line
+        beq brc_advance_line
+        lda #$0A
+        sta send_buf+5,y
+        iny
+        inc result_col
+        jmp brc_copy
+
+brc_copy_char:
+        ldx result_line
+        lda screen_lo,x
+        sta brc_rd+1
+        lda screen_hi,x
+        sta brc_rd+2
+        ldx result_col
+brc_rd: lda $0400,x
+        beq brc_space
+        cmp #$20
+        bcc brc_letter
+        cmp #$40
+        bcc brc_ok
+        jmp brc_space
+
+brc_letter:
+        clc
+        adc #$40
+        jmp brc_ok
+
+brc_space:
+        lda #$20
+
+brc_ok:
+        sta send_buf+5,y
+        iny
+        inc result_col
+        jmp brc_copy
+
+brc_advance_line:
+        inc result_line
+        lda #0
+        sta result_col
+        jmp brc_next_line
+
+brc_finish:
+        tya
+        clc
+        adc #2                  // chunk header bytes
+        sta send_buf+2          // payload length
+
+        lda send_buf+1
+        eor send_buf+2
+        sta frame_chk
+        ldx #0
+brc_chk:
+        cpx send_buf+2
+        beq brc_chk_done
+        lda send_buf+3,x
+        eor frame_chk
+        sta frame_chk
+        inx
+        jmp brc_chk
+
+brc_chk_done:
+        lda frame_chk
+        sta send_buf+3,x
+        txa
+        clc
+        adc #4
+        sta send_total
+        lda #0
+        sta send_pos
+
+        inc result_chunk
+        lda result_chunk
+        cmp result_total_chunks
+        bne brc_more
+        lda #0
+        sta result_pending
+brc_more:
+        rts
+
+// ---------------------------------------------------------
+// ssr_line_len — return the trimmed visible length of one screen line
+//
+// Input: X = line number
+// Output: A = number of non-trailing-space characters on that line
+// ---------------------------------------------------------
+ssr_line_len:
+        lda screen_lo,x
+        sta ssr_len_rd+1
+        lda screen_hi,x
+        sta ssr_len_rd+2
+        lda #0
+        sta ssr_line_len_tmp
+        ldy #0
+ssr_len_loop:
+ssr_len_rd:
+        lda $0400,y
+        beq ssr_len_space
+        cmp #$20
+        bcc ssr_len_mark
+        beq ssr_len_space
+        cmp #$40
+        bcc ssr_len_mark
+        jmp ssr_len_space
+
+ssr_len_mark:
+        tya
+        clc
+        adc #1
+        sta ssr_line_len_tmp
+
+ssr_len_space:
+        iny
+        cpy #40
+        bne ssr_len_loop
+        lda ssr_line_len_tmp
         rts
 
 // temp variables for screen scrape (after RTS, not executed)
-ssr_cur_line:  .byte 0
-ssr_end_line:  .byte 0
+ssr_cur_line:      .byte 0
+ssr_end_line:      .byte 0
+ssr_total_lo:      .byte 0
+ssr_total_hi:      .byte 0
+ssr_line_len_tmp:  .byte 0
+ssr_text_len_tmp:  .byte 0
+result_line:       .byte 0
+result_col:        .byte 0
+result_chunk:      .byte 0
+result_total_chunks:.byte 0
 
 // ---------------------------------------------------------
 // Send ERROR frame (timeout notification)
@@ -1135,6 +1270,7 @@ cur_page:     .byte $A0 // current page during ROM copy, init to $A0
 ready_codes:  .byte $12, $05, $01, $04, $19, $2E
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
 prompt_pending: .byte 0 // 1 = system prompt chunks still need sending
+result_pending: .byte 0 // 1 = RESULT chunks still need sending
 text_pending: .byte 0   // 1 = forward TEXT to user via drip-send
 prompt_sent:  .byte 0   // 1 = prompt already sent
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
@@ -1242,6 +1378,9 @@ sys_prompt:
         .text "It is NOT a message from the human. "
         .text "Empty result means the command succeeded silently "
         .text "(POKE, SYS, etc. produce no output)."
+        .byte $0A
+        .text "Long scrolling output may hide earlier lines. "
+        .text "You might only see the tail end of long multi-line results."
         .byte $0A
         .text "After getting a tool result, ALWAYS respond with TEXT. "
         .text "NEVER call the same tool again. One call is enough."

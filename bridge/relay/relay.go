@@ -27,6 +27,7 @@ type Relay struct {
 	History        *History
 	SystemPrompt   string // received from C64
 	promptChunks   map[int]string
+	resultChunks   map[int]string
 	textBuf        []byte // accumulates multi-frame TEXT chunks (receive)
 	textOutQueue   []byte // pending TEXT data to send in chunks (send)
 	lastToolCallID string
@@ -56,6 +57,32 @@ func (r *Relay) handleSystemFrame(f serial.Frame) {
 		r.promptChunks = nil
 		log.Printf("     C64 soul received (%d bytes)", len(prompt))
 	}
+}
+
+// handleResultFrame assembles chunked RESULT output from the C64.
+func (r *Relay) handleResultFrame(f serial.Frame) (string, bool) {
+	if len(f.Payload) < 2 {
+		return "", false
+	}
+	idx := int(f.Payload[0])
+	total := int(f.Payload[1])
+	text := string(f.Payload[2:])
+
+	if r.resultChunks == nil {
+		r.resultChunks = make(map[int]string)
+	}
+	r.resultChunks[idx] = text
+
+	if len(r.resultChunks) != total {
+		return "", false
+	}
+
+	var result string
+	for i := 0; i < total; i++ {
+		result += r.resultChunks[i]
+	}
+	r.resultChunks = nil
+	return result, true
 }
 
 // logStream prints a log-style prefix without a trailing newline.
@@ -99,8 +126,8 @@ func (r *Relay) SetupProgress() {
 			}
 		}
 
-		// SYSTEM frames start with [chunk_index, total_chunks], not text.
-		if frameType == serial.FrameSystem && idx < 2 {
+		// SYSTEM and RESULT frames start with [chunk_index, total_chunks], not text.
+		if (frameType == serial.FrameSystem || frameType == serial.FrameResult) && idx < 2 {
 			return
 		}
 		if b == '\n' {
@@ -148,9 +175,14 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 
 		case serial.FrameResult:
 			fmt.Fprintln(os.Stderr) // newline after streamed payload
+			resultText, complete := r.handleResultFrame(f)
+			if !complete {
+				continue
+			}
+
 			// Prefix result so the LLM knows this is screen output, not human input
-			result := "[C64 screen output]: " + string(f.Payload)
-			if len(f.Payload) == 0 {
+			result := "[C64 screen output]: " + resultText
+			if resultText == "" {
 				result = "[C64 screen output]: (empty)"
 			}
 			r.appendToolResult(userID, result)

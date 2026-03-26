@@ -171,14 +171,40 @@ func testSerial() {
 
 	// The agent returns a single RESULT/ERROR frame for EXEC.
 	log.Println("waiting for C64 reply...")
-	f, err := link.Recv()
-	if err != nil {
-		log.Fatalf("recv: %v", err)
-	}
-	if f.Type == serial.FrameError {
-		fmt.Println("C64: command timed out")
-	} else {
-		log.Printf("result [%d bytes]: %q", len(f.Payload), string(f.Payload))
-		fmt.Printf("C64> %s\n", string(f.Payload))
+	var resultChunks map[int]string
+	for {
+		f, err := link.Recv()
+		if err != nil {
+			log.Fatalf("recv: %v", err)
+		}
+		if f.Type == serial.FrameError {
+			fmt.Println("C64: command timed out")
+			return
+		}
+		if f.Type != serial.FrameResult {
+			log.Printf("ignoring unexpected %s frame", serial.TypeName(f.Type))
+			continue
+		}
+		if len(f.Payload) < 2 {
+			log.Printf("short RESULT payload: %q", string(f.Payload))
+			continue
+		}
+		idx := int(f.Payload[0])
+		total := int(f.Payload[1])
+		if resultChunks == nil {
+			resultChunks = make(map[int]string)
+		}
+		resultChunks[idx] = string(f.Payload[2:])
+		if len(resultChunks) != total {
+			continue
+		}
+
+		var result string
+		for i := 0; i < total; i++ {
+			result += resultChunks[i]
+		}
+		log.Printf("result [%d bytes]: %q", len(result), result)
+		fmt.Printf("C64> %s\n", result)
+		return
 	}
 }
