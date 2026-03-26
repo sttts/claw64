@@ -3,7 +3,7 @@ package relay
 import (
 	"sync"
 
-	"github.com/sttts/claw64/llm"
+	"github.com/sttts/claw64/bridge/llm"
 )
 
 // History stores per-user conversation histories, safe for concurrent use.

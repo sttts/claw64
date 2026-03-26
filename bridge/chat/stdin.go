@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sttts/claw64/termstyle"
+	"github.com/sttts/claw64/bridge/termstyle"
 )
 
 // StdinChannel is a terminal-based chat backend for local testing.

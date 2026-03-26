@@ -40,4 +40,4 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-replace github.com/sttts/slagent => ../..
+replace github.com/sttts/slagent => ..

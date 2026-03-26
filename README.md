@@ -23,7 +23,7 @@ behalf of the C64, which cannot reach the internet at 2400 baud.
 ### Terminal
 
 ```bash
-make run
+go run ./cmd/claw64-bridge stdin
 ```
 
 Starts the local terminal chat. This is the default and the fastest way to
@@ -32,17 +32,15 @@ get a working setup.
 ### Slack
 
 ```bash
-cd bridge
-go run . slack '#claw64'
-go run . slack @alice
-go run . slack 'https://team.slack.com/archives/C123/p1234567890123456'
+go run ./cmd/claw64-bridge slack '#claw64'
+go run ./cmd/claw64-bridge slack @alice
+go run ./cmd/claw64-bridge slack 'https://team.slack.com/archives/C123/p1234567890123456'
 ```
 
 ### WhatsApp
 
 ```bash
-cd bridge
-go run . whatsapp
+go run ./cmd/claw64-bridge whatsapp
 ```
 
 On first run, scan the QR code shown by the bridge.
@@ -52,23 +50,22 @@ incoming direct messages.
 ### Signal
 
 ```bash
-cd bridge
-go run . signal +49...
+go run ./cmd/claw64-bridge signal +49...
 ```
 
 Optional:
 
 ```bash
-go run . signal +49... --config ~/.local/share/signal-cli
+go run ./cmd/claw64-bridge signal +49... --config ~/.local/share/signal-cli
 ```
 
 ### LLM Provider
 
 ```bash
-go run . --llm anthropic stdin
-go run . --llm anthropic-api --llm-key ... stdin
-go run . --llm openai --llm-key ... --model gpt-4o stdin
-go run . --llm ollama --llm-url http://localhost:11434/v1/chat/completions stdin
+go run ./cmd/claw64-bridge --llm anthropic stdin
+go run ./cmd/claw64-bridge --llm anthropic-api --llm-key ... stdin
+go run ./cmd/claw64-bridge --llm openai --llm-key ... --model gpt-4o stdin
+go run ./cmd/claw64-bridge --llm ollama --llm-url http://localhost:11434/v1/chat/completions stdin
 ```
 
 ### Manual Steps

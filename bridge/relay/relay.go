@@ -11,14 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sttts/claw64/llm"
-	"github.com/sttts/claw64/serial"
-	"github.com/sttts/claw64/termstyle"
+	"github.com/sttts/claw64/bridge/llm"
+	"github.com/sttts/claw64/bridge/serial"
+	"github.com/sttts/claw64/bridge/termstyle"
 )
 
 // maxIterations caps the LLM loop to prevent infinite cycles.
 // No iteration limit — the event loop runs until TEXT is returned or an error occurs.
-
 
 // Relay routes messages between chat, LLM, and the C64 serial link.
 // The C64 drives the agent loop; the relay just forwards.
@@ -139,7 +138,6 @@ func (r *Relay) SetupProgress() {
 		}
 	}
 }
-
 
 // basicExecArgs is the JSON structure the LLM passes to basic_exec.
 type basicExecArgs struct {
@@ -354,7 +352,6 @@ func (r *Relay) recvFromC64(ctx context.Context) (serial.Frame, error) {
 		return f, nil
 	}
 }
-
 
 func (r *Relay) sendWithRetry(f serial.Frame) error {
 	var retryBackoff = []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}

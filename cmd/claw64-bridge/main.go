@@ -9,11 +9,11 @@ import (
 
 	"github.com/alecthomas/kong"
 
-	"github.com/sttts/claw64/chat"
-	"github.com/sttts/claw64/llm"
-	"github.com/sttts/claw64/relay"
-	"github.com/sttts/claw64/serial"
-	"github.com/sttts/claw64/termstyle"
+	"github.com/sttts/claw64/bridge/chat"
+	"github.com/sttts/claw64/bridge/llm"
+	"github.com/sttts/claw64/bridge/relay"
+	"github.com/sttts/claw64/bridge/serial"
+	"github.com/sttts/claw64/bridge/termstyle"
 )
 
 type CLI struct {
@@ -24,7 +24,7 @@ type CLI struct {
 	LLMKey     string `name:"llm-key" help:"API key for direct API backends."`
 	SpawnVICE  bool   `name:"spawn-vice" default:"true" help:"Spawn VICE automatically."`
 	ViceBin    string `name:"vice-bin" default:"x64sc" help:"VICE binary to launch when spawning."`
-	LoaderPRG  string `name:"loader-prg" default:"../c64/claw64.prg" help:"Loader PRG to autostart in VICE."`
+	LoaderPRG  string `name:"loader-prg" default:"c64/claw64.prg" help:"Loader PRG to autostart in VICE."`
 
 	Stdin      StdinCmd      `cmd:"" help:"Chat in the local terminal."`
 	Slack      SlackCmd      `cmd:"" help:"Chat over Slack."`

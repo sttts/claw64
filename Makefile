@@ -71,12 +71,12 @@ vice-echo: echotest
 run: assemble
 	@-lsof -ti :25232 2>/dev/null | xargs kill 2>/dev/null; true
 	@-pkill -f "$(VICE).*$(LOADER_OUT)" 2>/dev/null; true
-	cd bridge && go run . --vice-bin $(VICE) --loader-prg ../$(LOADER_OUT) stdin
+	go run ./cmd/claw64-bridge --vice-bin $(VICE) --loader-prg $(LOADER_OUT) stdin
 
 # run the Go bridge without spawning VICE
 bridge:
 	@-lsof -ti :25232 2>/dev/null | xargs kill 2>/dev/null; true
-	cd bridge && go run . --spawn-vice=false stdin
+	go run ./cmd/claw64-bridge --spawn-vice=false stdin
 
 # run the serial test tool (TCP server on port 25232)
 test-serial:
