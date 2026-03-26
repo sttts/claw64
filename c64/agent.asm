@@ -356,19 +356,6 @@ bl_got_data:
         lda rx_byte             // reload the received byte into A
         jsr frame_rx_byte       // feed byte to the frame protocol parser
 
-        // Echo received byte (skip SYNC-like >= $7C after masking).
-        // Prevents echo from triggering bridge's frame parser.
-        lda rx_byte
-        and #$7F
-        cmp #$7C
-        bcs bl_skip_echo
-        ldx #RS232_DEV
-        jsr CHKOUT
-        lda rx_byte
-        jsr CHROUT
-        jsr CLRCHN
-bl_skip_echo:
-
 bl_inject:
         // ---- Build next frame in send_buf if drip-send is idle ----
         // Priority: SYSTEM prompt chunks → RESULT chunks → LLM_MSG

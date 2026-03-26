@@ -34,6 +34,8 @@ type Relay struct {
 	lastToolName   string
 }
 
+const textChunkMax = 120
+
 // handleSystemFrame assembles SYSTEM prompt chunks from the C64.
 func (r *Relay) handleSystemFrame(f serial.Frame) {
 	if len(f.Payload) < 2 {
@@ -201,7 +203,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			}
 
 		case serial.FrameText:
-			// TEXT echoed by C64 — accumulate and send next chunk
+			// TEXT forwarded by C64 after parsing — accumulate and send next chunk
 			fmt.Fprintln(os.Stderr) // newline after streamed payload
 			r.textBuf = append(r.textBuf, f.Payload...)
 			if len(r.textOutQueue) > 0 {
@@ -310,14 +312,14 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	return nil
 }
 
-// sendNextTextChunk sends one 120-byte TEXT chunk from the queue.
+// sendNextTextChunk sends one TEXT chunk from the queue.
 func (r *Relay) sendNextTextChunk() error {
 	if len(r.textOutQueue) == 0 {
 		return nil
 	}
 	chunk := r.textOutQueue
-	if len(chunk) > 120 {
-		chunk = chunk[:120]
+	if len(chunk) > textChunkMax {
+		chunk = chunk[:textChunkMax]
 	}
 	r.textOutQueue = r.textOutQueue[len(chunk):]
 	logStream("LLM → C64:  TEXT ")

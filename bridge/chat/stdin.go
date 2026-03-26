@@ -3,6 +3,7 @@ package chat
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/sttts/claw64/bridge/termstyle"
 )
+
+var ErrInterrupted = errors.New("stdin interrupted")
 
 // StdinChannel is a terminal-based chat backend for local testing.
 // First Ctrl-C clears the current input line. Second Ctrl-C within
@@ -32,10 +35,20 @@ func (s *StdinChannel) Start(ctx context.Context, handler MessageHandler) error 
 	signal.Notify(sigCh, syscall.SIGINT)
 	defer signal.Stop(sigCh)
 
-	// reset sig count on each new prompt
-	scanner := bufio.NewScanner(os.Stdin)
+	lineCh := make(chan string)
+	errCh := make(chan error, 1)
 
-	// handle Ctrl-C in a goroutine
+	// Read stdin in the background so Ctrl-C can exit without os.Exit.
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			lineCh <- scanner.Text()
+		}
+		errCh <- scanner.Err()
+	}()
+
+	// Handle Ctrl-C in a goroutine.
+	quitCh := make(chan struct{}, 1)
 	go func() {
 		for range sigCh {
 			s.mu.Lock()
@@ -49,34 +62,48 @@ func (s *StdinChannel) Start(ctx context.Context, handler MessageHandler) error 
 
 			if count >= 2 {
 				fmt.Println("\nbye.")
-				os.Exit(0)
+				select {
+				case quitCh <- struct{}{}:
+				default:
+				}
+				return
 			}
 			fmt.Printf("\n%s ", termstyle.UserPrompt("you>"))
 		}
 	}()
 
 	fmt.Printf("%s ", termstyle.UserPrompt("you>"))
-	for scanner.Scan() {
-		// reset Ctrl-C counter on any input
-		s.mu.Lock()
-		s.sigCount = 0
-		s.mu.Unlock()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
 
-		text := scanner.Text()
-		if text == "" {
+		case <-quitCh:
+			return ErrInterrupted
+
+		case err := <-errCh:
+			return err
+
+		case text := <-lineCh:
+			// Reset Ctrl-C counter on any input.
+			s.mu.Lock()
+			s.sigCount = 0
+			s.mu.Unlock()
+
+			if text == "" {
+				fmt.Printf("%s ", termstyle.UserPrompt("you>"))
+				continue
+			}
+
+			reply, err := handler(ctx, "local", text)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			} else {
+				fmt.Printf("\n%s %s\n", termstyle.C64Prompt("c64>"), reply)
+			}
 			fmt.Printf("%s ", termstyle.UserPrompt("you>"))
-			continue
 		}
-
-		reply, err := handler(ctx, "local", text)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		} else {
-			fmt.Printf("\n%s %s\n", termstyle.C64Prompt("c64>"), reply)
-		}
-		fmt.Printf("%s ", termstyle.UserPrompt("you>"))
 	}
-	return scanner.Err()
 }
 
 func (s *StdinChannel) Send(_ context.Context, _, text string) error {

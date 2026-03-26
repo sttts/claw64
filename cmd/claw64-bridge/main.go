@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
+	"syscall"
 
 	"github.com/alecthomas/kong"
 
@@ -128,32 +131,42 @@ func newLLM(cfg CLI) (llm.Completer, string) {
 }
 
 func runChatBridge(cfg CLI, ch chat.Channel) {
-	ctx := context.Background()
-
-	link, err := serial.Listen(cfg.SerialAddr)
-	if err != nil {
-		log.Fatalf("serial: %v", err)
-	}
-	defer link.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	var viceCmd *exec.Cmd
 	cleanupLoader := func() {}
-	if cfg.SpawnVICE {
+	startSerial := func() (*serial.Link, error) {
+		if !cfg.SpawnVICE {
+			return serial.Listen(cfg.SerialAddr)
+		}
+
 		loaderPath, cleanup, err := loaderPRGPath(cfg)
 		if err != nil {
-			log.Fatalf("vice: %v", err)
+			return nil, fmt.Errorf("vice: %w", err)
 		}
 		cleanupLoader = cleanup
-		defer cleanupLoader()
 
-		log.Printf("vice: spawning %s with %s", cfg.ViceBin, loaderPath)
+		return serial.ListenAndStart(cfg.SerialAddr, func() error {
+			log.Printf("vice: spawning %s with %s", cfg.ViceBin, loaderPath)
 
-		viceCmd, err = spawnVICE(cfg, loaderPath)
-		if err != nil {
-			log.Fatalf("vice: %v", err)
-		}
-		defer stopVICE(viceCmd)
+			viceCmd, err = spawnVICE(cfg, loaderPath)
+			if err != nil {
+				cleanupLoader()
+				cleanupLoader = func() {}
+				return fmt.Errorf("vice: %w", err)
+			}
+			return nil
+		})
 	}
+
+	link, err := startSerial()
+	if err != nil {
+		log.Fatalf("serial: %v", err)
+	}
+	defer cleanupLoader()
+	defer link.Close()
+	defer stopVICE(viceCmd)
 
 	log.Println("serial: ready")
 
@@ -177,7 +190,7 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 		}
 		return reply, nil
 	})
-	if err != nil && ctx.Err() == nil {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, chat.ErrInterrupted) && ctx.Err() == nil {
 		log.Fatalf("chat: %v", err)
 	}
 }

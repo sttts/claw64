@@ -74,6 +74,27 @@ func Listen(addr string) (*Link, error) {
 	}
 	log.Printf("serial: listening on %s — start VICE now", addr)
 
+	return waitForHandshake(ln)
+}
+
+// ListenAndStart binds the TCP listener, runs start, then waits for the C64 handshake.
+func ListenAndStart(addr string, start func() error) (*Link, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen %s: %w", addr, err)
+	}
+	log.Printf("serial: listening on %s — start VICE now", addr)
+
+	if err := start(); err != nil {
+		ln.Close()
+		return nil, err
+	}
+
+	return waitForHandshake(ln)
+}
+
+func waitForHandshake(ln net.Listener) (*Link, error) {
+
 	l := &Link{ln: ln}
 
 	// VICE makes multiple TCP connections:
@@ -173,8 +194,8 @@ func (l *Link) Recv() (Frame, error) {
 		if err != nil {
 			return f, err
 		}
-		// skip echo'd bridge→C64 frames (TEXT is NOT skipped —
-		// the C64 forwards it back as the user reply)
+		// Skip bridge→C64 command frames. TEXT is not skipped because
+		// the C64 forwards the parsed TEXT payload back as the user reply.
 		switch f.Type {
 		case FrameMsg, FrameExec, FrameScreenshot:
 			continue
