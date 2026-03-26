@@ -514,9 +514,14 @@ bl_wait:
 bl_scan:
         // Only check lines BELOW where the cursor was when injection started.
         // This prevents matching the old READY. that was already on screen.
+        // skip lines at or above injection start (unless $FF = check all)
+        lda scan_start
+        cmp #$FF
+        beq bl_scan_do          // $FF = command scrolled off → check all
         cpx scan_start
-        bcc bl_scan_next        // skip lines at or above injection start
+        bcc bl_scan_next
         beq bl_scan_next
+bl_scan_do:
         lda screen_lo,x
         sta bl_rd+1             // patch LDA address low byte
         lda screen_hi,x
@@ -594,10 +599,14 @@ bl_key:
 // Patched into $E8EA (KERNAL scroll routine). Executes the original
 // first 3 bytes (LDA $AC / PHA) then jumps back to $E8ED.
 scroll_hook:
-        // Allow scan_start to wrap to $FF — the scraper does
-        // scan_start+1 which wraps $FF→$00 (line 0). This way
-        // when the command scrolls off the top, we read from line 0.
+        // Decrement scan_start but clamp at $FF (= command scrolled off).
+        // $FF means "check all lines" in the READY. scanner, and
+        // scan_start+1 wraps $FF→$00 in the scraper (read from line 0).
+        lda scan_start
+        cmp #$FF
+        beq sh_skip
         dec scan_start
+sh_skip:
         lda $AC                 // original $E8EA instruction
         pha                     // original $E8EB instruction
         jmp $E8ED               // continue scroll routine
