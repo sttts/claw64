@@ -28,9 +28,12 @@ import (
 	"github.com/sttts/claw64/chat"
 	"github.com/sttts/claw64/llm"
 	"github.com/sttts/claw64/serial"
+	"github.com/sttts/claw64/termstyle"
 )
 
 func main() {
+	log.SetOutput(termstyle.DimWriter(os.Stderr))
+
 	if len(os.Args) > 1 && os.Args[1] == "test-serial" {
 		testSerial()
 		return

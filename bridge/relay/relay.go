@@ -13,6 +13,7 @@ import (
 
 	"github.com/sttts/claw64/llm"
 	"github.com/sttts/claw64/serial"
+	"github.com/sttts/claw64/termstyle"
 )
 
 // maxIterations caps the LLM loop to prevent infinite cycles.
@@ -91,7 +92,7 @@ func (r *Relay) handleResultFrame(f serial.Frame) (string, bool) {
 func logStream(format string, args ...any) {
 	ts := time.Now().Format("2006/01/02 15:04:05")
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(os.Stderr, "%s %s", ts, msg)
+	fmt.Fprint(os.Stderr, termstyle.Dim(fmt.Sprintf("%s %s", ts, msg)))
 }
 
 // SetupProgress installs a send-progress callback on the serial link
@@ -99,13 +100,13 @@ func logStream(format string, args ...any) {
 func (r *Relay) SetupProgress() {
 	r.Link.OnSendByte = func(typeName string, payload []byte, idx int) {
 		if idx == -1 {
-			fmt.Fprintln(os.Stderr)
+			fmt.Fprint(os.Stderr, termstyle.Dim("\n"))
 			return
 		}
 		if payload[idx] == '\n' {
-			fmt.Fprint(os.Stderr, `\n`)
+			fmt.Fprint(os.Stderr, termstyle.Dim(`\n`))
 		} else {
-			fmt.Fprintf(os.Stderr, "%c", payload[idx])
+			fmt.Fprint(os.Stderr, termstyle.Dim(string(payload[idx])))
 		}
 	}
 
@@ -132,9 +133,9 @@ func (r *Relay) SetupProgress() {
 			return
 		}
 		if b == '\n' {
-			fmt.Fprint(os.Stderr, `\n`)
+			fmt.Fprint(os.Stderr, termstyle.Dim(`\n`))
 		} else {
-			fmt.Fprintf(os.Stderr, "%c", b)
+			fmt.Fprint(os.Stderr, termstyle.Dim(string(b)))
 		}
 	}
 }

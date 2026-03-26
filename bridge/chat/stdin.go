@@ -9,6 +9,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/sttts/claw64/termstyle"
 )
 
 // StdinChannel is a terminal-based chat backend for local testing.
@@ -49,11 +51,11 @@ func (s *StdinChannel) Start(ctx context.Context, handler MessageHandler) error 
 				fmt.Println("\nbye.")
 				os.Exit(0)
 			}
-			fmt.Print("\nyou> ")
+			fmt.Printf("\n%s ", termstyle.UserPrompt("you>"))
 		}
 	}()
 
-	fmt.Print("you> ")
+	fmt.Printf("%s ", termstyle.UserPrompt("you>"))
 	for scanner.Scan() {
 		// reset Ctrl-C counter on any input
 		s.mu.Lock()
@@ -62,7 +64,7 @@ func (s *StdinChannel) Start(ctx context.Context, handler MessageHandler) error 
 
 		text := scanner.Text()
 		if text == "" {
-			fmt.Print("you> ")
+			fmt.Printf("%s ", termstyle.UserPrompt("you>"))
 			continue
 		}
 
@@ -70,15 +72,15 @@ func (s *StdinChannel) Start(ctx context.Context, handler MessageHandler) error 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		} else {
-			fmt.Printf("c64> %s\n", reply)
+			fmt.Printf("\n%s %s\n", termstyle.C64Prompt("c64>"), reply)
 		}
-		fmt.Print("you> ")
+		fmt.Printf("%s ", termstyle.UserPrompt("you>"))
 	}
 	return scanner.Err()
 }
 
 func (s *StdinChannel) Send(_ context.Context, _, text string) error {
-	fmt.Printf("c64> %s\n", text)
+	fmt.Printf("\n%s %s\n", termstyle.C64Prompt("c64>"), text)
 	return nil
 }
 
