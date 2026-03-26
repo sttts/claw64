@@ -327,22 +327,11 @@ spr_cp0:lda spr_claw1,x
 bloop:
         // ---- Step 1: Receive one serial byte ----
         //
-        // Use KERNAL CHKIN/GETIN/CLRCHN (the only path that works with
-        // VICE RS232). To handle 0x00 bytes: check RIDBS before/after
-        // GETIN. If RIDBS changed, data was read (even if A=0).
-        lda RIDBS               // save read index before GETIN
-        sta rx_byte             // temporarily store old RIDBS
-        ldx #RS232_DEV
-        jsr CHKIN
-        jsr GETIN               // A = byte (or 0 if no data)
-        pha
-        jsr CLRCHN
-        pla
-        pha                     // save the byte
-        lda RIDBS               // new read index
-        cmp rx_byte             // compare with old read index
-        beq bl_no_data          // same → GETIN returned 0 = no data
-        pla                     // different → got real data (even if 0)
+        // Read directly from the KERNAL RS232 ring buffer. GETIN is lossy
+        // on VICE for inbound bridge→C64 traffic and can skip printable
+        // characters even when the raw buffer contains them.
+        jsr serial_read
+        bcs bl_no_data
         sta rx_byte
         lda #0
         sta busy_timer          // reset timeout — serial activity
@@ -350,7 +339,6 @@ bloop:
         sta dot_dir             // byte received → dots right
         jmp bl_got_data
 bl_no_data:
-        pla                     // discard the 0
         jmp bl_inject           // no data → skip
 bl_got_data:
         lda rx_byte             // reload the received byte into A
