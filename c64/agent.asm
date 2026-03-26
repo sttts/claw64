@@ -1186,10 +1186,12 @@ sys_prompt:
         .text "or change hardware, or run programs."
         .byte $0A
         .text "The tool result shows what appeared on YOUR C64 screen. "
-        .text "It is NOT a message from the human."
+        .text "It is NOT a message from the human. "
+        .text "Empty result means the command succeeded silently "
+        .text "(POKE, SYS, etc. produce no output)."
         .byte $0A
-        .text "After getting a tool result, respond with a plain TEXT "
-        .text "message. Do NOT call the tool again with the same command."
+        .text "After getting a tool result, ALWAYS respond with TEXT. "
+        .text "NEVER call the same tool again. One call is enough."
         .byte $0A
         .text "For simple greetings or questions, just reply directly."
         .byte $0A
