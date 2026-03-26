@@ -1598,7 +1598,7 @@ irq_raster:
         lda busy_timer
         and #$08
         beq irq_claw_red
-        lda #10                 // light red
+        lda #1                  // white
         bne irq_set_claw_color
 irq_claw_red:
         lda #2                  // red
