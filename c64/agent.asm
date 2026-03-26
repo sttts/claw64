@@ -602,21 +602,10 @@ reenter_keys:
 // On entry: X = line number where READY. was found (from bl_scan)
 // ---------------------------------------------------------
 send_screen_result:
-        // Command was typed at scan_start. Output starts at scan_start+1.
-        // If READY. is at scan_start+1, there's no output (POKE, SYS).
-        // Otherwise read scan_start+1 (the first output line).
-        // X = READY. line. Check if output line (scan_start+1) == READY. line
-        lda scan_start
-        clc
-        adc #1                  // A = scan_start+1 (first output line)
-        stx frame_chk           // save READY. line in temp
-        cmp frame_chk           // output line == READY. line?
-        beq ssr_empty           // yes → no output (POKE, SYS)
-        tax                     // X = output line to read
-        lda screen_lo,x
-        sta ssr_rd+1            // self-modify screen read address
-        lda screen_hi,x
-        sta ssr_rd+2
+        // Scrape all lines from scan_start+1 through READY. line (X, inclusive).
+        // Each line: convert screen codes to ASCII, trim trailing spaces, add \n.
+        // On entry: X = line where READY. was found.
+        stx ssr_end_line        // save READY. line (inclusive)
 
         // ---- Build RESULT frame header in send_buf ----
         lda #SYNC_BYTE
@@ -624,51 +613,76 @@ send_screen_result:
         lda #FRAME_RESULT
         sta send_buf+1
 
-        // ---- Copy screen line to send_buf+3 ----
-        // Screen codes → ASCII: $01-$1A→A-Z, $20-$3F→as-is, else→space
-        ldy #0                  // Y = column
+        lda scan_start
+        clc
+        adc #1
+        sta ssr_cur_line        // current line = scan_start+1
         ldx #0                  // X = send_buf payload index
+
+ssr_next_line:
+        // set up screen read address for current line
+        ldy ssr_cur_line
+        lda screen_lo,y
+        sta ssr_rd+1
+        lda screen_hi,y
+        sta ssr_rd+2
+
+        // copy 40 columns, converting screen codes to ASCII
+        ldy #0
 ssr_copy:
-ssr_rd: lda $0400,y             // self-modified base + Y offset for column
-        beq ssr_space           // screen code $00 ('@') → treat as space
-        cmp #$20                // is it < $20? (range $01-$1F = letters A-Z)
-        bcc ssr_letter          // yes → convert letter screen code to ASCII
-        cmp #$40                // is it < $40? (range $20-$3F = space/digits/symbols)
-        bcc ssr_ok              // yes → already valid ASCII, use as-is
-        jmp ssr_space           // $40+ = graphics chars → replace with space
+ssr_rd: lda $0400,y             // self-modified
+        beq ssr_space           // $00 ('@') → space
+        cmp #$20
+        bcc ssr_letter          // $01-$1F → letters A-Z
+        cmp #$40
+        bcc ssr_ok              // $20-$3F → as-is (space/digits/symbols)
+        jmp ssr_space           // $40+ → space
 
 ssr_letter:
         clc
-        adc #$40                // screen code $01→$41('A'), $1A→$5A('Z'), etc.
-        jmp ssr_ok              // jump to store the converted character
+        adc #$40                // screen code → ASCII uppercase
+        jmp ssr_ok
 
 ssr_space:
-        lda #$20                // ASCII space character
+        lda #$20
 
 ssr_ok:
-        sta send_buf+3,x       // store converted ASCII byte in payload area
-        inx                     // advance payload position
-        iny                     // advance screen column
-        cpy #40                 // have we read all 40 columns?
-        bne ssr_copy            // no → continue copying
+        sta send_buf+3,x
+        inx
+        iny
+        cpy #40
+        bne ssr_copy
 
-        // ---- Trim trailing spaces from the payload ----
-        // Walk backward from the end of the payload, removing spaces.
-        // This avoids sending 40 chars when the output is short.
+        // trim trailing spaces from this line
 ssr_trim:
-        dex                     // move back one position
-        bmi ssr_empty           // if X went below 0, the entire line was blank
-        lda send_buf+3,x       // check character at this position
-        cmp #$20                // is it a space?
-        beq ssr_trim            // yes → keep trimming
-        inx                     // no → X now = length (position after last non-space)
-        jmp ssr_len
+        dex
+        bmi ssr_trimmed         // entire line blank
+        lda send_buf+3,x
+        cmp #$20
+        beq ssr_trim
+        inx                     // X = position after last non-space
+ssr_trimmed:
+        // if not the last line, add newline separator
+        lda ssr_cur_line
+        cmp ssr_end_line
+        beq ssr_done            // last line → don't add newline
+        lda #$0A                // newline
+        sta send_buf+3,x
+        inx
+        // check payload size limit (120 bytes max)
+        cpx #120
+        bcs ssr_done            // at limit → stop
 
-ssr_empty:
-        ldx #0                  // entire line was blank → length = 0
+        // advance to next line
+        inc ssr_cur_line
+        jmp ssr_next_line
 
-ssr_len:
-        stx send_buf+2          // send_buf[2] = payload length (trimmed)
+ssr_done:
+        stx send_buf+2          // payload length
+
+// temp variables for screen scrape
+ssr_cur_line:  .byte 0
+ssr_end_line:  .byte 0
 
         // ---- Compute XOR checksum over type + length + payload ----
         // Checksum = TYPE ^ LENGTH ^ PAYLOAD[0] ^ PAYLOAD[1] ^ ...
