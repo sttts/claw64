@@ -157,28 +157,7 @@ func (l *Link) SendRaw(data []byte) error {
 }
 
 // Recv reads one frame from the C64. Skips echo'd bridge→C64 frames.
-// Sends NUL keepalive bytes (0x00) every 100ms to keep VICE RS232
-// TX alive — without periodic RX activity on the C64, the drip-send
-// doesn't produce TCP output.
 func (l *Link) Recv() (Frame, error) {
-	// keepalive goroutine — 0x00 is harmless during SYNC hunt
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				l.mu.Lock()
-				l.conn.Write([]byte{0x00})
-				l.mu.Unlock()
-			}
-		}
-	}()
-
 	var r io.Reader = l.conn
 	if l.Debug {
 		r = &debugReader{r: l.conn, tag: "RX"}

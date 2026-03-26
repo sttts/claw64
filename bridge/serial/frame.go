@@ -77,7 +77,7 @@ func readFiltered(r io.Reader) (byte, error) {
 }
 
 // Decode reads one frame from r. Hunts for SYNC, then reads
-// type/length/payload/checksum, skipping interleaved $55 keepalive bytes.
+// type/length/payload/checksum.
 func Decode(r io.Reader, onPayloadByte ...func(byte, int, byte)) (Frame, error) {
 	var payloadCb func(byte, int, byte)
 	if len(onPayloadByte) > 0 {
@@ -133,8 +133,7 @@ readType:
 		return Decode(r)
 	}
 
-	// read payload (skip $55 keepalive between bytes)
-	// mask bit 7: VICE RS232 sometimes sets it spuriously
+	// read payload and mask bit 7: VICE RS232 sometimes sets it spuriously
 	payload := make([]byte, length)
 	for i := byte(0); i < length; i++ {
 		pb, err := readFiltered(r)

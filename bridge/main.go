@@ -169,24 +169,16 @@ func testSerial() {
 		log.Fatalf("send: %v", err)
 	}
 
-	// receive echo RESULT
-	log.Println("waiting for echo RESULT...")
+	// The agent returns a single RESULT/ERROR frame for EXEC.
+	log.Println("waiting for C64 reply...")
 	f, err := link.Recv()
 	if err != nil {
-		log.Fatalf("recv echo: %v", err)
-	}
-	log.Printf("echo RESULT [%d bytes]: %q", len(f.Payload), string(f.Payload))
-
-	// receive screen scrape RESULT
-	log.Println("waiting for screen scrape RESULT...")
-	f, err = link.Recv()
-	if err != nil {
-		log.Fatalf("recv screen: %v", err)
+		log.Fatalf("recv: %v", err)
 	}
 	if f.Type == serial.FrameError {
 		fmt.Println("C64: command timed out")
 	} else {
-		log.Printf("screen [%d bytes]: %q", len(f.Payload), string(f.Payload))
+		log.Printf("result [%d bytes]: %q", len(f.Payload), string(f.Payload))
 		fmt.Printf("C64> %s\n", string(f.Payload))
 	}
 }

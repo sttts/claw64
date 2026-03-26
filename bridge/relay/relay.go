@@ -98,6 +98,11 @@ func (r *Relay) SetupProgress() {
 				logStream("C64 → ???:   %s ", name)
 			}
 		}
+
+		// SYSTEM frames start with [chunk_index, total_chunks], not text.
+		if frameType == serial.FrameSystem && idx < 2 {
+			return
+		}
 		if b == '\n' {
 			fmt.Fprint(os.Stderr, `\n`)
 		} else {
