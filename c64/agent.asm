@@ -712,10 +712,6 @@ ssr_trimmed:
 ssr_done:
         stx send_buf+2          // payload length
 
-// temp variables for screen scrape
-ssr_cur_line:  .byte 0
-ssr_end_line:  .byte 0
-
         // ---- Compute XOR checksum over type + length + payload ----
         // Checksum = TYPE ^ LENGTH ^ PAYLOAD[0] ^ PAYLOAD[1] ^ ...
         lda #FRAME_RESULT       // start with frame type byte
@@ -745,6 +741,10 @@ ssr_chk_done:
         // Frame is built in send_buf. Caller sets send_pos=0 to
         // trigger drip-send at bl_inject (one byte per iteration).
         rts
+
+// temp variables for screen scrape (after RTS, not executed)
+ssr_cur_line:  .byte 0
+ssr_end_line:  .byte 0
 
 // ---------------------------------------------------------
 // Send ERROR frame (timeout notification)
