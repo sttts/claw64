@@ -176,7 +176,7 @@ func (l *Link) Recv() (Frame, error) {
 		// skip echo'd bridge→C64 frames (TEXT is NOT skipped —
 		// the C64 forwards it back as the user reply)
 		switch f.Type {
-		case FrameMsg, FrameExec:
+		case FrameMsg, FrameExec, FrameScreenshot:
 			continue
 		}
 		return f, nil

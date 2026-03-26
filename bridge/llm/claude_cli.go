@@ -55,8 +55,10 @@ func (c *ClaudeCLIClient) Complete(ctx context.Context, messages []Message, tool
 		for _, t := range tools {
 			prompt.WriteString(fmt.Sprintf("- %s: %s\n", t.Function.Name, t.Function.Description))
 		}
-		prompt.WriteString("\nTo use a tool, respond with EXACTLY this JSON format on a single line:\n")
+		prompt.WriteString("\nTo use a tool, respond with EXACTLY one of these JSON formats on a single line:\n")
 		prompt.WriteString(`{"tool":"basic_exec","command":"YOUR BASIC COMMAND HERE"}`)
+		prompt.WriteString("\n")
+		prompt.WriteString(`{"tool":"text_screenshot"}`)
 		prompt.WriteString("\n\nIf you don't need a tool, just respond with plain text.\n\n")
 		prompt.WriteString("Assistant: ")
 	}
@@ -88,18 +90,36 @@ func (c *ClaudeCLIClient) Complete(ctx context.Context, messages []Message, tool
 			Tool    string `json:"tool"`
 			Command string `json:"command"`
 		}
-		if json.Unmarshal([]byte(firstLine), &tc) == nil && tc.Tool == "basic_exec" && tc.Command != "" {
-			return Message{
-				Role: "assistant",
-				ToolCalls: []ToolCall{{
-					ID:   "call_cli_1",
-					Type: "function",
-					Function: FunctionCall{
-						Name:      "basic_exec",
-						Arguments: fmt.Sprintf(`{"command":%q}`, tc.Command),
-					},
-				}},
-			}, nil
+		if json.Unmarshal([]byte(firstLine), &tc) == nil {
+			switch tc.Tool {
+			case "basic_exec":
+				if tc.Command == "" {
+					break
+				}
+				return Message{
+					Role: "assistant",
+					ToolCalls: []ToolCall{{
+						ID:   "call_cli_1",
+						Type: "function",
+						Function: FunctionCall{
+							Name:      "basic_exec",
+							Arguments: fmt.Sprintf(`{"command":%q}`, tc.Command),
+						},
+					}},
+				}, nil
+			case "text_screenshot":
+				return Message{
+					Role: "assistant",
+					ToolCalls: []ToolCall{{
+						ID:   "call_cli_1",
+						Type: "function",
+						Function: FunctionCall{
+							Name:      "text_screenshot",
+							Arguments: `{}`,
+						},
+					}},
+				}, nil
+			}
 		}
 	}
 

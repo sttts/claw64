@@ -31,6 +31,7 @@ type Relay struct {
 	textBuf        []byte // accumulates multi-frame TEXT chunks (receive)
 	textOutQueue   []byte // pending TEXT data to send in chunks (send)
 	lastToolCallID string
+	lastToolName   string
 }
 
 // handleSystemFrame assembles SYSTEM prompt chunks from the C64.
@@ -180,10 +181,13 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 				continue
 			}
 
-			// Prefix result so the LLM knows this is screen output, not human input
-			result := "[C64 screen output]: " + resultText
+			resultPrefix := "[C64 screen output]: "
+			if r.lastToolName == "text_screenshot" {
+				resultPrefix = "[C64 text screen screenshot]: "
+			}
+			result := resultPrefix + resultText
 			if resultText == "" {
-				result = "[C64 screen output]: (empty)"
+				result = resultPrefix + "(empty)"
 			}
 			r.appendToolResult(userID, result)
 			if err := r.callAndDispatch(ctx, userID); err != nil {
@@ -238,7 +242,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	msgs = append(msgs, history...)
 
 	log.Printf("     → LLM:  calling model...")
-	resp, err := r.LLM.Complete(ctx, msgs, []llm.Tool{llm.BasicExecTool})
+	resp, err := r.LLM.Complete(ctx, msgs, []llm.Tool{llm.BasicExecTool, llm.TextScreenshotTool})
 	if err != nil {
 		return fmt.Errorf("llm: %w", err)
 	}
@@ -259,37 +263,49 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 
 	// tool calls
 	for _, tc := range resp.ToolCalls {
-		if tc.Function.Name != "basic_exec" {
+		switch tc.Function.Name {
+		case "basic_exec":
+			var args basicExecArgs
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				log.Printf("LLM → ???:   bad args: %v", err)
+				r.History.Append(userID, llm.Message{
+					Role: "tool", Content: fmt.Sprintf("ERROR: %v", err), ToolCallID: tc.ID,
+				})
+				continue
+			}
+			// sanitize: strip newlines, take first line only, truncate to 80 chars
+			cmd := args.Command
+			if i := strings.IndexAny(cmd, "\n\r"); i >= 0 {
+				cmd = cmd[:i]
+			}
+			if len(cmd) > 80 {
+				cmd = cmd[:80]
+			}
+			logStream("LLM → C64:  EXEC ")
+			r.lastToolCallID = tc.ID
+			r.lastToolName = tc.Function.Name
+
+			execFrame := serial.Frame{Type: serial.FrameExec, Payload: []byte(cmd)}
+			if err := r.sendWithRetry(execFrame); err != nil {
+				return fmt.Errorf("send EXEC: %w", err)
+			}
+
+		case "text_screenshot":
+			logStream("LLM → C64:  SCREENSHOT ")
+			fmt.Fprintln(os.Stderr)
+			r.lastToolCallID = tc.ID
+			r.lastToolName = tc.Function.Name
+
+			screenFrame := serial.Frame{Type: serial.FrameScreenshot}
+			if err := r.sendWithRetry(screenFrame); err != nil {
+				return fmt.Errorf("send SCREENSHOT: %w", err)
+			}
+
+		default:
 			log.Printf("LLM → ???:   unknown tool %q", tc.Function.Name)
 			r.History.Append(userID, llm.Message{
 				Role: "tool", Content: "ERROR: unknown tool", ToolCallID: tc.ID,
 			})
-			continue
-		}
-
-		var args basicExecArgs
-		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-			log.Printf("LLM → ???:   bad args: %v", err)
-			r.History.Append(userID, llm.Message{
-				Role: "tool", Content: fmt.Sprintf("ERROR: %v", err), ToolCallID: tc.ID,
-			})
-			continue
-		}
-		// sanitize: strip newlines, take first line only, truncate to 80 chars
-		cmd := args.Command
-		if i := strings.IndexAny(cmd, "\n\r"); i >= 0 {
-			cmd = cmd[:i]
-		}
-		if len(cmd) > 80 {
-			cmd = cmd[:80]
-		}
-		logStream("LLM → C64:  EXEC ")
-
-		r.lastToolCallID = tc.ID
-
-		execFrame := serial.Frame{Type: serial.FrameExec, Payload: []byte(cmd)}
-		if err := r.sendWithRetry(execFrame); err != nil {
-			return fmt.Errorf("send EXEC: %w", err)
 		}
 	}
 	return nil

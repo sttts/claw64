@@ -25,9 +25,10 @@ const SyncByte = 0xFE
 // Frame types — printable ASCII to avoid PETSCII control char issues.
 const (
 	// Bridge → C64
-	FrameMsg  byte = 0x4D // 'M' — user's chat message
-	FrameExec byte = 0x45 // 'E' — tool call: BASIC command to execute
-	FrameText byte = 0x54 // 'T' — LLM's final answer, forward to user
+	FrameMsg        byte = 0x4D // 'M' — user's chat message
+	FrameExec       byte = 0x45 // 'E' — tool call: BASIC command to execute
+	FrameText       byte = 0x54 // 'T' — LLM's final answer, forward to user
+	FrameScreenshot byte = 0x50 // 'P' — request current text screen snapshot
 
 	// C64 → Bridge
 	FrameResult    byte = 0x52 // 'R' — tool result: screen scrape
@@ -126,7 +127,7 @@ readType:
 	chk ^= length
 
 	// sanity check: reject unrecognized frame types
-	if typ != FrameMsg && typ != FrameExec && typ != FrameText &&
+	if typ != FrameMsg && typ != FrameExec && typ != FrameText && typ != FrameScreenshot &&
 		typ != FrameResult && typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat &&
 		typ != FrameSystem {
 		log.Printf("  bad type 0x%02X, resync", typ)
@@ -176,6 +177,8 @@ func TypeName(t byte) string {
 		return "EXEC"
 	case FrameText:
 		return "TEXT"
+	case FrameScreenshot:
+		return "SCREENSHOT"
 	case FrameResult:
 		return "RESULT"
 	case FrameLLM:

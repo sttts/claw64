@@ -635,12 +635,29 @@ reenter_keys:
 // On entry: X = line number where READY. was found (from bl_scan)
 // ---------------------------------------------------------
 prepare_result_chunks:
-        // Compute total result length so we know how many chunks to send.
         stx ssr_end_line        // save READY. line (inclusive)
         lda scan_start
         clc
         adc #1
-        sta ssr_cur_line        // current line = scan_start+1
+        sta result_start_line
+        jmp prepare_result_range_chunks
+
+// ---------------------------------------------------------
+// prepare_screen_chunks — send the current visible text screen
+//
+// Captures lines 0 through max(cursor row, last non-empty line) so the
+// LLM can inspect the current text screen without running BASIC.
+// ---------------------------------------------------------
+prepare_screen_chunks:
+        lda #0
+        sta result_start_line
+        jsr find_screen_end_line
+        sta ssr_end_line
+
+prepare_result_range_chunks:
+        // Compute total result length so we know how many chunks to send.
+        lda result_start_line
+        sta ssr_cur_line
         lda #0
         sta ssr_total_lo
         sta ssr_total_hi
@@ -698,13 +715,30 @@ prc_chunk_sub:
         jmp prc_chunk_loop
 
 prc_init_send:
-        lda scan_start
-        clc
-        adc #1
+        lda result_start_line
         sta result_line
         lda #1
         sta result_pending
         jsr build_next_result_chunk
+        rts
+
+// ---------------------------------------------------------
+// find_screen_end_line — return the last useful visible text line
+//
+// Output: A = max(cursor row, last non-empty line)
+// ---------------------------------------------------------
+find_screen_end_line:
+        ldx #24
+fsel_scan:
+        jsr ssr_line_len
+        bne fsel_found
+        cpx CURSOR_ROW
+        beq fsel_found
+        dex
+        bpl fsel_scan
+        ldx CURSOR_ROW
+fsel_found:
+        txa
         rts
 
 // ---------------------------------------------------------
@@ -876,6 +910,7 @@ ssr_total_lo:      .byte 0
 ssr_total_hi:      .byte 0
 ssr_line_len_tmp:  .byte 0
 ssr_text_len_tmp:  .byte 0
+result_start_line: .byte 0
 result_line:       .byte 0
 result_col:        .byte 0
 result_chunk:      .byte 0
@@ -1065,6 +1100,17 @@ fd_not_msg:
         rts
 
 fd_not_text:
+        // ---- Check for SCREENSHOT frame ($50 = 'P') ----
+        cmp #FRAME_SCREEN       // is it a screen snapshot request?
+        bne fd_not_screen       // no → check next type
+        lda #0
+        sta busy_timer
+        lda #0
+        sta dot_dir             // screenshot result will flow back out
+        jsr prepare_screen_chunks
+        rts
+
+fd_not_screen:
         // ---- Check for EXEC frame ($45 = 'E') ----
         cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
         bne fd_done             // no → unknown frame type, ignore
@@ -1365,31 +1411,32 @@ spr_dots:
 // This lets control chars like $0A (newline) pass through the conversion.
 .encoding "petscii_mixed"
 sys_prompt:
-        .text "You are a Commodore 64 from 1982. You talk to humans "
-        .text "through chat. You have a BASIC interpreter as a tool."
+        .text "You are a Commodore 64 from 1982 chatting with humans. "
+        .text "You can use BASIC as a tool."
         .byte $0A  // newline
-        .text "IMPORTANT: Reply to the human with a TEXT response. "
-        .text "Do NOT use PRINT to talk."
+        .text "IMPORTANT: Reply with TEXT. Do NOT use PRINT to talk."
         .byte $0A
-        .text "Use basic_exec ONLY when you need to compute, check "
-        .text "or change hardware, or run programs."
+        .text "Use basic_exec for BASIC commands."
         .byte $0A
-        .text "The tool result shows what appeared on YOUR C64 screen. "
-        .text "It is NOT a message from the human. "
-        .text "Empty result means the command succeeded silently "
-        .text "(POKE, SYS, etc. produce no output)."
+        .text "Use text_screenshot to inspect the visible text screen "
+        .text "without running BASIC."
         .byte $0A
-        .text "Long scrolling output may hide earlier lines. "
-        .text "You might only see the tail end of long multi-line results."
+        .text "Tool results are screen output, not human messages. "
+        .text "Empty result means success with no output."
         .byte $0A
-        .text "After getting a tool result, ALWAYS respond with TEXT. "
-        .text "NEVER call the same tool again. One call is enough."
+        .text "Long scrolling output may hide earlier lines and only "
+        .text "show the tail."
         .byte $0A
-        .text "For simple greetings or questions, just reply directly."
+        .text "After a tool result, respond with TEXT. Do not repeat "
+        .text "a successful tool call."
         .byte $0A
-        .text "RULES for basic_exec: ONE statement per call. NO colons. "
-        .text "Maximum 60 characters. No CHR$(147). "
-        .text "Do NOT repeat a successful tool call."
+        .text "Show text_screenshot output as a quoted block in normal "
+        .text "text, or fenced code if alignment matters."
+        .byte $0A
+        .text "For simple greetings or questions, reply directly."
+        .byte $0A
+        .text "basic_exec rules: one statement, no colons, max 60 "
+        .text "characters, no CHR$(147)."
 sys_prompt_end:
 .encoding "screencode_mixed"  // restore default
 

@@ -13,9 +13,13 @@ Use basic_exec ONLY when you need to:
 - Change hardware: POKE 53281,0
 - Run programs: RUN, LIST, LOAD
 
+Use text_screenshot when you need to inspect the current visible C64 text screen without running BASIC.
+
 The tool result shows what appeared on YOUR C64 screen after the command ran. It is NOT a message from the human.
 
 After getting a tool result, respond with a plain TEXT message. Do NOT call the tool again with the same command — one call is enough.
+
+When you show text_screenshot output to the human, format it as a quoted block in normal proportional text or as a fenced code block if alignment matters.
 
 For simple greetings or questions that don't need BASIC, just reply directly — no tool call needed.
 
@@ -40,6 +44,20 @@ var BasicExecTool = Tool{
 				},
 			},
 			Required: []string{"command"},
+		},
+	},
+}
+
+// TextScreenshotTool asks the C64 for the current visible text screen.
+var TextScreenshotTool = Tool{
+	Type: "function",
+	Function: Function{
+		Name:        "text_screenshot",
+		Description: "Return the current visible C64 text screen without running BASIC",
+		Parameters: Parameters{
+			Type:       "object",
+			Properties: map[string]Property{},
+			Required:   []string{},
 		},
 	},
 }
