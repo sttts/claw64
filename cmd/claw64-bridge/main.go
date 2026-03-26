@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"log"
 	"os"
@@ -24,7 +25,7 @@ type CLI struct {
 	LLMKey     string `name:"llm-key" help:"API key for direct API backends."`
 	SpawnVICE  bool   `name:"spawn-vice" default:"true" help:"Spawn VICE automatically."`
 	ViceBin    string `name:"vice-bin" default:"x64sc" help:"VICE binary to launch when spawning."`
-	LoaderPRG  string `name:"loader-prg" default:"c64/claw64.prg" help:"Loader PRG to autostart in VICE."`
+	LoaderPRG  string `name:"loader-prg" help:"Override the embedded loader PRG path."`
 
 	Stdin      StdinCmd      `cmd:"" help:"Chat in the local terminal."`
 	Slack      SlackCmd      `cmd:"" help:"Chat over Slack."`
@@ -53,6 +54,9 @@ type SignalCmd struct {
 type TestSerialCmd struct {
 	Command string `name:"command" default:"PRINT 42" help:"BASIC command sent as EXEC."`
 }
+
+//go:embed claw64.prg
+var embeddedLoaderPRG []byte
 
 func main() {
 	log.SetOutput(termstyle.DimWriter(os.Stderr))
@@ -133,10 +137,18 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	defer link.Close()
 
 	var viceCmd *exec.Cmd
+	cleanupLoader := func() {}
 	if cfg.SpawnVICE {
-		log.Printf("vice: spawning %s with %s", cfg.ViceBin, cfg.LoaderPRG)
+		loaderPath, cleanup, err := loaderPRGPath(cfg)
+		if err != nil {
+			log.Fatalf("vice: %v", err)
+		}
+		cleanupLoader = cleanup
+		defer cleanupLoader()
 
-		viceCmd, err = spawnVICE(cfg)
+		log.Printf("vice: spawning %s with %s", cfg.ViceBin, loaderPath)
+
+		viceCmd, err = spawnVICE(cfg, loaderPath)
 		if err != nil {
 			log.Fatalf("vice: %v", err)
 		}
@@ -170,7 +182,29 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	}
 }
 
-func spawnVICE(cfg CLI) (*exec.Cmd, error) {
+func loaderPRGPath(cfg CLI) (string, func(), error) {
+	if cfg.LoaderPRG != "" {
+		return cfg.LoaderPRG, func() {}, nil
+	}
+
+	f, err := os.CreateTemp("", "claw64-loader-*.prg")
+	if err != nil {
+		return "", nil, fmt.Errorf("create embedded loader temp file: %w", err)
+	}
+	if _, err := f.Write(embeddedLoaderPRG); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("write embedded loader temp file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", nil, fmt.Errorf("close embedded loader temp file: %w", err)
+	}
+
+	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
+}
+
+func spawnVICE(cfg CLI, loaderPath string) (*exec.Cmd, error) {
 	args := []string{
 		"-rsdev1", cfg.SerialAddr,
 		"-userportdevice", "2",
@@ -178,7 +212,7 @@ func spawnVICE(cfg CLI) (*exec.Cmd, error) {
 		"-rsuserbaud", "2400",
 		"-remotemonitor",
 		"-remotemonitoraddress", "127.0.0.1:6510",
-		"-autostart", cfg.LoaderPRG,
+		"-autostart", loaderPath,
 	}
 
 	cmd := exec.Command(cfg.ViceBin, args...)

@@ -71,7 +71,7 @@ vice-echo: echotest
 run: assemble
 	@-lsof -ti :25232 2>/dev/null | xargs kill 2>/dev/null; true
 	@-pkill -f "$(VICE).*$(LOADER_OUT)" 2>/dev/null; true
-	go run ./cmd/claw64-bridge --vice-bin $(VICE) --loader-prg $(LOADER_OUT) stdin
+	go run ./cmd/claw64-bridge --vice-bin $(VICE) stdin
 
 # run the Go bridge without spawning VICE
 bridge:

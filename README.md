@@ -80,6 +80,9 @@ At startup, the loader shows a lobster logo in multicolor bitmap mode for
 roughly two seconds before restoring the normal BASIC text screen and
 starting the agent.
 
+When `--spawn-vice` is used, the bridge uses an embedded copy of the loader
+PRG by default. `--loader-prg` is only needed to override that embedded image.
+
 ## Architecture
 
 ```

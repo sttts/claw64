@@ -222,6 +222,10 @@ Global flags:
   --loader-prg
 ```
 
+With `--spawn-vice`, the bridge uses an embedded copy of `claw64.prg` by
+default and writes it to a temporary file for VICE `-autostart`. `--loader-prg`
+overrides that embedded image.
+
 #### Tools
 
 - `basic_exec(command)` — execute one BASIC command and return the resulting screen output.
