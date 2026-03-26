@@ -34,6 +34,7 @@ const (
 	FrameLLM       byte = 0x4C // 'L' — context message for the LLM
 	FrameError     byte = 0x58 // 'X' — tool call timed out
 	FrameHeartbeat byte = 0x48 // 'H' — heartbeat
+	FrameSystem    byte = 0x53 // 'S' — system prompt chunk
 )
 
 // Frame is a single protocol frame.
@@ -127,7 +128,8 @@ readType:
 	// sanity check: if type is not recognized OR length is suspiciously large,
 	// this is likely a corrupted frame — retry from SYNC hunt
 	if typ != FrameMsg && typ != FrameExec && typ != FrameText &&
-		typ != FrameResult && typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat {
+		typ != FrameResult && typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat &&
+		typ != FrameSystem {
 		log.Printf("  bad type 0x%02X, resync", typ)
 		return Decode(r)
 	}
@@ -185,6 +187,8 @@ func TypeName(t byte) string {
 		return "ERROR"
 	case FrameHeartbeat:
 		return "HEARTBEAT"
+	case FrameSystem:
+		return "SYSTEM"
 	default:
 		return fmt.Sprintf("UNKNOWN(0x%02X)", t)
 	}

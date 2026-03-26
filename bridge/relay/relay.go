@@ -25,8 +25,36 @@ type Relay struct {
 	Link           *serial.Link
 	LLM            llm.Completer
 	History        *History
+	SystemPrompt   string // received from C64, or fallback
+	promptChunks   map[int]string
 	lastText       string
 	lastToolCallID string
+}
+
+// handleSystemFrame assembles SYSTEM prompt chunks from the C64.
+func (r *Relay) handleSystemFrame(f serial.Frame) {
+	if len(f.Payload) < 2 {
+		return
+	}
+	idx := int(f.Payload[0])
+	total := int(f.Payload[1])
+	text := string(f.Payload[2:])
+
+	if r.promptChunks == nil {
+		r.promptChunks = make(map[int]string)
+	}
+	r.promptChunks[idx] = text
+	log.Printf("     ← C64 soul [%d/%d] %d bytes", idx+1, total, len(text))
+
+	if len(r.promptChunks) == total {
+		var prompt string
+		for i := 0; i < total; i++ {
+			prompt += r.promptChunks[i]
+		}
+		r.SystemPrompt = prompt
+		r.promptChunks = nil
+		log.Printf("     C64 soul received (%d bytes)", len(prompt))
+	}
 }
 
 // logStream prints a log-style prefix without a trailing newline.
@@ -49,9 +77,17 @@ func (r *Relay) SetupProgress() {
 	}
 }
 
-// printRecvStream prints a received frame's payload appended to the current line.
+// printRecvStream prints a received frame's payload on one line,
+// escaping newlines as \n.
 func printRecvStream(payload []byte) {
-	fmt.Fprintf(os.Stderr, "%s\n", payload)
+	for _, b := range payload {
+		if b == '\n' {
+			fmt.Fprint(os.Stderr, `\n`)
+		} else {
+			fmt.Fprintf(os.Stderr, "%c", b)
+		}
+	}
+	fmt.Fprintln(os.Stderr)
 }
 
 // basicExecArgs is the JSON structure the LLM passes to basic_exec.
@@ -109,6 +145,10 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 				return "", err
 			}
 
+		case serial.FrameSystem:
+			r.handleSystemFrame(f)
+			continue
+
 		case serial.FrameHeartbeat:
 			continue
 
@@ -130,7 +170,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	history := r.History.Get(userID)
 	msgs := make([]llm.Message, 0, 1+len(history))
-	msgs = append(msgs, llm.Message{Role: "system", Content: llm.SystemPrompt})
+	msgs = append(msgs, llm.Message{Role: "system", Content: r.SystemPrompt})
 	msgs = append(msgs, history...)
 
 	log.Printf("     → LLM:  calling model...")
@@ -217,6 +257,7 @@ func (r *Relay) recvFromC64(ctx context.Context) (serial.Frame, error) {
 		return f, nil
 	}
 }
+
 
 func (r *Relay) sendWithRetry(f serial.Frame) error {
 	var retryBackoff = []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}

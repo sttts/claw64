@@ -71,6 +71,7 @@
 .const FRAME_LLM    = $4C    // 'L' — context message for the LLM
 .const FRAME_ERROR  = $58    // 'X' — tool call timed out
 .const FRAME_HBEAT  = $48    // 'H' — heartbeat
+.const FRAME_SYSTEM = $53    // 'S' — system prompt chunk
 
 // Frame parser states
 .const STATE_HUNT   = 0      // hunting for SYNC byte

@@ -283,8 +283,18 @@ C64 -> Bridge:
   'R' (0x52)  RESULT      Tool result: screen scrape (cursor to READY.)
   'L' (0x4C)  LLM_MSG     Message to append to LLM conversation
   'X' (0x58)  ERROR       Tool call timed out or failed
-  'H' (0x48)  HEARTBEAT   Agent is alive
+  'S' (0x53)  SYSTEM      System prompt chunk (sent on first MSG)
+  'H' (0x48)  HEARTBEAT   Agent is alive (reserved)
 ```
+
+#### System prompt (the C64's soul)
+
+The system prompt lives on the C64 — it IS the agent. On the first user
+message, the C64 sends it to the bridge as multiple SYSTEM frames before
+the LLM_MSG (max 120 bytes text per frame, drip-sent one byte per main
+loop iteration). Each frame's payload: `[chunk_index, total_chunks, text...]`.
+The bridge assembles the chunks and uses the result as the LLM system prompt.
+Falls back to a hardcoded prompt if no SYSTEM frames arrive.
 
 All payloads are plain text. No JSON, no quoting, no escaping.
 

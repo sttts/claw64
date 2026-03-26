@@ -76,7 +76,7 @@ func (c *ClaudeCLIClient) Complete(ctx context.Context, messages []Message, tool
 	}
 
 	text := strings.TrimSpace(string(out))
-	log.Printf("LLM  →    :  %s", text)
+	log.Printf("LLM  →    :  %s", strings.ReplaceAll(text, "\n", `\n`))
 
 	// check if response contains a tool call (first line might be JSON)
 	firstLine := text

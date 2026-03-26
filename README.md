@@ -103,8 +103,11 @@ C64 → Bridge:
   R  RESULT      Tool result: screen scrape (old cursor to READY.)
   L  LLM_MSG     Context message for the LLM ("Screen is blue")
   X  ERROR       Tool call timed out
-  H  HEARTBEAT   Agent is alive
+  S  SYSTEM      System prompt chunk (sent on first MSG)
 ```
+
+The system prompt — the C64's soul — lives on the C64. On the first user
+message, it's sent to the bridge as chunked SYSTEM frames before the LLM_MSG.
 
 Messages longer than 255 bytes span multiple frames: LENGTH=255 means
 more follows, LENGTH<255 means final chunk.

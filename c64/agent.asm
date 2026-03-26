@@ -277,6 +277,8 @@ spr_cp0:lda spr_claw1,x
         jsr CHROUT              // send via RS232 (not screen)
         jsr CLRCHN              // reset I/O
 
+        // System prompt is sent on first MSG (needs echo for VICE TX)
+
         // Switch to RAM mode and patch KERNAL
         sei
         lda #%00110101
@@ -357,12 +359,21 @@ bl_got_data:
 bl_skip_echo:
 
 bl_inject:
-        // ---- Drip-send pending frame (one byte per iteration) ----
-        // Runs EVERY iteration (even no-data ones). When llm_pending
-        // is set, builds the frame. Then sends one byte per iteration.
-        // VICE RS232 only handles one CHKOUT/CHROUT/CLRCHN per iteration.
+        // ---- Build next frame in send_buf if drip-send is idle ----
+        // Priority: SYSTEM prompt chunks → LLM_MSG
+        lda send_pos
+        cmp send_total
+        bne bl_send_check       // drip-send busy → just send
+
+        // check if prompt chunks need sending
+        lda prompt_pending
+        beq bl_chk_llm
+        jsr build_next_prompt_chunk
+        jmp bl_send_check
+
+bl_chk_llm:
         lda llm_pending
-        beq bl_send_check       // no pending build → check if sending
+        beq bl_send_check       // nothing to build
 
         // build LLM_MSG frame in send_buf
         lda #0
@@ -857,7 +868,13 @@ frame_dispatch:
         cmp #FRAME_MSG          // is it a MSG frame (user's chat message)?
         bne fd_not_msg          // no → check next type
 
-        // start conversation — C64 sends LLM_MSG then waits for response
+        // start conversation — C64 sends prompt (first time) + LLM_MSG
+        lda prompt_sent
+        bne fd_msg_no_prompt
+        lda #1
+        sta prompt_sent
+        sta prompt_pending      // send system prompt first
+fd_msg_no_prompt:
         lda #1
         sta busy
         sta llm_pending
@@ -1047,6 +1064,8 @@ cur_page:     .byte $A0 // current page during ROM copy, init to $A0
 // Screen codes for "READY." (used by self-modifying scan loop)
 ready_codes:  .byte $12, $05, $01, $04, $19, $2E
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
+prompt_pending: .byte 0 // 1 = system prompt chunks still need sending
+prompt_sent:  .byte 0   // 1 = prompt already sent (only send on first MSG)
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
@@ -1128,6 +1147,189 @@ spr_dots:
         .byte %00000000, %00000000, %00000000  // row 18
         .byte %00000000, %00000000, %00000000  // row 19
         .byte %00000000, %00000000, %00000000  // row 20
+
+// ---------------------------------------------------------
+// System prompt — the C64's soul. Sent to bridge at startup.
+// Split into chunks for the 127-byte frame limit.
+// ---------------------------------------------------------
+.const CHUNK_MAX = 120  // max text per frame (leave room for 2-byte header)
+
+sys_prompt:
+        .text "You are a Commodore 64 from 1982. You talk to humans "
+        .text "through chat. You have a BASIC interpreter as a tool."
+        .byte $0A  // newline
+        .text "IMPORTANT: Reply to the human with a TEXT response. "
+        .text "Do NOT use PRINT to talk."
+        .byte $0A
+        .text "Use basic_exec ONLY when you need to compute, check "
+        .text "or change hardware, or run programs."
+        .byte $0A
+        .text "The tool result shows what appeared on YOUR C64 screen. "
+        .text "It is NOT a message from the human."
+        .byte $0A
+        .text "After getting a tool result, respond with a plain TEXT "
+        .text "message. Do NOT call the tool again with the same command."
+        .byte $0A
+        .text "For simple greetings or questions, just reply directly."
+        .byte $0A
+        .text "RULES for basic_exec: ONE statement per call. NO colons. "
+        .text "Maximum 60 characters. No CHR$(147). "
+        .text "Do NOT repeat a successful tool call."
+sys_prompt_end:
+
+// Number of chunks needed (compile-time constant)
+.const PROMPT_LEN = sys_prompt_end - sys_prompt
+.const PROMPT_CHUNKS = (PROMPT_LEN + CHUNK_MAX - 1) / CHUNK_MAX
+
+// ---------------------------------------------------------
+// build_next_prompt_chunk — build one SYSTEM frame in send_buf
+//
+// Called from bl_inject when prompt_pending is set. Builds the
+// next chunk, advances ssp_chunk. Clears prompt_pending after
+// the last chunk. Uses the drip-send path (send_buf/send_pos).
+// ---------------------------------------------------------
+build_next_prompt_chunk:
+        // calculate source address: sys_prompt + ssp_chunk * CHUNK_MAX
+        lda ssp_chunk
+        tax
+        lda #0
+        sta ssp_off_lo
+        sta ssp_off_hi
+        cpx #0
+        beq ssp_addr
+ssp_mul:
+        clc
+        lda ssp_off_lo
+        adc #CHUNK_MAX
+        sta ssp_off_lo
+        lda ssp_off_hi
+        adc #0
+        sta ssp_off_hi
+        dex
+        bne ssp_mul
+ssp_addr:
+        clc
+        lda #<sys_prompt
+        adc ssp_off_lo
+        sta ssp_src_lo
+        lda #>sys_prompt
+        adc ssp_off_hi
+        sta ssp_src_hi
+
+        // calculate chunk text length
+        sec
+        lda #<PROMPT_LEN
+        sbc ssp_off_lo
+        sta ssp_remain_lo
+        lda #>PROMPT_LEN
+        sbc ssp_off_hi
+        sta ssp_remain_hi
+        lda ssp_remain_hi
+        bne ssp_full
+        lda ssp_remain_lo
+        cmp #CHUNK_MAX
+        bcc ssp_short
+ssp_full:
+        lda #CHUNK_MAX
+        jmp ssp_len_set
+ssp_short:
+        lda ssp_remain_lo
+ssp_len_set:
+        sta ssp_text_len
+
+        // build SYSTEM frame in send_buf
+        // header: SYNC + TYPE + LEN
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda #FRAME_SYSTEM
+        sta send_buf+1
+        // payload: [chunk_index, total_chunks, text...]
+        // payload length = text_len + 2
+        clc
+        lda ssp_text_len
+        adc #2
+        sta send_buf+2          // LEN
+
+        // payload header
+        lda ssp_chunk
+        sta send_buf+3          // chunk index
+        lda #PROMPT_CHUNKS
+        sta send_buf+4          // total chunks
+
+        // copy text with PETSCII→ASCII conversion
+        lda ssp_src_lo
+        sta ssp_rd+1
+        lda ssp_src_hi
+        sta ssp_rd+2
+        ldy #0
+ssp_copy:
+        cpy ssp_text_len
+        beq ssp_build_chk
+ssp_rd: lda $C000              // self-modified
+        // PETSCII lowercase (0x01-0x1A) → ASCII (0x61-0x7A)
+        cmp #$1B
+        bcs ssp_noc
+        cmp #$01
+        bcc ssp_noc
+        clc
+        adc #$60
+ssp_noc:
+        sta send_buf+5,y
+        inc ssp_rd+1
+        bne ssp_noinc
+        inc ssp_rd+2
+ssp_noinc:
+        iny
+        jmp ssp_copy
+
+ssp_build_chk:
+        // compute checksum: XOR of TYPE, LEN, and all payload bytes
+        lda send_buf+1          // TYPE
+        eor send_buf+2          // LEN
+        sta frame_chk
+        ldx #0
+        lda send_buf+2
+        sta ssp_text_len        // reuse as payload len
+ssp_chk:
+        cpx ssp_text_len
+        beq ssp_chk_done
+        lda send_buf+3,x
+        eor frame_chk
+        sta frame_chk
+        inx
+        jmp ssp_chk
+ssp_chk_done:
+        lda frame_chk
+        sta send_buf+3,x       // CHK byte after payload
+
+        // total frame size = 3 (SYNC+TYPE+LEN) + payload_len + 1 (CHK)
+        txa
+        clc
+        adc #4
+        sta send_total
+        lda #0
+        sta send_pos            // trigger drip-send
+
+        // advance to next chunk
+        inc ssp_chunk
+        lda ssp_chunk
+        cmp #PROMPT_CHUNKS
+        bne ssp_not_last
+        lda #0
+        sta prompt_pending      // all chunks queued
+        sta ssp_chunk           // reset for potential resend
+ssp_not_last:
+        rts
+
+// temporary variables
+ssp_chunk:      .byte 0
+ssp_off_lo:     .byte 0
+ssp_off_hi:     .byte 0
+ssp_src_lo:     .byte 0
+ssp_src_hi:     .byte 0
+ssp_remain_lo:  .byte 0
+ssp_remain_hi:  .byte 0
+ssp_text_len:   .byte 0
 
 // ---------------------------------------------------------
 // IRQ handler — animate dots sprite during serial activity
