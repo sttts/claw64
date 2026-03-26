@@ -55,7 +55,7 @@ func Encode(f Frame) []byte {
 	buf[2] = byte(n)
 
 	// checksum: XOR of type, length, and all payload bytes
-	// mask bit 7 to match C64 parser (VICE corrupts bit 7 randomly)
+	// both type and length masked to 7 bits (C64 parser masks them)
 	chk := (f.Type & 0x7F) ^ (byte(n) & 0x7F)
 	for i := 0; i < n; i++ {
 		buf[3+i] = f.Payload[i]
@@ -65,24 +65,24 @@ func Encode(f Frame) []byte {
 	return buf
 }
 
-// readFiltered reads one byte from r, skipping keepalive ($55) and
-// echo marker ($2E '.') bytes.
+// readFiltered reads one byte from r.
+// No bytes are skipped — 0x55 ('U') and 0x2E ('.') are valid
+// payload characters that must not be filtered.
 func readFiltered(r io.Reader) (byte, error) {
 	var b [1]byte
-	for {
-		if _, err := io.ReadFull(r, b[:]); err != nil {
-			return 0, err
-		}
-		// skip keepalive and echo markers (bit 7 may be set by VICE)
-		if b[0]&0x7F != 0x55 && b[0]&0x7F != 0x2E {
-			return b[0], nil
-		}
+	if _, err := io.ReadFull(r, b[:]); err != nil {
+		return 0, err
 	}
+	return b[0], nil
 }
 
 // Decode reads one frame from r. Hunts for SYNC, then reads
 // type/length/payload/checksum, skipping interleaved $55 keepalive bytes.
-func Decode(r io.Reader) (Frame, error) {
+func Decode(r io.Reader, onPayloadByte ...func(byte, int, byte)) (Frame, error) {
+	var payloadCb func(byte, int, byte)
+	if len(onPayloadByte) > 0 {
+		payloadCb = onPayloadByte[0]
+	}
 	// hunt for SYNC byte ($FE)
 	// VICE RS232 corrupts bits — accept $FE with any single-bit error:
 	// $FE=11111110, single-bit errors: $FF,$FC,$FA,$F6,$EE,$DE,$BE,$7E
@@ -122,19 +122,14 @@ readType:
 	if err != nil {
 		return Frame{}, fmt.Errorf("length: %w", err)
 	}
-	length := rawLen & 0x7F
+	length := rawLen & 0x7F // max 127 bytes per frame
 	chk ^= length
 
-	// sanity check: if type is not recognized OR length is suspiciously large,
-	// this is likely a corrupted frame — retry from SYNC hunt
+	// sanity check: reject unrecognized frame types
 	if typ != FrameMsg && typ != FrameExec && typ != FrameText &&
 		typ != FrameResult && typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat &&
 		typ != FrameSystem {
 		log.Printf("  bad type 0x%02X, resync", typ)
-		return Decode(r)
-	}
-	if length > 128 {
-		log.Printf("  bad length %d, resync", length)
 		return Decode(r)
 	}
 
@@ -148,6 +143,9 @@ readType:
 		}
 		payload[i] = pb & 0x7F // strip bit 7
 		chk ^= payload[i]      // checksum on masked bytes
+		if payloadCb != nil {
+			payloadCb(typ, int(i), payload[i])
+		}
 	}
 
 	// read and verify checksum (mask bit 7 like everything else)

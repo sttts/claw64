@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 
 	"github.com/sttts/claw64/relay"
 	"github.com/sttts/claw64/chat"
@@ -109,6 +108,7 @@ func runBridge() {
 	}
 	rl.SystemPrompt = llm.SystemPrompt // fallback until C64 sends its soul
 	rl.SetupProgress()
+	// System prompt arrives from C64 on first message (SYSTEM frames before LLM_MSG)
 
 	// select chat backend
 	backend := env("CLAW64_CHAT", "stdin")
@@ -144,7 +144,7 @@ func runBridge() {
 			log.Printf("     ! error: %v", err)
 			return "", err
 		}
-		log.Printf("C64 → USER:  %s", strings.ReplaceAll(reply, "\n", `\n`))
+		// reply was logged by eventLoop as C64 → USER
 		return reply, nil
 	})
 	if err != nil && ctx.Err() == nil {

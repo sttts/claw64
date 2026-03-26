@@ -25,9 +25,9 @@ type Relay struct {
 	Link           *serial.Link
 	LLM            llm.Completer
 	History        *History
-	SystemPrompt   string // received from C64, or fallback
+	SystemPrompt   string // received from C64
 	promptChunks   map[int]string
-	lastText       string
+	textBuf        []byte // accumulates multi-frame TEXT chunks
 	lastToolCallID string
 }
 
@@ -73,22 +73,38 @@ func (r *Relay) SetupProgress() {
 			fmt.Fprintln(os.Stderr)
 			return
 		}
-		fmt.Fprintf(os.Stderr, "%c", payload[idx])
+		if payload[idx] == '\n' {
+			fmt.Fprint(os.Stderr, `\n`)
+		} else {
+			fmt.Fprintf(os.Stderr, "%c", payload[idx])
+		}
 	}
-}
 
-// printRecvStream prints a received frame's payload on one line,
-// escaping newlines as \n.
-func printRecvStream(payload []byte) {
-	for _, b := range payload {
+	// receive callback: print header on first byte, then stream chars
+	r.Link.OnRecvByte = func(frameType byte, idx int, b byte) {
+		if idx == 0 {
+			name := serial.TypeName(frameType)
+			switch frameType {
+			case serial.FrameLLM:
+				logStream("C64 → LLM:   ")
+			case serial.FrameResult:
+				logStream("C64 → LLM:   RESULT ")
+			case serial.FrameText:
+				logStream("C64 → USER:  ")
+			case serial.FrameSystem:
+				logStream("C64 → soul:  ")
+			default:
+				logStream("C64 → ???:   %s ", name)
+			}
+		}
 		if b == '\n' {
 			fmt.Fprint(os.Stderr, `\n`)
 		} else {
 			fmt.Fprintf(os.Stderr, "%c", b)
 		}
 	}
-	fmt.Fprintln(os.Stderr)
 }
+
 
 // basicExecArgs is the JSON structure the LLM passes to basic_exec.
 type basicExecArgs struct {
@@ -119,15 +135,13 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 
 		switch f.Type {
 		case serial.FrameLLM:
-			logStream("C64 → LLM:   ")
-			printRecvStream(f.Payload)
+			fmt.Fprintln(os.Stderr) // newline after streamed payload
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
 
 		case serial.FrameResult:
-			logStream("C64 → LLM:   RESULT ")
-			printRecvStream(f.Payload)
+			fmt.Fprintln(os.Stderr) // newline after streamed payload
 			// Prefix result so the LLM knows this is screen output, not human input
 			result := "[C64 screen output]: " + string(f.Payload)
 			if len(f.Payload) == 0 {
@@ -145,7 +159,20 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 				return "", err
 			}
 
+		case serial.FrameText:
+			// TEXT forwarded by C64 — accumulate chunks.
+			// Chunk of 120 bytes = more to come. Shorter = final.
+			fmt.Fprintln(os.Stderr) // newline after streamed payload
+			r.textBuf = append(r.textBuf, f.Payload...)
+			if len(f.Payload) < 120 {
+				text := string(r.textBuf)
+				r.textBuf = nil
+				return text, nil
+			}
+			continue
+
 		case serial.FrameSystem:
+			fmt.Fprintln(os.Stderr) // newline after streamed payload
 			r.handleSystemFrame(f)
 			continue
 
@@ -154,12 +181,6 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 
 		default:
 			log.Printf("C64 → ???:   unknown frame 0x%02X", f.Type)
-		}
-
-		if r.lastText != "" {
-			text := r.lastText
-			r.lastText = ""
-			return text, nil
 		}
 	}
 
@@ -170,6 +191,9 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	history := r.History.Get(userID)
 	msgs := make([]llm.Message, 0, 1+len(history))
+	if r.SystemPrompt == "" {
+		return fmt.Errorf("no soul — C64 has not sent system prompt")
+	}
 	msgs = append(msgs, llm.Message{Role: "system", Content: r.SystemPrompt})
 	msgs = append(msgs, history...)
 
@@ -184,15 +208,26 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	if len(resp.ToolCalls) == 0 {
 		logStream("LLM → C64:  TEXT ")
 		if resp.Content != "" {
-			textFrame := serial.Frame{Type: serial.FrameText, Payload: []byte(resp.Content)}
-			if err := r.sendWithRetry(textFrame); err != nil {
-				fmt.Fprintln(os.Stderr)
-				log.Printf("     ! TEXT send failed: %v", err)
+			// send in chunks of 120 bytes (frame max is 127 with 7-bit length)
+			payload := []byte(resp.Content)
+			for len(payload) > 0 {
+				chunk := payload
+				if len(chunk) > 120 {
+					chunk = chunk[:120]
+				}
+				payload = payload[len(chunk):]
+				textFrame := serial.Frame{Type: serial.FrameText, Payload: chunk}
+				if err := r.sendWithRetry(textFrame); err != nil {
+					fmt.Fprintln(os.Stderr)
+					log.Printf("     ! TEXT send failed: %v", err)
+					break
+				}
 			}
 		} else {
 			fmt.Fprintln(os.Stderr, "(empty)")
 		}
-		r.lastText = resp.Content
+		// C64 forwards each chunk back as TEXT frame.
+		// eventLoop concatenates until a chunk < 120 bytes (= final).
 		return nil
 	}
 

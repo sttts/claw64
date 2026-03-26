@@ -300,20 +300,28 @@ All payloads are plain text. No JSON, no quoting, no escaping.
 
 #### Multi-frame messages
 
-Messages longer than 255 bytes span multiple frames of the same type.
-Convention: if LENGTH == 255, more frames follow. LENGTH < 255 means
-the final (or only) frame. The receiver concatenates payloads until
-a frame with LENGTH < 255 arrives.
+Frame payload is limited to 120 bytes (length field is 7-bit, max 127,
+with headroom). Messages longer than 120 bytes are split into multiple
+frames of the same type. Convention: if LENGTH == 120, more frames
+follow. LENGTH < 120 means the final (or only) frame. The receiver
+concatenates payloads until a short frame arrives.
 
-#### Keepalive and SYNC recovery
+Used by: TEXT (LLM responses), SYSTEM (prompt chunks).
 
-- `0x55` bytes between frames are keepalive (skipped by the parser).
-  Note: `'U'` is also `0x55` — the parser distinguishes by state
-  (keepalive only in SYNC-hunting state).
+#### SYNC recovery and bit masking
+
 - If the checksum byte happens to equal `0xFE` (SYNC), the receiver
   treats it as the start of the next frame.
 - Bit 7 masking: the bridge strips bit 7 from type, length, and payload
   bytes (VICE RS232 sometimes sets it spuriously).
+- No bytes are filtered from the payload — all values 0x00-0xFF are valid.
+
+#### Bridge display rules
+
+- The bridge is a pure serial↔HTTPS relay. No shortcuts: all data flows
+  through the C64. TEXT responses go LLM→bridge→C64→bridge→user.
+- All frame payloads are displayed char-by-char as bytes arrive on or
+  leave the wire. Never buffer and print a complete message at once.
 
 #### Error handling
 

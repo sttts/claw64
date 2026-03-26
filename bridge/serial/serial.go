@@ -19,9 +19,11 @@ type Link struct {
 	mu   sync.Mutex // serializes writes
 
 	// OnSendByte is called during Send for each payload byte sent.
-	// Arguments: frame type name, full payload, index of byte just sent.
-	// Called with index -1 after the last byte (frame complete).
 	OnSendByte func(typeName string, payload []byte, idx int)
+
+	// OnRecvByte is called during Decode for each payload byte received.
+	// Arguments: frame type, payload byte index, byte value.
+	OnRecvByte func(frameType byte, idx int, b byte)
 
 	Debug bool // log every byte on the wire
 }
@@ -161,13 +163,20 @@ func (l *Link) Recv() (Frame, error) {
 		r = &debugReader{r: l.conn, tag: "RX"}
 	}
 	for {
-		f, err := Decode(r)
+		var cb func(byte, int, byte)
+		if l.OnRecvByte != nil {
+			cb = func(ft byte, idx int, b byte) {
+				l.OnRecvByte(ft, idx, b)
+			}
+		}
+		f, err := Decode(r, cb)
 		if err != nil {
 			return f, err
 		}
-		// skip echo'd bridge→C64 frames
+		// skip echo'd bridge→C64 frames (TEXT is NOT skipped —
+		// the C64 forwards it back as the user reply)
 		switch f.Type {
-		case FrameMsg, FrameExec, FrameText:
+		case FrameMsg, FrameExec:
 			continue
 		}
 		return f, nil

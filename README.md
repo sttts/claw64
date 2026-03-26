@@ -101,16 +101,20 @@ Bridge → C64:
 
 C64 → Bridge:
   R  RESULT      Tool result: screen scrape (old cursor to READY.)
-  L  LLM_MSG     Context message for the LLM ("Screen is blue")
+  L  LLM_MSG     Context message for the LLM
   X  ERROR       Tool call timed out
+  T  TEXT        LLM's answer forwarded back to user (C64 relays it)
   S  SYSTEM      System prompt chunk (sent on first MSG)
 ```
 
-The system prompt — the C64's soul — lives on the C64. On the first user
-message, it's sent to the bridge as chunked SYSTEM frames before the LLM_MSG.
+The bridge is a pure relay — no shortcuts. TEXT responses flow
+LLM→bridge→C64→bridge→user. The C64 forwards every TEXT frame back.
 
-Messages longer than 255 bytes span multiple frames: LENGTH=255 means
-more follows, LENGTH<255 means final chunk.
+The system prompt — the C64's soul — lives in the C64's memory. On the
+first message, it's sent as chunked SYSTEM frames before the LLM_MSG.
+
+Messages longer than 120 bytes are split into multiple frames. A frame
+with LENGTH=120 means more chunks follow. LENGTH<120 means final chunk.
 
 ### Example flow
 

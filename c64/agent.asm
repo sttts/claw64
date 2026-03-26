@@ -364,6 +364,7 @@ bl_inject:
         lda send_pos
         cmp send_total
         bne bl_send_check       // drip-send busy → just send
+<<<<<<< HEAD
 
         // check if prompt chunks need sending
         lda prompt_pending
@@ -374,38 +375,39 @@ bl_inject:
 bl_chk_llm:
         lda llm_pending
         beq bl_send_check       // nothing to build
+||||||| parent of 7be951e (claw64: move system prompt to C64 — the soul lives on the C64)
+        // ---- Drip-send pending frame (one byte per iteration) ----
+        // Runs EVERY iteration (even no-data ones). When llm_pending
+        // is set, builds the frame. Then sends one byte per iteration.
+        // VICE RS232 only handles one CHKOUT/CHROUT/CLRCHN per iteration.
+        lda llm_pending
+        beq bl_send_check       // no pending build → check if sending
+=======
+>>>>>>> 7be951e (claw64: move system prompt to C64 — the soul lives on the C64)
 
-        // build LLM_MSG frame in send_buf
+        // check if prompt chunks need sending
+        lda prompt_pending
+        beq bl_chk_llm
+        jsr build_next_prompt_chunk
+        jmp bl_send_check       // start drip-sending
+
+bl_chk_llm:
+        lda llm_pending
+        beq bl_chk_text
         lda #0
         sta llm_pending
-        lda #SYNC_BYTE
-        sta send_buf+0
         lda #FRAME_LLM
-        sta send_buf+1
-        lda frame_len
-        sta send_buf+2
-        lda #FRAME_LLM
-        eor frame_len
-        sta frame_chk
-        ldx #0
-bl_build_cp:
-        cpx frame_len
-        beq bl_build_end
-        lda AGENT_RXBUF,x
-        sta send_buf+3,x
-        eor frame_chk
-        sta frame_chk
-        inx
-        jmp bl_build_cp
-bl_build_end:
-        lda frame_chk
-        sta send_buf+3,x
-        txa
-        clc
-        adc #4
-        sta send_total
+        jsr build_rxbuf_frame   // build LLM_MSG from AGENT_RXBUF
+        jmp bl_send_check
+
+bl_chk_text:
+        lda text_pending
+        beq bl_send_check
         lda #0
-        sta send_pos
+        sta text_pending
+        lda #FRAME_TEXT
+        jsr build_rxbuf_frame   // forward TEXT from AGENT_RXBUF
+        // fall through to bl_send_check
 
 bl_send_check:
         lda send_pos
@@ -796,7 +798,7 @@ fr_sub:
 // XOR it into the running checksum. If length is 0, skip directly
 // to state 4 (CHK) since there are no payload bytes.
 fr_len:
-        and #$7F                // strip bit 7
+        and #$7F                // strip bit 7 (max 127 bytes per frame)
         sta frame_len           // store payload length
         eor frame_chk           // XOR length into running checksum
         sta frame_chk           // update checksum
@@ -868,12 +870,23 @@ frame_dispatch:
         cmp #FRAME_MSG          // is it a MSG frame (user's chat message)?
         bne fd_not_msg          // no → check next type
 
+<<<<<<< HEAD
         // start conversation — C64 sends prompt (first time) + LLM_MSG
         lda prompt_sent
         bne fd_msg_no_prompt
         lda #1
         sta prompt_sent
         sta prompt_pending      // send system prompt first
+||||||| parent of 7be951e (claw64: move system prompt to C64 — the soul lives on the C64)
+        // start conversation — C64 sends LLM_MSG then waits for response
+=======
+        // start conversation — send prompt on first MSG only
+        lda prompt_sent
+        bne fd_msg_no_prompt
+        lda #1
+        sta prompt_sent
+        sta prompt_pending
+>>>>>>> 7be951e (claw64: move system prompt to C64 — the soul lives on the C64)
 fd_msg_no_prompt:
         lda #1
         sta busy
@@ -892,6 +905,8 @@ fd_not_msg:
         bne fd_not_text         // no → check next type
         lda #0
         sta busy                // conversation done — stop border animation
+        lda #1
+        sta text_pending        // forward text to user via drip-send
         rts
 
 fd_not_text:
@@ -985,6 +1000,41 @@ sf_byte:
         rts
 
 // ---------------------------------------------------------
+// build_rxbuf_frame — build a frame in send_buf from AGENT_RXBUF
+//
+// Input: A = frame type, frame_len = payload length
+// Uses:  send_buf, send_pos, send_total, frame_chk
+// ---------------------------------------------------------
+build_rxbuf_frame:
+        sta send_buf+1          // TYPE
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda frame_len
+        sta send_buf+2          // LEN
+        lda send_buf+1
+        eor frame_len
+        sta frame_chk
+        ldx #0
+brf_cp: cpx frame_len
+        beq brf_done
+        lda AGENT_RXBUF,x
+        sta send_buf+3,x
+        eor frame_chk
+        sta frame_chk
+        inx
+        jmp brf_cp
+brf_done:
+        lda frame_chk
+        sta send_buf+3,x
+        txa
+        clc
+        adc #4
+        sta send_total
+        lda #0
+        sta send_pos
+        rts
+
+// ---------------------------------------------------------
 // Send LLM message as FRAME_LLM frame (stub)
 //
 // Intended to send context/data to the LLM via the bridge.
@@ -1065,7 +1115,13 @@ cur_page:     .byte $A0 // current page during ROM copy, init to $A0
 ready_codes:  .byte $12, $05, $01, $04, $19, $2E
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
 prompt_pending: .byte 0 // 1 = system prompt chunks still need sending
+<<<<<<< HEAD
 prompt_sent:  .byte 0   // 1 = prompt already sent (only send on first MSG)
+||||||| parent of 7be951e (claw64: move system prompt to C64 — the soul lives on the C64)
+=======
+text_pending: .byte 0   // 1 = forward TEXT to user via drip-send
+prompt_sent:  .byte 0   // 1 = prompt already sent
+>>>>>>> 7be951e (claw64: move system prompt to C64 — the soul lives on the C64)
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
@@ -1154,6 +1210,7 @@ spr_dots:
 // ---------------------------------------------------------
 .const CHUNK_MAX = 120  // max text per frame (leave room for 2-byte header)
 
+<<<<<<< HEAD
 sys_prompt:
         .text "You are a Commodore 64 from 1982. You talk to humans "
         .text "through chat. You have a BASIC interpreter as a tool."
@@ -1273,6 +1330,132 @@ ssp_rd: lda $C000              // self-modified
         bcc ssp_noc
         clc
         adc #$60
+||||||| parent of 7be951e (claw64: move system prompt to C64 — the soul lives on the C64)
+=======
+// Use PETSCII encoding so lowercase = $C1-$DA (not screen code $01-$1A).
+// This lets control chars like $0A (newline) pass through the conversion.
+.encoding "petscii_mixed"
+sys_prompt:
+        .text "You are a Commodore 64 from 1982. You talk to humans "
+        .text "through chat. You have a BASIC interpreter as a tool."
+        .byte $0A  // newline
+        .text "IMPORTANT: Reply to the human with a TEXT response. "
+        .text "Do NOT use PRINT to talk."
+        .byte $0A
+        .text "Use basic_exec ONLY when you need to compute, check "
+        .text "or change hardware, or run programs."
+        .byte $0A
+        .text "The tool result shows what appeared on YOUR C64 screen. "
+        .text "It is NOT a message from the human."
+        .byte $0A
+        .text "After getting a tool result, respond with a plain TEXT "
+        .text "message. Do NOT call the tool again with the same command."
+        .byte $0A
+        .text "For simple greetings or questions, just reply directly."
+        .byte $0A
+        .text "RULES for basic_exec: ONE statement per call. NO colons. "
+        .text "Maximum 60 characters. No CHR$(147). "
+        .text "Do NOT repeat a successful tool call."
+sys_prompt_end:
+.encoding "screencode_mixed"  // restore default
+
+// Number of chunks needed (compile-time constant)
+.const PROMPT_LEN = sys_prompt_end - sys_prompt
+.const PROMPT_CHUNKS = (PROMPT_LEN + CHUNK_MAX - 1) / CHUNK_MAX
+
+// ---------------------------------------------------------
+// build_next_prompt_chunk — build one SYSTEM frame in send_buf
+//
+// Called from bl_inject when prompt_pending is set. Builds the
+// next chunk, advances ssp_chunk. Clears prompt_pending after
+// the last chunk. Uses the drip-send path (send_buf/send_pos).
+// ---------------------------------------------------------
+build_next_prompt_chunk:
+        // calculate source address: sys_prompt + ssp_chunk * CHUNK_MAX
+        lda ssp_chunk
+        tax
+        lda #0
+        sta ssp_off_lo
+        sta ssp_off_hi
+        cpx #0
+        beq ssp_addr
+ssp_mul:
+        clc
+        lda ssp_off_lo
+        adc #CHUNK_MAX
+        sta ssp_off_lo
+        lda ssp_off_hi
+        adc #0
+        sta ssp_off_hi
+        dex
+        bne ssp_mul
+ssp_addr:
+        clc
+        lda #<sys_prompt
+        adc ssp_off_lo
+        sta ssp_src_lo
+        lda #>sys_prompt
+        adc ssp_off_hi
+        sta ssp_src_hi
+
+        // calculate chunk text length
+        sec
+        lda #<PROMPT_LEN
+        sbc ssp_off_lo
+        sta ssp_remain_lo
+        lda #>PROMPT_LEN
+        sbc ssp_off_hi
+        sta ssp_remain_hi
+        lda ssp_remain_hi
+        bne ssp_full
+        lda ssp_remain_lo
+        cmp #CHUNK_MAX
+        bcc ssp_short
+ssp_full:
+        lda #CHUNK_MAX
+        jmp ssp_len_set
+ssp_short:
+        lda ssp_remain_lo
+ssp_len_set:
+        sta ssp_text_len
+
+        // build SYSTEM frame in send_buf
+        // header: SYNC + TYPE + LEN
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda #FRAME_SYSTEM
+        sta send_buf+1
+        // payload: [chunk_index, total_chunks, text...]
+        // payload length = text_len + 2
+        clc
+        lda ssp_text_len
+        adc #2
+        sta send_buf+2          // LEN
+
+        // payload header
+        lda ssp_chunk
+        sta send_buf+3          // chunk index
+        lda #PROMPT_CHUNKS
+        sta send_buf+4          // total chunks
+
+        // copy text with PETSCII→ASCII conversion
+        lda ssp_src_lo
+        sta ssp_rd+1
+        lda ssp_src_hi
+        sta ssp_rd+2
+        ldy #0
+ssp_copy:
+        cpy ssp_text_len
+        beq ssp_build_chk
+ssp_rd: lda $C000              // self-modified
+        // PETSCII lowercase ($C1-$DA) → ASCII ($61-$7A)
+        cmp #$C1
+        bcc ssp_noc             // < $C1 → not lowercase
+        cmp #$DB
+        bcs ssp_noc             // >= $DB → not lowercase
+        sec
+        sbc #$60                // $C1→$61, $DA→$7A
+>>>>>>> 7be951e (claw64: move system prompt to C64 — the soul lives on the C64)
 ssp_noc:
         sta send_buf+5,y
         inc ssp_rd+1
