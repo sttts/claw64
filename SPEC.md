@@ -13,7 +13,7 @@ agent loop runs on the C64.
 ## Architecture
 
 ```
-Chat user (Slack/WhatsApp/stdin)
+Chat user (Slack/WhatsApp/Signal/stdin)
         |
         v
 +------------------+
@@ -188,10 +188,10 @@ type Channel interface {
 
 Implementations:
 
-- **Slack** via slack-go (`github.com/slack-go/slack`), Socket Mode.
-- **WhatsApp** via whatsmeow (`go.mau.fi/whatsmeow`), pure Go.
-- **Signal** via signal-cli subprocess (planned, not implemented yet).
-- **stdin** for local testing (terminal REPL with colored prompts/logs).
+- **Slack**: slack-go Socket Mode backend.
+- **WhatsApp**: whatsmeow multi-device backend.
+- **Signal**: signal-cli subprocess backend, polling with `receive` and replying with `send`.
+- **stdin**: local terminal REPL backend with colored prompts/logs.
 
 #### LLM backends
 
@@ -209,6 +209,9 @@ CLAW64_LLM=anthropic|anthropic-api|openai|ollama
 CLAW64_LLM_KEY=...        (optional for anthropic CLI mode)
 CLAW64_LLM_MODEL=...      (default per backend)
 CLAW64_LLM_URL=...        (openai/ollama only)
+CLAW64_CHAT=slack|whatsapp|signal|stdin
+CLAW64_SIGNAL_ACCOUNT=... (required for signal-cli)
+CLAW64_SIGNAL_CONFIG=...  (optional signal-cli config dir)
 ```
 
 #### Tools

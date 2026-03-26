@@ -12,10 +12,12 @@
 //	CLAW64_LLM_KEY      — API key (anthropic: auto from Keychain if empty; openai/ollama: optional)
 //	CLAW64_LLM_MODEL    — model name (default per backend)
 //	CLAW64_LLM_URL      — endpoint URL (only for openai/ollama)
-//	CLAW64_CHAT          — chat backend: "slack" or "whatsapp"
+//	CLAW64_CHAT          — chat backend: "slack", "whatsapp", "signal" or "stdin"
 //	SLACK_BOT_TOKEN      — Slack bot token (xoxb-...)
 //	SLACK_APP_TOKEN      — Slack app-level token (xapp-...)
 //	CLAW64_WA_DB         — WhatsApp session DB path (default: whatsapp.db)
+//	CLAW64_SIGNAL_ACCOUNT — Signal phone number/account for signal-cli
+//	CLAW64_SIGNAL_CONFIG  — optional signal-cli config dir
 package main
 
 import (
@@ -132,10 +134,17 @@ func runBridge() {
 			log.Fatalf("whatsapp: %v", err)
 		}
 		ch = waCh
+	case "signal":
+		account := os.Getenv("CLAW64_SIGNAL_ACCOUNT")
+		if account == "" {
+			log.Fatal("CLAW64_SIGNAL_ACCOUNT must be set")
+		}
+		config := os.Getenv("CLAW64_SIGNAL_CONFIG")
+		ch = chat.NewSignal(account, config)
 	case "stdin":
 		ch = chat.NewStdin()
 	default:
-		log.Fatalf("unknown chat backend: %q (use \"slack\", \"whatsapp\", or \"stdin\")", backend)
+		log.Fatalf("unknown chat backend: %q (use \"slack\", \"whatsapp\", \"signal\", or \"stdin\")", backend)
 	}
 
 	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, addr)

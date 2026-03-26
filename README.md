@@ -4,8 +4,6 @@
 
 # Claw64
 
-> **WIP** — Work in progress. Not ready for use.
-
 The Commodore 64 is the agent. BASIC and the visible text screen are its tools.
 
 Claw64 turns a Commodore 64 into an autonomous AI agent. The C64 receives
@@ -14,10 +12,78 @@ BASIC commands into its own REPL — reading the screen to see what happened.
 The bridge is a dumb relay: it proxies LLM calls and chat messages on
 behalf of the C64, which cannot reach the internet at 2400 baud.
 
+## Quickstart
+
+### Prerequisites
+
+- **Java** (any JDK/JRE) — for KickAssembler (downloaded automatically)
+- **VICE** — C64 emulator: `brew install --cask vice`
+- **Go** — for the bridge: `brew install go`
+
+### Terminal
+
+```bash
+CLAW64_CHAT=stdin make run
+```
+
+Starts the local terminal chat. This is the default and the fastest way to
+get a working setup.
+
+### Slack
+
+```bash
+export SLACK_BOT_TOKEN=...
+export SLACK_APP_TOKEN=...
+CLAW64_CHAT=slack make run
+```
+
+### WhatsApp
+
+```bash
+CLAW64_CHAT=whatsapp make run
+```
+
+On first run, scan the QR code shown by the bridge.
+
+### Signal
+
+```bash
+export CLAW64_SIGNAL_ACCOUNT=...
+CLAW64_CHAT=signal make run
+```
+
+Optional:
+
+```bash
+export CLAW64_SIGNAL_CONFIG=...
+```
+
+### LLM Provider
+
+```bash
+CLAW64_LLM=anthropic        # default: claude CLI
+CLAW64_LLM=anthropic-api    # direct API (needs CLAW64_LLM_KEY)
+CLAW64_LLM=openai           # OpenAI (needs CLAW64_LLM_KEY)
+CLAW64_LLM=ollama           # local Ollama
+CLAW64_LLM_MODEL=...        # override model name
+```
+
+### Manual Steps
+
+```bash
+make assemble      # build the C64 agent PRG
+make vice          # launch VICE (auto-starts agent)
+make bridge        # run bridge in another terminal
+```
+
+At startup, the loader shows a lobster logo in multicolor bitmap mode for
+roughly two seconds before restoring the normal BASIC text screen and
+starting the agent.
+
 ## Architecture
 
 ```
-                    Chat (Slack/WhatsApp/stdin)
+                    Chat (Slack/WhatsApp/Signal/stdin)
                               │
                               ▼
                  ┌──────────────────────┐
@@ -80,10 +146,6 @@ behalf of the C64, which cannot reach the internet at 2400 baud.
 │  └─────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────┘
 ```
-
-At startup, the loader shows a lobster logo in multicolor bitmap mode for
-roughly two seconds before restoring the normal BASIC text screen and
-starting the agent.
 
 ## Serial Protocol
 
@@ -162,58 +224,28 @@ Bridge → LLM:       (feeds screenshot text back)
 LLM → Bridge:       plain text answer quoting the screenshot
 ```
 
-## Getting Started
-
-### Prerequisites
-
-- **Java** (any JDK/JRE) — for KickAssembler (downloaded automatically)
-- **VICE** — C64 emulator: `brew install --cask vice`
-- **Go** — for the bridge: `brew install go`
-
-### One command
-
-```bash
-make run
-```
-
-This:
-1. Assembles the C64 agent
-2. Starts the bridge (listening for serial)
-3. Launches VICE (auto-loads agent, auto-types `SYS 49152`)
-4. Bridge detects C64 handshake, shows `you>` prompt
-5. Type a message — the C64 does the rest
-
-No fixed sleeps. Bridge polls for VICE with `nc -z`, syncs via
-handshake byte (`!`).
-
-### Manual steps
-
-```bash
-make assemble      # build the C64 agent PRG
-make vice          # launch VICE (auto-starts agent)
-make bridge        # run bridge in another terminal
-```
-
-### Environment variables
-
-```bash
-CLAW64_LLM=anthropic        # default: claude CLI
-CLAW64_LLM=anthropic-api    # direct API (needs CLAW64_LLM_KEY)
-CLAW64_LLM=openai           # OpenAI (needs CLAW64_LLM_KEY)
-CLAW64_LLM=ollama           # local Ollama
-CLAW64_LLM_MODEL=...        # override model name
-CLAW64_CHAT=stdin            # default: terminal REPL
-CLAW64_CHAT=slack            # needs SLACK_BOT_TOKEN + SLACK_APP_TOKEN
-CLAW64_CHAT=whatsapp         # scans QR on first run
-```
-
 ## Chat Platforms
 
-| Platform | Library | Notes |
-|----------|---------|-------|
-| Slack | [slack-go](https://github.com/slack-go/slack) | Socket Mode |
-| WhatsApp | [whatsmeow](https://github.com/tulir/whatsmeow) | Pure Go, multi-device |
-| stdin | (built-in) | Terminal REPL with colored prompts/logs |
+### Slack
+
+Uses [slack-go](https://github.com/slack-go/slack) in Socket Mode.
+Requires `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`.
+
+### WhatsApp
+
+Uses [whatsmeow](https://github.com/tulir/whatsmeow) with local session
+persistence. First run pairs by QR code.
+
+### Signal
+
+Uses [signal-cli](https://github.com/AsamK/signal-cli) as a subprocess.
+The current backend polls with `receive` and replies with `send`.
+Requires `CLAW64_SIGNAL_ACCOUNT`. `CLAW64_SIGNAL_CONFIG` is optional.
+
+### stdin
+
+Built-in terminal REPL for local testing, with colored prompts and dimmed
+wire logs.
 
 ## LLM Backends
 
@@ -239,8 +271,8 @@ CLAW64_CHAT=whatsapp         # scans QR on first run
 | Bridge Relay (orchestrator) | :white_check_mark: |
 | Chat: Slack | :white_check_mark: |
 | Chat: WhatsApp | :white_check_mark: |
-| Chat: Signal | |
-| Agent Loop (MSG→LLM→EXEC/SCREENSHOT→RESULT) | :construction: |
+| Chat: Signal | :white_check_mark: |
+| Agent Loop (MSG→LLM→EXEC/SCREENSHOT→RESULT) | :white_check_mark: |
 | Robustness + Polish | |
 
 See [SPEC.md](SPEC.md) for the full specification.
