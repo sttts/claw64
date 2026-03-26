@@ -29,7 +29,6 @@ archives:
       - README.md
       - LICENSE
       - c64/claw64.prg
-      - c64/agent.prg
 
 checksum:
   name_template: checksums.txt
