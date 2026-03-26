@@ -1,23 +1,3 @@
-// Claw64 bridge — connects chat platforms to the C64 agent via an LLM.
-//
-// Modes:
-//
-//	bridge             — full bridge: chat + LLM + serial
-//	bridge test-serial — send a test EXEC and print the RESULT (no LLM/chat)
-//
-// Environment variables:
-//
-//	CLAW64_SERIAL_ADDR  — serial TCP address (default: 127.0.0.1:25232)
-//	CLAW64_LLM          — LLM backend: "anthropic", "openai", "ollama" (default: anthropic)
-//	CLAW64_LLM_KEY      — API key (anthropic: auto from Keychain if empty; openai/ollama: optional)
-//	CLAW64_LLM_MODEL    — model name (default per backend)
-//	CLAW64_LLM_URL      — endpoint URL (only for openai/ollama)
-//	CLAW64_CHAT          — chat backend: "slack", "whatsapp", "signal" or "stdin"
-//	SLACK_BOT_TOKEN      — Slack bot token (xoxb-...)
-//	SLACK_APP_TOKEN      — Slack app-level token (xapp-...)
-//	CLAW64_WA_DB         — WhatsApp session DB path (default: whatsapp.db)
-//	CLAW64_SIGNAL_ACCOUNT — Signal phone number/account for signal-cli
-//	CLAW64_SIGNAL_CONFIG  — optional signal-cli config dir
 package main
 
 import (
@@ -25,138 +5,163 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 
-	"github.com/sttts/claw64/relay"
+	"github.com/alecthomas/kong"
+
 	"github.com/sttts/claw64/chat"
 	"github.com/sttts/claw64/llm"
+	"github.com/sttts/claw64/relay"
 	"github.com/sttts/claw64/serial"
 	"github.com/sttts/claw64/termstyle"
 )
 
+type CLI struct {
+	SerialAddr string `name:"serial-addr" default:"127.0.0.1:25232" help:"Serial TCP address VICE connects to."`
+	LLM        string `name:"llm" default:"anthropic" enum:"anthropic,anthropic-api,openai,ollama" help:"LLM backend."`
+	Model      string `name:"model" help:"Override the LLM model name."`
+	LLMURL     string `name:"llm-url" help:"Override the OpenAI/Ollama-compatible endpoint URL."`
+	LLMKey     string `name:"llm-key" help:"API key for direct API backends."`
+	SpawnVICE  bool   `name:"spawn-vice" default:"true" help:"Spawn VICE automatically."`
+	ViceBin    string `name:"vice-bin" default:"x64sc" help:"VICE binary to launch when spawning."`
+	LoaderPRG  string `name:"loader-prg" default:"../c64/claw64.prg" help:"Loader PRG to autostart in VICE."`
+
+	Stdin      StdinCmd      `cmd:"" help:"Chat in the local terminal."`
+	Slack      SlackCmd      `cmd:"" help:"Chat over Slack."`
+	WhatsApp   WhatsAppCmd   `cmd:"" name:"whatsapp" help:"Chat over WhatsApp."`
+	Signal     SignalCmd     `cmd:"" help:"Chat over Signal."`
+	TestSerial TestSerialCmd `cmd:"" name:"test-serial" help:"Send a test EXEC and print the RESULT."`
+}
+
+type StdinCmd struct{}
+
+type SlackCmd struct {
+	BotToken string `name:"bot-token" required:"" help:"Slack bot token (xoxb-...)."`
+	AppToken string `name:"app-token" required:"" help:"Slack app token (xapp-...)."`
+}
+
+type WhatsAppCmd struct {
+	DB string `name:"db" default:"whatsapp.db" help:"SQLite session database path."`
+}
+
+type SignalCmd struct {
+	Account string `name:"account" required:"" help:"Signal phone number/account for signal-cli."`
+	Config  string `name:"config" help:"Optional signal-cli config directory."`
+}
+
+type TestSerialCmd struct {
+	Command string `name:"command" default:"PRINT 42" help:"BASIC command sent as EXEC."`
+}
+
 func main() {
 	log.SetOutput(termstyle.DimWriter(os.Stderr))
 
-	if len(os.Args) > 1 && os.Args[1] == "test-serial" {
-		testSerial()
-		return
+	var cli CLI
+	ctx := kong.Parse(
+		&cli,
+		kong.Name("claw64-bridge"),
+		kong.Description("Bridge chat platforms to the C64 agent."),
+	)
+
+	switch ctx.Command() {
+	case "stdin":
+		runChatBridge(cli, chat.NewStdin())
+	case "slack":
+		runChatBridge(cli, chat.NewSlack(cli.Slack.BotToken, cli.Slack.AppToken))
+	case "whatsapp":
+		waCh, err := chat.NewWhatsApp(cli.WhatsApp.DB)
+		if err != nil {
+			log.Fatalf("whatsapp: %v", err)
+		}
+		runChatBridge(cli, waCh)
+	case "signal":
+		runChatBridge(cli, chat.NewSignal(cli.Signal.Account, cli.Signal.Config))
+	case "test-serial":
+		testSerial(cli.SerialAddr, cli.TestSerial.Command)
+	default:
+		ctx.FatalIfErrorf(fmt.Errorf("unknown command %q", ctx.Command()))
 	}
-	runBridge()
 }
 
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// newLLM creates the LLM client based on CLAW64_LLM env var.
-func newLLM() (llm.Completer, string) {
-	backend := env("CLAW64_LLM", "anthropic")
-	key := os.Getenv("CLAW64_LLM_KEY")
-	model := os.Getenv("CLAW64_LLM_MODEL")
-
-	switch backend {
+func newLLM(cfg CLI) (llm.Completer, string) {
+	switch cfg.LLM {
 	case "anthropic":
-		// default: use claude CLI (handles all auth transparently)
-		c := llm.NewClaudeCLI(model)
+		c := llm.NewClaudeCLI(cfg.Model)
 		return c, fmt.Sprintf("anthropic(cli) model=%s", c.Model)
 
 	case "anthropic-api":
-		// direct API (needs CLAW64_LLM_KEY or working Keychain)
-		c := llm.NewAnthropic(key, model)
+		c := llm.NewAnthropic(cfg.LLMKey, cfg.Model)
 		return c, fmt.Sprintf("anthropic(api) model=%s", c.Model)
 
 	case "openai":
-		url := env("CLAW64_LLM_URL", "https://api.openai.com/v1/chat/completions")
+		url := cfg.LLMURL
+		if url == "" {
+			url = "https://api.openai.com/v1/chat/completions"
+		}
+		model := cfg.Model
 		if model == "" {
 			model = "gpt-4o"
 		}
-		return &llm.OpenAIClient{URL: url, APIKey: key, Model: model},
+		return &llm.OpenAIClient{URL: url, APIKey: cfg.LLMKey, Model: model},
 			fmt.Sprintf("openai url=%s model=%s", url, model)
 
 	case "ollama":
-		url := env("CLAW64_LLM_URL", "http://localhost:11434/v1/chat/completions")
+		url := cfg.LLMURL
+		if url == "" {
+			url = "http://localhost:11434/v1/chat/completions"
+		}
+		model := cfg.Model
 		if model == "" {
 			model = "llama3"
 		}
 		return &llm.OpenAIClient{URL: url, Model: model},
 			fmt.Sprintf("ollama url=%s model=%s", url, model)
-
-	default:
-		log.Fatalf("unknown LLM backend: %q (use \"anthropic\", \"anthropic-api\", \"openai\", or \"ollama\")", backend)
-		return nil, ""
 	}
+
+	log.Fatalf("unknown LLM backend: %q", cfg.LLM)
+	return nil, ""
 }
 
-func runBridge() {
+func runChatBridge(cfg CLI, ch chat.Channel) {
 	ctx := context.Background()
 
-	// connect serial
-	addr := env("CLAW64_SERIAL_ADDR", "127.0.0.1:25232")
-	link, err := serial.Listen(addr)
+	link, err := serial.Listen(cfg.SerialAddr)
 	if err != nil {
 		log.Fatalf("serial: %v", err)
 	}
 	defer link.Close()
 
+	var viceCmd *exec.Cmd
+	if cfg.SpawnVICE {
+		log.Printf("vice: spawning %s with %s", cfg.ViceBin, cfg.LoaderPRG)
+
+		viceCmd, err = spawnVICE(cfg)
+		if err != nil {
+			log.Fatalf("vice: %v", err)
+		}
+		defer stopVICE(viceCmd)
+	}
+
 	log.Println("serial: ready")
 
-	// configure LLM
-	llmClient, llmDesc := newLLM()
+	llmClient, llmDesc := newLLM(cfg)
 
-	// create relay and enable char-by-char progress display
 	rl := &relay.Relay{
 		Link:    link,
 		LLM:     llmClient,
 		History: relay.NewHistory(),
 	}
-	rl.SystemPrompt = llm.SystemPrompt // fallback until C64 sends its soul
+	rl.SystemPrompt = llm.SystemPrompt
 	rl.SetupProgress()
-	// System prompt arrives from C64 on first message (SYSTEM frames before LLM_MSG)
 
-	// select chat backend
-	backend := env("CLAW64_CHAT", "stdin")
+	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, cfg.SerialAddr)
 
-	var ch chat.Channel
-	switch backend {
-	case "slack":
-		botToken := os.Getenv("SLACK_BOT_TOKEN")
-		appToken := os.Getenv("SLACK_APP_TOKEN")
-		if botToken == "" || appToken == "" {
-			log.Fatal("SLACK_BOT_TOKEN and SLACK_APP_TOKEN must be set")
-		}
-		ch = chat.NewSlack(botToken, appToken)
-	case "whatsapp":
-		dbPath := env("CLAW64_WA_DB", "whatsapp.db")
-		waCh, err := chat.NewWhatsApp(dbPath)
-		if err != nil {
-			log.Fatalf("whatsapp: %v", err)
-		}
-		ch = waCh
-	case "signal":
-		account := os.Getenv("CLAW64_SIGNAL_ACCOUNT")
-		if account == "" {
-			log.Fatal("CLAW64_SIGNAL_ACCOUNT must be set")
-		}
-		config := os.Getenv("CLAW64_SIGNAL_CONFIG")
-		ch = chat.NewSignal(account, config)
-	case "stdin":
-		ch = chat.NewStdin()
-	default:
-		log.Fatalf("unknown chat backend: %q (use \"slack\", \"whatsapp\", \"signal\", or \"stdin\")", backend)
-	}
-
-	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, addr)
-
-	// run chat — blocks until ctx is cancelled
 	err = ch.Start(ctx, func(ctx context.Context, userID, text string) (string, error) {
 		reply, err := rl.HandleMessage(ctx, userID, text)
 		if err != nil {
 			log.Printf("     ! error: %v", err)
 			return "", err
 		}
-		// reply was logged by eventLoop as C64 → USER
 		return reply, nil
 	})
 	if err != nil && ctx.Err() == nil {
@@ -164,24 +169,46 @@ func runBridge() {
 	}
 }
 
-// testSerial sends a test EXEC frame and prints the RESULT (no LLM/chat).
-func testSerial() {
-	addr := env("CLAW64_SERIAL_ADDR", "127.0.0.1:25232")
-	// Listen waits for C64 handshake '!' — no sleep needed
+func spawnVICE(cfg CLI) (*exec.Cmd, error) {
+	args := []string{
+		"-rsdev1", cfg.SerialAddr,
+		"-userportdevice", "2",
+		"-rsuserdev", "0",
+		"-rsuserbaud", "2400",
+		"-remotemonitor",
+		"-remotemonitoraddress", "127.0.0.1:6510",
+		"-autostart", cfg.LoaderPRG,
+	}
+
+	cmd := exec.Command(cfg.ViceBin, args...)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return cmd, nil
+}
+
+func stopVICE(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
+}
+
+func testSerial(addr, command string) {
 	link, err := serial.Listen(addr)
 	if err != nil {
 		log.Fatalf("serial: %v", err)
 	}
 	defer link.Close()
 
-	// send EXEC via the standard Send (byte-by-byte with delays)
-	cmd := "PRINT 42"
-	log.Printf("send EXEC: %q", cmd)
-	if err := link.Send(serial.Frame{Type: serial.FrameExec, Payload: []byte(cmd)}); err != nil {
+	log.Printf("send EXEC: %q", command)
+	if err := link.Send(serial.Frame{Type: serial.FrameExec, Payload: []byte(command)}); err != nil {
 		log.Fatalf("send: %v", err)
 	}
 
-	// The agent returns a single RESULT/ERROR frame for EXEC.
 	log.Println("waiting for C64 reply...")
 	var resultChunks map[int]string
 	for {
@@ -201,6 +228,7 @@ func testSerial() {
 			log.Printf("short RESULT payload: %q", string(f.Payload))
 			continue
 		}
+
 		idx := int(f.Payload[0])
 		total := int(f.Payload[1])
 		if resultChunks == nil {

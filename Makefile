@@ -67,24 +67,16 @@ vice-vec: vectest
 vice-echo: echotest
 	$(VICE) $(VICE_RS) -autostartprgmode 1 $(ECHO_OUT)
 
-# launch everything: build, start bridge in foreground, VICE in background.
-# Bridge listens first, then VICE connects when C64 opens RS232.
-# When the bridge exits (Ctrl-C or error), VICE is killed automatically.
+# launch everything via the bridge CLI. By default, it spawns VICE itself.
 run: assemble
 	@-lsof -ti :25232 2>/dev/null | xargs kill 2>/dev/null; true
 	@-pkill -f "$(VICE).*$(LOADER_OUT)" 2>/dev/null; true
-	@(while ! nc -z 127.0.0.1 25232 2>/dev/null; do sleep 0.2; done; \
-	  $(VICE) $(VICE_RS) $(VICE_MON) -autostart $(LOADER_OUT) \
-	  > /dev/null 2>&1) & \
-	VICE_PID=$$!; \
-	trap "kill $$VICE_PID 2>/dev/null" EXIT; \
-	cd bridge && go run .; \
-	kill $$VICE_PID 2>/dev/null; true
+	cd bridge && go run . --vice-bin $(VICE) --loader-prg ../$(LOADER_OUT) stdin
 
-# run the Go bridge (default: uses claude CLI for LLM, stdin for chat)
+# run the Go bridge without spawning VICE
 bridge:
 	@-lsof -ti :25232 2>/dev/null | xargs kill 2>/dev/null; true
-	cd bridge && go run .
+	cd bridge && go run . --spawn-vice=false stdin
 
 # run the serial test tool (TCP server on port 25232)
 test-serial:

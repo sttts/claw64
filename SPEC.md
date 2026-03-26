@@ -205,13 +205,20 @@ The bridge supports multiple LLM backends:
 Configuration via environment variables:
 
 ```
-CLAW64_LLM=anthropic|anthropic-api|openai|ollama
-CLAW64_LLM_KEY=...        (optional for anthropic CLI mode)
-CLAW64_LLM_MODEL=...      (default per backend)
-CLAW64_LLM_URL=...        (openai/ollama only)
-CLAW64_CHAT=slack|whatsapp|signal|stdin
-CLAW64_SIGNAL_ACCOUNT=... (required for signal-cli)
-CLAW64_SIGNAL_CONFIG=...  (optional signal-cli config dir)
+claw64-bridge [global flags] stdin
+claw64-bridge [global flags] slack --bot-token ... --app-token ...
+claw64-bridge [global flags] whatsapp [--db whatsapp.db]
+claw64-bridge [global flags] signal --account ... [--config ...]
+
+Global flags:
+  --serial-addr
+  --llm
+  --model
+  --llm-url
+  --llm-key
+  --spawn-vice
+  --vice-bin
+  --loader-prg
 ```
 
 #### Tools

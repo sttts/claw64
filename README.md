@@ -23,7 +23,7 @@ behalf of the C64, which cannot reach the internet at 2400 baud.
 ### Terminal
 
 ```bash
-CLAW64_CHAT=stdin make run
+make run
 ```
 
 Starts the local terminal chat. This is the default and the fastest way to
@@ -32,15 +32,15 @@ get a working setup.
 ### Slack
 
 ```bash
-export SLACK_BOT_TOKEN=...
-export SLACK_APP_TOKEN=...
-CLAW64_CHAT=slack make run
+cd bridge
+go run . slack --bot-token xoxb-... --app-token xapp-...
 ```
 
 ### WhatsApp
 
 ```bash
-CLAW64_CHAT=whatsapp make run
+cd bridge
+go run . whatsapp
 ```
 
 On first run, scan the QR code shown by the bridge.
@@ -48,24 +48,23 @@ On first run, scan the QR code shown by the bridge.
 ### Signal
 
 ```bash
-export CLAW64_SIGNAL_ACCOUNT=...
-CLAW64_CHAT=signal make run
+cd bridge
+go run . signal --account +49...
 ```
 
 Optional:
 
 ```bash
-export CLAW64_SIGNAL_CONFIG=...
+go run . signal --account +49... --config ~/.local/share/signal-cli
 ```
 
 ### LLM Provider
 
 ```bash
-CLAW64_LLM=anthropic        # default: claude CLI
-CLAW64_LLM=anthropic-api    # direct API (needs CLAW64_LLM_KEY)
-CLAW64_LLM=openai           # OpenAI (needs CLAW64_LLM_KEY)
-CLAW64_LLM=ollama           # local Ollama
-CLAW64_LLM_MODEL=...        # override model name
+go run . --llm anthropic stdin
+go run . --llm anthropic-api --llm-key ... stdin
+go run . --llm openai --llm-key ... --model gpt-4o stdin
+go run . --llm ollama --llm-url http://localhost:11434/v1/chat/completions stdin
 ```
 
 ### Manual Steps
@@ -229,7 +228,7 @@ LLM → Bridge:       plain text answer quoting the screenshot
 ### Slack
 
 Uses [slack-go](https://github.com/slack-go/slack) in Socket Mode.
-Requires `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`.
+Requires `--bot-token` and `--app-token`.
 
 ### WhatsApp
 
@@ -240,7 +239,7 @@ persistence. First run pairs by QR code.
 
 Uses [signal-cli](https://github.com/AsamK/signal-cli) as a subprocess.
 The current backend polls with `receive` and replies with `send`.
-Requires `CLAW64_SIGNAL_ACCOUNT`. `CLAW64_SIGNAL_CONFIG` is optional.
+Requires `--account`. `--config` is optional.
 
 ### stdin
 
