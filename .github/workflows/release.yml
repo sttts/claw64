@@ -25,17 +25,9 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # Resolve the slagent replace directive for CI builds
-      - name: Checkout slagent
-        uses: actions/checkout@v4
-        with:
-          repository: sttts/slagent
-          path: _slagent
-
-      - name: Fix slagent replace path
-        run: |
-          # Point replace to the checked-out slagent copy
-          sed -i 's|replace github.com/sttts/slagent => ..|replace github.com/sttts/slagent => ./_slagent|' go.mod
+      # Drop local replace directive so Go fetches slagent from GitHub
+      - name: Resolve dependencies
+        run: go mod edit -dropreplace github.com/sttts/slagent && go mod tidy
 
       # Build C64 PRG files (make assemble auto-downloads KickAssembler)
       - name: Assemble C64 agent
