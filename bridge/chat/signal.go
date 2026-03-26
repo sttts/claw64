@@ -35,6 +35,8 @@ func (s *SignalChannel) Name() string { return "signal" }
 
 // Start polls signal-cli receive and dispatches incoming messages.
 func (s *SignalChannel) Start(ctx context.Context, handler MessageHandler) error {
+	log.Printf("signal: ready on %s (responds to incoming direct and group messages)", s.account)
+
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -92,9 +94,9 @@ type signalEvent struct {
 
 type signalEnvelope struct {
 	Envelope struct {
-		Source      string `json:"source"`
+		Source       string `json:"source"`
 		SourceNumber string `json:"sourceNumber"`
-		DataMessage *struct {
+		DataMessage  *struct {
 			Message   string `json:"message"`
 			GroupInfo *struct {
 				GroupID string `json:"groupId"`

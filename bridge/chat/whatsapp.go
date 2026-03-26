@@ -82,6 +82,12 @@ func (w *WhatsAppChannel) Start(ctx context.Context, handler MessageHandler) err
 		}
 	}
 
+	if w.client.Store.ID != nil {
+		log.Printf("whatsapp: ready as %s (responds to incoming direct messages)", w.client.Store.ID.String())
+	} else {
+		log.Printf("whatsapp: ready (responds to incoming direct messages)")
+	}
+
 	// Block until the context is cancelled.
 	<-ctx.Done()
 	return ctx.Err()

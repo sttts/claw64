@@ -46,7 +46,7 @@ type WhatsAppCmd struct {
 }
 
 type SignalCmd struct {
-	Account string `name:"account" required:"" help:"Signal phone number/account for signal-cli."`
+	Account string `arg:"" required:"" help:"Signal account / phone number used by signal-cli."`
 	Config  string `name:"config" help:"Optional signal-cli config directory."`
 }
 

@@ -190,8 +190,8 @@ Implementations:
 
 - **Slack**: slagent-backed Slack thread backend with local credential extraction.
   Target may be a thread URL, `@user`, `#channel`, or a Slack channel ID.
-- **WhatsApp**: whatsmeow multi-device backend.
-- **Signal**: signal-cli subprocess backend, polling with `receive` and replying with `send`.
+- **WhatsApp**: whatsmeow multi-device backend. Pairs one WhatsApp account and responds to incoming direct messages on that account.
+- **Signal**: signal-cli subprocess backend. Binds to one account, polls with `receive`, and replies to incoming direct and group messages with `send`.
 - **stdin**: local terminal REPL backend with colored prompts/logs.
 
 #### LLM backends
@@ -209,7 +209,7 @@ Configuration via environment variables:
 claw64-bridge [global flags] stdin
 claw64-bridge [global flags] slack TARGET [--workspace ...] [--topic ...]
 claw64-bridge [global flags] whatsapp [--db whatsapp.db]
-claw64-bridge [global flags] signal --account ... [--config ...]
+claw64-bridge [global flags] signal ACCOUNT [--config ...]
 
 Global flags:
   --serial-addr

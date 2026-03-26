@@ -46,18 +46,20 @@ go run . whatsapp
 ```
 
 On first run, scan the QR code shown by the bridge.
+After pairing, the bridge listens on that WhatsApp account and replies to
+incoming direct messages.
 
 ### Signal
 
 ```bash
 cd bridge
-go run . signal --account +49...
+go run . signal +49...
 ```
 
 Optional:
 
 ```bash
-go run . signal --account +49... --config ~/.local/share/signal-cli
+go run . signal +49... --config ~/.local/share/signal-cli
 ```
 
 ### LLM Provider
@@ -238,13 +240,16 @@ For new threads, the bridge prompts for a topic unless `--topic` is given.
 ### WhatsApp
 
 Uses [whatsmeow](https://github.com/tulir/whatsmeow) with local session
-persistence. First run pairs by QR code.
+persistence. First run pairs by QR code. After pairing, it responds to
+incoming direct messages on that WhatsApp account.
 
 ### Signal
 
 Uses [signal-cli](https://github.com/AsamK/signal-cli) as a subprocess.
 The current backend polls with `receive` and replies with `send`.
-Requires `--account`. `--config` is optional.
+The positional argument is the Signal account / phone number used by
+`signal-cli`. It responds to incoming direct and group messages for that
+account. `--config` is optional.
 
 ### stdin
 
