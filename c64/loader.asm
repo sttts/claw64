@@ -153,6 +153,40 @@ show_logo:
         sta LDR_LEN_HI
         jsr copy_block
 
+        // Overwrite bottom 5 char rows of bitmap with hi-res text data.
+        // Bitmap row 20 starts at offset 20*40*8 = 6400 = $1900.
+        // In VIC bank 1: $6000 + $1900 = $7900.
+        lda #<hires_text_bitmap
+        sta LDR_SRC_LO
+        lda #>hires_text_bitmap
+        sta LDR_SRC_HI
+        lda #$00
+        sta LDR_DST_LO
+        lda #$79                // $7900
+        sta LDR_DST_HI
+        lda #<1600
+        sta LDR_LEN_LO
+        lda #>1600
+        sta LDR_LEN_HI
+        jsr copy_block
+
+        // Overwrite bottom 5 char rows of screen RAM with hi-res colors.
+        // Screen row 20 starts at offset 20*40 = 800 = $0320.
+        // In VIC bank 1: $4400 + $0320 = $4720.
+        lda #<hires_text_screen
+        sta LDR_SRC_LO
+        lda #>hires_text_screen
+        sta LDR_SRC_HI
+        lda #$20
+        sta LDR_DST_LO
+        lda #$47                // $4720
+        sta LDR_DST_HI
+        lda #<200
+        sta LDR_LEN_LO
+        lda #>200
+        sta LDR_LEN_HI
+        jsr copy_block
+
         lda startup_logo_bg
         sta $D020
         sta $D021
@@ -450,3 +484,9 @@ startup_logo_bg:
 
 startup_logo_color:
         .import binary "assets/startup-logo-lobster-color.bin"
+
+hires_text_bitmap:
+        .import binary "assets/startup-logo-lobster-bitmap-hires-bottom.bin"
+
+hires_text_screen:
+        .import binary "assets/startup-logo-lobster-screen-hires-bottom.bin"
