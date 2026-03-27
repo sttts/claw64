@@ -325,24 +325,22 @@ spr_cp0:lda spr_claw1,x
 //   4. Let KERNAL process any pending keystrokes, then loop
 // ---------------------------------------------------------
 bloop:
-        // ---- Step 1: Receive one serial byte ----
+        // ---- Step 1: Drain pending serial bytes ----
         //
-        // Read directly from the KERNAL RS232 ring buffer. GETIN is lossy
-        // on VICE for inbound bridge→C64 traffic and can skip printable
-        // characters even when the raw buffer contains them.
+        // Keep draining until the KERNAL RS232 receive ring is empty.
+        // Capping this to a small fixed batch still allows backlog to
+        // build up across iterations and eventually drop bytes.
+bl_rx_loop:
         jsr serial_read
-        bcs bl_no_data
+        bcs bl_inject           // no more data pending
         sta rx_byte
         lda #0
         sta busy_timer          // reset timeout — serial activity
         lda #1
         sta dot_dir             // byte received → dots right
-        jmp bl_got_data
-bl_no_data:
-        jmp bl_inject           // no data → skip
-bl_got_data:
-        lda rx_byte             // reload the received byte into A
+        lda rx_byte
         jsr frame_rx_byte       // feed byte to the frame protocol parser
+        jmp bl_rx_loop
 
 bl_inject:
         // ---- Build next frame in send_buf if drip-send is idle ----
