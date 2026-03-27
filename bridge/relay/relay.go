@@ -25,16 +25,21 @@ type Relay struct {
 	Link           *serial.Link
 	LLM            llm.Completer
 	History        *History
+	DebugDir       string
+	MonitorAddr    string
+	SymbolPath     string
 	SystemPrompt   string // received from C64
 	promptChunks   map[int]string
 	resultChunks   map[int]string
 	textBuf        []byte // accumulates multi-frame TEXT chunks (receive)
 	textOutQueue   []byte // pending TEXT data to send in chunks (send)
+	textInFlight   []byte // current TEXT chunk sent, waiting for forwarded ack
 	lastToolCallID string
 	lastToolName   string
 }
 
 const textChunkMax = 120
+const textAckTimeout = 8 * time.Second
 
 // handleSystemFrame assembles SYSTEM prompt chunks from the C64.
 func (r *Relay) handleSystemFrame(f serial.Frame) {
@@ -163,7 +168,7 @@ func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (
 // eventLoop waits for C64 frames and reacts.
 func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 	for {
-		f, err := r.recvFromC64(ctx)
+		f, err := r.recvFromC64(ctx, len(r.textOutQueue) > 0)
 		if err != nil {
 			return "", err
 		}
@@ -206,6 +211,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			// TEXT forwarded by C64 after parsing — accumulate and send next chunk
 			fmt.Fprintln(os.Stderr) // newline after streamed payload
 			r.textBuf = append(r.textBuf, f.Payload...)
+			r.textInFlight = nil
 			if len(r.textOutQueue) > 0 {
 				// more chunks to send — wait for this echo, then send next
 				if err := r.sendNextTextChunk(); err != nil {
@@ -242,7 +248,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	msgs = append(msgs, llm.Message{Role: "system", Content: r.SystemPrompt})
 	msgs = append(msgs, history...)
 
-	log.Printf("     → LLM:  calling model...")
+	r.logLLMRequest(msgs, []llm.Tool{llm.BasicExecTool, llm.TextScreenshotTool})
 	resp, err := r.LLM.Complete(ctx, msgs, []llm.Tool{llm.BasicExecTool, llm.TextScreenshotTool})
 	if err != nil {
 		return fmt.Errorf("llm: %w", err)
@@ -312,6 +318,20 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	return nil
 }
 
+func (r *Relay) logLLMRequest(messages []llm.Message, tools []llm.Tool) {
+	if d, ok := r.LLM.(llm.RequestDescriber); ok {
+		url, body, err := d.DescribeRequest(messages, tools)
+		if err != nil {
+			log.Printf("     → LLM:  request preview failed: %v", err)
+			return
+		}
+		log.Printf("     → LLM:  %s", url)
+		log.Printf("     → LLM:  %s", string(body))
+		return
+	}
+	log.Printf("     → LLM:  request")
+}
+
 // sendNextTextChunk sends one TEXT chunk from the queue.
 func (r *Relay) sendNextTextChunk() error {
 	if len(r.textOutQueue) == 0 {
@@ -322,6 +342,7 @@ func (r *Relay) sendNextTextChunk() error {
 		chunk = chunk[:textChunkMax]
 	}
 	r.textOutQueue = r.textOutQueue[len(chunk):]
+	r.textInFlight = append(r.textInFlight[:0], chunk...)
 	logStream("LLM → C64:  TEXT ")
 	textFrame := serial.Frame{Type: serial.FrameText, Payload: chunk}
 	if err := r.sendWithRetry(textFrame); err != nil {
@@ -339,20 +360,78 @@ func (r *Relay) appendToolResult(userID, result string) {
 	})
 }
 
-func (r *Relay) recvFromC64(ctx context.Context) (serial.Frame, error) {
+func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Frame, error) {
+	resultCh := make(chan struct {
+		frame serial.Frame
+		err   error
+	}, 1)
+	go func() {
+		f, err := r.Link.Recv()
+		resultCh <- struct {
+			frame serial.Frame
+			err   error
+		}{frame: f, err: err}
+	}()
+
 	for {
 		if ctx.Err() != nil {
 			return serial.Frame{}, ctx.Err()
 		}
-		f, err := r.Link.Recv()
-		if err != nil {
-			return serial.Frame{}, fmt.Errorf("recv: %w", err)
+
+		var timeout <-chan time.Time
+		if waitingTextAck {
+			timeout = time.After(textAckTimeout)
 		}
-		if f.Type == serial.FrameHeartbeat {
-			continue
+
+		select {
+		case <-ctx.Done():
+			return serial.Frame{}, ctx.Err()
+
+		case res := <-resultCh:
+			if res.err != nil {
+				return serial.Frame{}, fmt.Errorf("recv: %w", res.err)
+			}
+			if res.frame.Type == serial.FrameHeartbeat {
+				go func() {
+					f, err := r.Link.Recv()
+					resultCh <- struct {
+						frame serial.Frame
+						err   error
+					}{frame: f, err: err}
+				}()
+				continue
+			}
+			return res.frame, nil
+
+		case <-timeout:
+			if !waitingTextAck {
+				continue
+			}
+			r.dumpTextAckStall()
 		}
-		return f, nil
 	}
+}
+
+func (r *Relay) dumpTextAckStall() {
+	filename, err := writeStallDump(
+		r.DebugDir,
+		r.MonitorAddr,
+		r.SymbolPath,
+		"waiting for TEXT ack from C64",
+		r.currentTextChunk(),
+	)
+	if err != nil {
+		log.Printf("     ! text ack stall; debug dump failed: %v", err)
+		return
+	}
+	log.Printf("     ! text ack stall; wrote debug dump to %s", filename)
+}
+
+func (r *Relay) currentTextChunk() []byte {
+	if len(r.textInFlight) == 0 {
+		return nil
+	}
+	return append([]byte(nil), r.textInFlight...)
 }
 
 func (r *Relay) sendWithRetry(f serial.Frame) error {

@@ -9,6 +9,12 @@ type Completer interface {
 	Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error)
 }
 
+// RequestDescriber returns the transport target and raw request payload
+// without any auth headers or secrets.
+type RequestDescriber interface {
+	DescribeRequest(messages []Message, tools []Tool) (url string, body []byte, err error)
+}
+
 // Message is a single entry in the chat history.
 // Works for both OpenAI and Anthropic formats — the client translates.
 type Message struct {

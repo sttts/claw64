@@ -7,14 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os/exec"
+	"os"
 	"strings"
 	"sync"
-	"time"
 )
 
 // AnthropicClient talks to the Anthropic Messages API with tool use support.
-// API key is extracted from macOS Keychain (Claude Code/Desktop stored token).
 type AnthropicClient struct {
 	URL   string // default: https://api.anthropic.com/v1/messages
 	Model string // default: claude-sonnet-4-6
@@ -24,7 +22,6 @@ type AnthropicClient struct {
 }
 
 // NewAnthropic creates an Anthropic client with sensible defaults.
-// If apiKey is empty, the token is extracted from macOS Keychain.
 func NewAnthropic(apiKey, model string) *AnthropicClient {
 	url := "https://api.anthropic.com/v1/messages"
 	if model == "" {
@@ -37,56 +34,56 @@ func NewAnthropic(apiKey, model string) *AnthropicClient {
 	}
 }
 
-// token returns the API key, extracting from Keychain if needed.
+// Preflight verifies that Anthropic credentials are available before startup.
+func (c *AnthropicClient) Preflight(context.Context) error {
+	_, err := c.token()
+	return err
+}
+
+// token returns the API key from flags, env, or saved config.
 func (c *AnthropicClient) token() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.cachedToken != "" {
-		return c.cachedToken, nil
-	}
-
-	// extract from macOS Keychain (Claude Code stores credentials here)
-	out, err := exec.Command("security", "find-generic-password", "-s", "Claude Code-credentials", "-w").Output()
-	if err != nil {
-		return "", fmt.Errorf("keychain lookup failed (is Claude Code installed?): %w", err)
-	}
-	raw := bytes.TrimSpace(out)
-
-	// Claude Code stores: {"claudeAiOauth":{"accessToken":"sk-ant-...","expiresAt":"..."}}
-	var creds struct {
-		ClaudeAiOauth struct {
-			AccessToken string `json:"accessToken"`
-			ExpiresAt   string `json:"expiresAt"`
-		} `json:"claudeAiOauth"`
-	}
-	if json.Unmarshal(raw, &creds) == nil && creds.ClaudeAiOauth.AccessToken != "" {
-		if creds.ClaudeAiOauth.ExpiresAt != "" {
-			if t, err := time.Parse(time.RFC3339, creds.ClaudeAiOauth.ExpiresAt); err == nil && time.Now().After(t) {
-				return "", fmt.Errorf("OAuth token expired at %s", creds.ClaudeAiOauth.ExpiresAt)
-			}
+		if err := validateAnthropicAPIKey(c.cachedToken); err != nil {
+			return "", err
 		}
-		c.cachedToken = creds.ClaudeAiOauth.AccessToken
 		return c.cachedToken, nil
 	}
 
-	// try flat OAuth format: {"accessToken":"...","expiresAt":"..."}
-	var flat struct {
-		AccessToken string `json:"accessToken"`
-		ExpiresAt   string `json:"expiresAt"`
-	}
-	if json.Unmarshal(raw, &flat) == nil && flat.AccessToken != "" {
-		c.cachedToken = flat.AccessToken
+	if tok := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); tok != "" {
+		if err := validateAnthropicAPIKey(tok); err != nil {
+			return "", err
+		}
+		c.cachedToken = tok
 		return c.cachedToken, nil
 	}
 
-	// fall back to raw sk-ant-* API key
-	tok := string(raw)
-	if !strings.HasPrefix(tok, "sk-ant-") {
-		return "", fmt.Errorf("unrecognized token format in keychain")
+	if tok, err := loadAnthropicStoredToken(); err == nil && tok != "" {
+		if err := validateAnthropicAPIKey(tok); err != nil {
+			return "", err
+		}
+		c.cachedToken = tok
+		return c.cachedToken, nil
+	} else if err != nil {
+		return "", fmt.Errorf("load stored token: %w", err)
 	}
-	c.cachedToken = tok
-	return c.cachedToken, nil
+
+	return "", fmt.Errorf("no Anthropic API key found; pass --llm-key, set ANTHROPIC_API_KEY, or run `claw64-bridge auth set-key`")
+}
+
+func validateAnthropicAPIKey(tok string) error {
+	switch {
+	case tok == "":
+		return fmt.Errorf("empty Anthropic API key")
+	case strings.HasPrefix(tok, "sk-ant-oat"):
+		return fmt.Errorf("Claude subscription tokens are not supported; use a real Anthropic API key")
+	case !strings.HasPrefix(tok, "sk-ant-"):
+		return fmt.Errorf("invalid Anthropic API key format")
+	default:
+		return nil
+	}
 }
 
 // Anthropic API request types
@@ -94,9 +91,14 @@ func (c *AnthropicClient) token() (string, error) {
 type anthRequest struct {
 	Model     string         `json:"model"`
 	MaxTokens int            `json:"max_tokens"`
-	System    string         `json:"system,omitempty"`
+	System    []anthSysBlock `json:"system,omitempty"`
 	Messages  []anthMessage  `json:"messages"`
 	Tools     []anthTool     `json:"tools,omitempty"`
+}
+
+type anthSysBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 type anthMessage struct {
@@ -113,13 +115,13 @@ type anthTool struct {
 // Anthropic API response types
 
 type anthResponse struct {
-	Content  []anthContent `json:"content"`
-	StopReason string     `json:"stop_reason"`
-	Error    *anthError    `json:"error,omitempty"`
+	Content    []anthContent `json:"content"`
+	StopReason string        `json:"stop_reason"`
+	Error      *anthError    `json:"error,omitempty"`
 }
 
 type anthContent struct {
-	Type  string          `json:"type"`            // "text" or "tool_use"
+	Type  string          `json:"type"` // "text" or "tool_use"
 	Text  string          `json:"text,omitempty"`
 	ID    string          `json:"id,omitempty"`    // tool_use ID
 	Name  string          `json:"name,omitempty"`  // tool_use function name
@@ -129,6 +131,44 @@ type anthContent struct {
 type anthError struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+}
+
+func (c *AnthropicClient) DescribeRequest(messages []Message, tools []Tool) (string, []byte, error) {
+	var system string
+	var convMsgs []Message
+	for _, m := range messages {
+		if m.Role == "system" {
+			system = m.Content
+		} else {
+			convMsgs = append(convMsgs, m)
+		}
+	}
+
+	anthMsgs, err := toAnthMessages(convMsgs)
+	if err != nil {
+		return "", nil, err
+	}
+
+	var anthTools []anthTool
+	for _, t := range tools {
+		anthTools = append(anthTools, anthTool{
+			Name:        t.Function.Name,
+			Description: t.Function.Description,
+			InputSchema: t.Function.Parameters,
+		})
+	}
+
+	body, err := json.Marshal(anthRequest{
+		Model:     c.Model,
+		MaxTokens: 4096,
+		System:    buildSystemBlocks(system),
+		Messages:  anthMsgs,
+		Tools:     anthTools,
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return c.URL, body, nil
 }
 
 // Complete sends messages to the Anthropic Messages API and translates
@@ -150,6 +190,8 @@ func (c *AnthropicClient) Complete(ctx context.Context, messages []Message, tool
 		}
 	}
 
+	systemBlocks := buildSystemBlocks(system)
+
 	// convert messages to Anthropic format
 	anthMsgs, err := toAnthMessages(convMsgs)
 	if err != nil {
@@ -169,7 +211,7 @@ func (c *AnthropicClient) Complete(ctx context.Context, messages []Message, tool
 	reqBody := anthRequest{
 		Model:     c.Model,
 		MaxTokens: 4096,
-		System:    system,
+		System:    systemBlocks,
 		Messages:  anthMsgs,
 		Tools:     anthTools,
 	}
@@ -184,9 +226,7 @@ func (c *AnthropicClient) Complete(ctx context.Context, messages []Message, tool
 	if err != nil {
 		return Message{}, fmt.Errorf("request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Key", tok)
-	req.Header.Set("Anthropic-Version", "2023-06-01")
+	setAnthropicHeaders(req, tok)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -220,6 +260,21 @@ func (c *AnthropicClient) Complete(ctx context.Context, messages []Message, tool
 
 	// translate response back to unified Message
 	return fromAnthResponse(anthResp), nil
+}
+
+func buildSystemBlocks(system string) []anthSysBlock {
+	if system == "" {
+		return nil
+	}
+	return []anthSysBlock{{Type: "text", Text: system}}
+}
+
+func setAnthropicHeaders(req *http.Request, token string) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	req.Header.Set("X-Api-Key", token)
+	req.Header.Set("Anthropic-Beta", "fine-grained-tool-streaming-2025-05-14")
 }
 
 // toAnthMessages converts our unified Messages to Anthropic format.

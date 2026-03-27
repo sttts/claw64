@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/alecthomas/kong"
@@ -22,7 +24,7 @@ import (
 
 type CLI struct {
 	SerialAddr string `name:"serial-addr" default:"127.0.0.1:25232" help:"Serial TCP address VICE connects to."`
-	LLM        string `name:"llm" default:"anthropic" enum:"anthropic,anthropic-api,openai,ollama" help:"LLM backend."`
+	LLM        string `name:"llm" default:"openai" enum:"anthropic,openai,ollama" help:"LLM backend."`
 	Model      string `name:"model" help:"Override the LLM model name."`
 	LLMURL     string `name:"llm-url" help:"Override the OpenAI/Ollama-compatible endpoint URL."`
 	LLMKey     string `name:"llm-key" help:"API key for direct API backends."`
@@ -34,6 +36,7 @@ type CLI struct {
 	Slack      SlackCmd      `cmd:"" help:"Chat over Slack."`
 	WhatsApp   WhatsAppCmd   `cmd:"" name:"whatsapp" help:"Chat over WhatsApp."`
 	Signal     SignalCmd     `cmd:"" help:"Chat over Signal."`
+	Auth       AuthCmd       `cmd:"" help:"Manage Anthropic direct-API credentials."`
 	TestSerial TestSerialCmd `cmd:"" name:"test-serial" help:"Send a test EXEC and print the RESULT."`
 }
 
@@ -54,6 +57,14 @@ type SignalCmd struct {
 	Account string `arg:"" required:"" help:"Signal account / phone number used by signal-cli."`
 	Target  string `arg:"" required:"" help:"Explicit Signal target: user:<phone> or group:<group-id>."`
 	Config  string `name:"config" help:"Optional signal-cli config directory."`
+}
+
+type AuthCmd struct {
+	SetKey AuthSetKeyCmd `cmd:"" name:"set-key" help:"Save a real Anthropic API key for direct API use."`
+}
+
+type AuthSetKeyCmd struct {
+	Token string `arg:"" help:"Anthropic API key. If omitted, read from stdin."`
 }
 
 type TestSerialCmd struct {
@@ -86,6 +97,20 @@ func main() {
 		runChatBridge(cli, waCh)
 	case "signal <account> <target>":
 		runChatBridge(cli, chat.NewSignal(cli.Signal.Account, cli.Signal.Config, cli.Signal.Target))
+	case "auth set-key":
+		token := cli.Auth.SetKey.Token
+		if token == "" {
+			var err error
+			token, err = readLineFromStdin("Paste Anthropic API key: ")
+			if err != nil {
+				log.Fatalf("auth: %v", err)
+			}
+		}
+		path, err := llm.SaveAnthropicToken(token)
+		if err != nil {
+			log.Fatalf("auth: %v", err)
+		}
+		log.Printf("auth: saved Anthropic token to %s", path)
 	case "test-serial":
 		testSerial(cli.SerialAddr, cli.TestSerial.Command)
 	default:
@@ -93,13 +118,18 @@ func main() {
 	}
 }
 
+func readLineFromStdin(prompt string) (string, error) {
+	fmt.Fprint(os.Stderr, prompt)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
 func newLLM(cfg CLI) (llm.Completer, string) {
 	switch cfg.LLM {
 	case "anthropic":
-		c := llm.NewClaudeCLI(cfg.Model)
-		return c, fmt.Sprintf("anthropic(cli) model=%s", c.Model)
-
-	case "anthropic-api":
 		c := llm.NewAnthropic(cfg.LLMKey, cfg.Model)
 		return c, fmt.Sprintf("anthropic(api) model=%s", c.Model)
 
@@ -135,6 +165,11 @@ func newLLM(cfg CLI) (llm.Completer, string) {
 func runChatBridge(cfg CLI, ch chat.Channel) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	llmClient, llmDesc := newLLM(cfg)
+	if err := preflightInfra(ctx, cfg, ch, llmClient); err != nil {
+		log.Fatalf("setup: %v", err)
+	}
 
 	var viceCmd *exec.Cmd
 	cleanupLoader := func() {}
@@ -172,14 +207,14 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 
 	log.Println("serial: ready")
 
-	llmClient, llmDesc := newLLM(cfg)
-
 	rl := &relay.Relay{
-		Link:    link,
-		LLM:     llmClient,
-		History: relay.NewHistory(),
+		Link:        link,
+		LLM:         llmClient,
+		History:     relay.NewHistory(),
+		DebugDir:    "debug",
+		MonitorAddr: "127.0.0.1:6510",
+		SymbolPath:  "c64/agent.sym",
 	}
-	rl.SystemPrompt = llm.SystemPrompt
 	rl.SetupProgress()
 
 	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, cfg.SerialAddr)
@@ -195,6 +230,36 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, chat.ErrInterrupted) && ctx.Err() == nil {
 		log.Fatalf("chat: %v", err)
 	}
+}
+
+func preflightInfra(ctx context.Context, cfg CLI, ch chat.Channel, llmClient llm.Completer) error {
+	if p, ok := ch.(chat.Preflighter); ok {
+		if err := p.Preflight(ctx); err != nil {
+			return err
+		}
+	}
+
+	type llmPreflighter interface {
+		Preflight(context.Context) error
+	}
+	if p, ok := llmClient.(llmPreflighter); ok {
+		if err := p.Preflight(ctx); err != nil {
+			if cfg.LLM == "openai" && errors.Is(err, llm.ErrOpenAICodexAuthRequired) && llm.CanPromptForOpenAICodexAuth() {
+				ok, promptErr := llm.ConfirmOpenAICodexAuth()
+				if promptErr != nil {
+					return promptErr
+				}
+				if ok {
+					if authErr := llm.RunOpenAICodexAuth(); authErr != nil {
+						return authErr
+					}
+					return p.Preflight(ctx)
+				}
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func loaderPRGPath(cfg CLI) (string, func(), error) {
