@@ -266,9 +266,24 @@ spr_cp0:lda spr_claw1,x
         cli                     // re-enable interrupts for KERNAL calls
         jsr serial_init         // open RS232 device 2 at 2400 baud 8N1
 
-        // Reset BASIC pointers — LOAD"AGENT",8,1 set $2D/$2E to $C485
-        // (end of our PRG). BASIC thinks variables start there, leaving
-        // negative free memory. Reset to $0803 (empty program).
+        // Reset BASIC program memory to a true empty program.
+        // The loader PRG leaves a BASIC stub at $0801 ("10 SYS 2062").
+        // Merely moving the pointers is not enough — BASIC still sees
+        // stale line-link bytes there and manual line entry becomes
+        // corrupted. A real empty program is:
+        //   TXTTAB = $0801
+        //   [$0801,$0802] = $00,$00
+        //   VARTAB/ARYTAB/STREND = $0803
+        lda #$01
+        sta $2B                // TXTTAB low
+        lda #$08
+        sta $2C                // TXTTAB high
+        lda #$00
+        sta $0801
+        sta $0802
+
+        // LOAD"AGENT",8,1 set $2D/$2E to the PRG end in high memory.
+        // Reset program end and variable pointers to the empty-program end.
         lda #$03
         sta $2D
         lda #$08
