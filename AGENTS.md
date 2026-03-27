@@ -24,7 +24,8 @@ bridge/
   serial/serial.go           — TCP connection to VICE, frame send/recv
   serial/frame.go            — Frame types, marshal/unmarshal, checksum
   llm/llm.go                 — Completer interface
-  llm/tools.go               — basic_exec + text_screenshot tool schemas
+  llm/tools.go               — basic_exec, text_screenshot,
+                               basic_status, basic_stop tool schemas
   llm/anthropic.go           — Anthropic Messages API client
   llm/openai.go              — OpenAI-compatible chat completions client
   chat/chat.go               — Channel interface
@@ -60,17 +61,20 @@ Module: `github.com/sttts/claw64`
 
 ## Architecture Notes
 - C64 agent is a TSR at $C000, hooks KERNAL at $E5D1 and IRQ at $0314/$0315, invisible to user.
-- Serial protocol: SYNC(0xFE) + TYPE(1) + LENGTH(1) + PAYLOAD(0-120) + CHK(XOR).
-- Frame types: MSG('M'), EXEC('E'), TEXT('T'), RESULT('R'), LLM_MSG('L'), ERROR('X'), SYSTEM('S'), HEARTBEAT('H').
-- Multi-frame: payload of 120 bytes = more chunks follow, shorter = final.
+- Serial protocol: SYNC(0xFE) + TYPE(1) + LENGTH(1) + PAYLOAD + CHK(XOR).
+- Frame types include MSG('M'), EXEC('E'), EXECGO('G'), STOP('K'), STATUS('Q'/'U'),
+  TEXT('T'), RESULT('R'), ACK('A'), LLM_MSG('L'), ERROR('X'), SYSTEM('S').
+- Text-oriented multi-frame payloads use 120-byte chunks with in-band chunk headers for SYSTEM and RESULT.
 - RS232 at 2400 baud via C64 userport. VICE maps to TCP localhost:25232.
-- Bridge sends bytes with 25ms spacing (one C64 main loop iteration for PAL/NTSC).
-- Echo: C64 echoes received bytes (SYNC-filtered) to keep VICE TX alive for drip-send.
+- Bridge sends bytes with paced writes to satisfy VICE/KERNAL RS232 timing.
 - KERNAL patches: $E5D1 (agent reentry), $E8EA (scroll tracking for scan_start).
 - System prompt (the C64's soul) stored in agent.asm, sent as SYSTEM frames on first MSG.
 - TEXT responses flow LLM→bridge→C64→bridge→user (no bridge shortcuts).
-- Buffers pinned at top of $C000-$CFFF block: RXBUF=$CD00, TXBUF=$CE00.
-- Tools: basic_exec (run BASIC), text_screenshot (read screen without executing).
+- Buffers live below $D000 with RXBUF at $CF00 and TXBUF at $CF80.
+- Tools: basic_exec, text_screenshot, basic_status, basic_stop.
+- If BASIC is already running, reject a new basic_exec and keep screenshot/status/stop available.
+- ALWAYS verify that assembled agent code does not overlap the fixed RX/TX buffers.
+- After changing C64 code or buffer addresses, check the KickAssembler memory map and symbol output before committing.
 - Chat channels: Slack, WhatsApp, Signal, stdin.
 - LLM backends: Anthropic API, OpenAI-compatible, Ollama.
 - Bridge invariant: the bridge is a pure router. The only soul/system prompt lives in `c64/agent.asm`.

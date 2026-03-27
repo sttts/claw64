@@ -52,7 +52,7 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 		"m 029b 029e",
 		"m 00f7 00fa",
 		"m 0400 07ff",
-		"m cd00 ceff",
+		"m cf00 cfff",
 		"m c000 cfff",
 	}
 	if start, end, ok := symbolRange(syms,

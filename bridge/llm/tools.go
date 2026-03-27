@@ -33,6 +33,34 @@ var TextScreenshotTool = Tool{
 	},
 }
 
+// BasicStopTool requests a RUN/STOP-style break on the C64.
+var BasicStopTool = Tool{
+	Type: "function",
+	Function: Function{
+		Name:        "basic_stop",
+		Description: "Stop the currently running BASIC program and return control to READY if possible",
+		Parameters: Parameters{
+			Type:       "object",
+			Properties: map[string]Property{},
+			Required:   []string{},
+		},
+	},
+}
+
+// BasicStatusTool asks whether BASIC is still running or sitting at READY.
+var BasicStatusTool = Tool{
+	Type: "function",
+	Function: Function{
+		Name:        "basic_status",
+		Description: "Return whether the C64 BASIC interpreter is still running a program or is back at READY",
+		Parameters: Parameters{
+			Type:       "object",
+			Properties: map[string]Property{},
+			Required:   []string{},
+		},
+	},
+}
+
 // Tool describes an OpenAI function-calling tool.
 type Tool struct {
 	Type     string   `json:"type"`

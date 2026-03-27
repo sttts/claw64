@@ -255,6 +255,29 @@ Bridge → LLM:       (feeds screenshot text back)
 LLM → Bridge:       plain text answer quoting the screenshot
 ```
 
+Long-running BASIC flow:
+
+```
+User:               "Print 1 to 1001"
+Bridge → C64:       M │ Print 1 to 1001
+C64 → Bridge:       L │ Print 1 to 1001
+LLM → Bridge:       tool_call: basic_exec("FORI=1TO1001:PRINTI:NEXTI")
+Bridge → C64:       E │ FORI=1TO1001:PRINTI:NEXTI
+Bridge → C64:       G │
+
+C64 starts the BASIC program
+If it keeps running too long, the C64 returns:
+
+C64 → Bridge:       U │ RUNNING
+
+LLM may then use:
+- basic_status()
+- basic_stop()
+- text_screenshot()
+
+While BASIC is running, a second basic_exec is rejected.
+```
+
 ## Chat Platforms
 
 ### Slack
@@ -309,6 +332,8 @@ wire logs.
 | Screen Scraping + READY. Detection | :white_check_mark: |
 | Startup Loader Logo | :white_check_mark: |
 | Tool: text_screenshot | :white_check_mark: |
+| Tool: basic_status | :white_check_mark: |
+| Tool: basic_stop | :white_check_mark: |
 | Bridge LLM Client | :white_check_mark: |
 | Bridge Relay (orchestrator) | :white_check_mark: |
 | Chat: Slack | :white_check_mark: |

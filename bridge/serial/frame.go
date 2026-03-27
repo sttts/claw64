@@ -28,12 +28,15 @@ const (
 	FrameMsg        byte = 0x4D // 'M' — user's chat message
 	FrameExec       byte = 0x45 // 'E' — tool call: BASIC command to execute
 	FrameExecGo     byte = 0x47 // 'G' — bridge confirmed EXEC may run
+	FrameStop       byte = 0x4B // 'K' — request RUN/STOP for current BASIC program
+	FrameStatusReq  byte = 0x51 // 'Q' — ask whether BASIC is running or READY
 	FrameText       byte = 0x54 // 'T' — LLM's final answer, forward to user
 	FrameScreenshot byte = 0x50 // 'P' — request current text screen snapshot
 
 	// C64 → Bridge
 	FrameAck       byte = 0x41 // 'A' — exact payload echo for verified delivery
 	FrameResult    byte = 0x52 // 'R' — tool result: screen scrape
+	FrameStatus    byte = 0x55 // 'U' — BASIC state / long-running status text
 	FrameLLM       byte = 0x4C // 'L' — context message for the LLM
 	FrameError     byte = 0x58 // 'X' — tool call timed out
 	FrameHeartbeat byte = 0x48 // 'H' — heartbeat
@@ -129,8 +132,9 @@ readType:
 	chk ^= length
 
 	// sanity check: reject unrecognized frame types
-	if typ != FrameMsg && typ != FrameExec && typ != FrameExecGo && typ != FrameText &&
-		typ != FrameScreenshot && typ != FrameAck && typ != FrameResult &&
+	if typ != FrameMsg && typ != FrameExec && typ != FrameExecGo && typ != FrameStop &&
+		typ != FrameStatusReq && typ != FrameText && typ != FrameScreenshot &&
+		typ != FrameAck && typ != FrameResult && typ != FrameStatus &&
 		typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat &&
 		typ != FrameSystem {
 		log.Printf("  bad type 0x%02X, resync", typ)
@@ -180,6 +184,10 @@ func TypeName(t byte) string {
 		return "EXEC"
 	case FrameExecGo:
 		return "EXECGO"
+	case FrameStop:
+		return "STOP"
+	case FrameStatusReq:
+		return "STATUS"
 	case FrameText:
 		return "TEXT"
 	case FrameScreenshot:
@@ -188,6 +196,8 @@ func TypeName(t byte) string {
 		return "ACK"
 	case FrameResult:
 		return "RESULT"
+	case FrameStatus:
+		return "STATE"
 	case FrameLLM:
 		return "LLM_MSG"
 	case FrameError:

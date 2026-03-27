@@ -245,6 +245,8 @@ overrides that embedded image.
 
 - `basic_exec(command)` — execute one BASIC command and return the resulting screen output.
 - `text_screenshot()` — return the current visible text screen without running BASIC.
+- `basic_status()` — return whether BASIC is still running or back at `READY.`.
+- `basic_stop()` — request a RUN/STOP break for the currently running BASIC program.
 
 #### System prompt
 
@@ -256,8 +258,11 @@ Current intent:
 - Stay within 1982 knowledge. If asked about later facts, say you do not know them.
 - Use `basic_exec` for BASIC commands.
 - Use `text_screenshot` to inspect the visible text screen without running BASIC.
+- Use `basic_status` to check whether BASIC is still running or back at `READY.`.
+- Use `basic_stop` to stop a running BASIC program.
 - Tool results are screen output, not human messages.
 - Long scrolling output may only show the tail.
+- If BASIC is already running, do not call `basic_exec`; use status, stop, or screenshot.
 - Show screenshot output as quoted text or fenced code when alignment matters.
 ```
 
@@ -290,11 +295,16 @@ Total overhead: 4 bytes per frame.
 Bridge -> C64:
   'M' (0x4D)  MSG         User's chat message text
   'E' (0x45)  EXEC        Tool call: BASIC command to execute
+  'G' (0x47)  EXECGO      Verified EXEC may now run
+  'K' (0x4B)  STOP        Request RUN/STOP on the current BASIC program
   'P' (0x50)  SCREENSHOT  Request current visible text screen
+  'Q' (0x51)  STATUS      Ask whether BASIC is RUNNING or READY
   'T' (0x54)  TEXT        LLM's final text response (forward to user)
 
 C64 -> Bridge:
+  'A' (0x41)  ACK         Verified delivery echo for bridge->C64 frames
   'R' (0x52)  RESULT      Tool result: EXEC output or screenshot text
+  'U' (0x55)  STATUS      BASIC state text, e.g. RUNNING or READY.
   'L' (0x4C)  LLM_MSG     Message to append to LLM conversation
   'X' (0x58)  ERROR       Tool call timed out or failed
   'S' (0x53)  SYSTEM      System prompt chunk (sent on first MSG)
@@ -313,11 +323,10 @@ All payloads are plain text. No JSON, no quoting, no escaping.
 
 #### Multi-frame messages
 
-Frame payload is limited to 120 bytes (length field is 7-bit, max 127,
-with headroom). SYSTEM and RESULT use an in-band chunk header:
-`[chunk_index, total_chunks, text...]`. TEXT is chunked as repeated
-120-byte frames, and the bridge waits for each echoed chunk before
-sending the next one.
+Frame payload is limited to 120 bytes for text-oriented frames. SYSTEM and
+RESULT use an in-band chunk header: `[chunk_index, total_chunks, text...]`.
+TEXT is chunked as repeated 120-byte frames, and the bridge waits for
+verified delivery plus the forwarded TEXT frame before sending the next one.
 
 Used by: TEXT, SYSTEM, RESULT.
 
@@ -335,8 +344,15 @@ Used by: TEXT, SYSTEM, RESULT.
   through the C64. TEXT responses go LLM→bridge→C64→bridge→user.
 - All frame payloads are displayed char-by-char as bytes arrive on or
   leave the wire. Never buffer and print a complete message at once.
+- Bridge→C64 command frames use explicit ACK verification. `EXEC` is
+  verified before the empty `EXECGO` trigger is sent.
 
 #### Error handling
+
+- If a BASIC program keeps running too long, the C64 may detach from the
+  wait and return `STATUS "RUNNING"` instead of stalling the whole tool turn.
+- While BASIC is running, `text_screenshot`, `basic_status`, and `basic_stop`
+  remain valid, but a second `basic_exec` is rejected with `STATUS "BUSY"`.
 
 - Bad checksum: frame dropped silently, parser resets to SYNC hunt.
 - The bridge retries EXEC frames on timeout (3 attempts, 500ms/1s/2s).

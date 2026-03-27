@@ -3,11 +3,15 @@
 // ================================================
 
 // Agent memory layout
-// Code grows up from $C000. Buffers are pinned at the top of the
-// $C000-$CFFF block (below $D000 I/O). No overlap possible.
-.const AGENT_BASE    = $C000  // agent code starts here
-.const AGENT_RXBUF   = $CD00  // 256-byte receive buffer
-.const AGENT_TXBUF   = $CE00  // 256-byte transmit / inject buffer
+// Code grows up from $C000. The fixed buffers live in the remaining
+// space below $D000. Frame payloads are capped at 127 bytes, so the
+// receive buffer only needs 128 bytes. The transmit buffer needs enough
+// room for one full encoded frame (SYNC+TYPE+LEN+127-byte payload+CHK).
+.const AGENT_BASE      = $C000  // agent code starts here
+.const AGENT_RXBUF     = $CF00  // 128-byte receive / tool payload buffer
+.const AGENT_TXBUF     = $CF80  // 144-byte transmit / inject buffer
+.const AGENT_RXBUF_LEN = 128
+.const AGENT_TXBUF_LEN = 144
 
 // KERNAL jump table
 .const SETLFS  = $FFBA
@@ -27,6 +31,8 @@
 .const IMAIN_HI     = $0303  // BASIC main loop vector high byte
 .const IGETIN_LO    = $032A  // KERNAL GETIN vector low byte
 .const IGETIN_HI    = $032B  // KERNAL GETIN vector high byte
+.const ISTOP_LO     = $032C  // KERNAL STOP-check vector low byte
+.const ISTOP_HI     = $032D  // KERNAL STOP-check vector high byte
 .const IBASIN_LO    = $0326  // KERNAL BASIN vector low byte
 .const IBASIN_HI    = $0327  // KERNAL BASIN vector high byte
 
@@ -65,12 +71,15 @@
 .const FRAME_MSG    = $4D    // 'M' — user's chat message
 .const FRAME_EXEC   = $45    // 'E' — tool call: BASIC command to execute
 .const FRAME_EXECGO = $47    // 'G' — bridge confirms verified EXEC may run
+.const FRAME_STOP   = $4B    // 'K' — request RUN/STOP for current BASIC program
+.const FRAME_STATUSQ = $51   // 'Q' — ask whether BASIC is RUNNING or READY
 .const FRAME_SCREEN = $50    // 'P' — request current text screen snapshot
 .const FRAME_TEXT   = $54    // 'T' — LLM's final answer, forward to user
 //
 // C64 -> Bridge:
 .const FRAME_ACK    = $41    // 'A' — exact payload echo for verified delivery
 .const FRAME_RESULT = $52    // 'R' — tool result: screen scrape
+.const FRAME_STATUS = $55    // 'U' — BASIC state / long-running status text
 .const FRAME_LLM    = $4C    // 'L' — context message for the LLM
 .const FRAME_ERROR  = $58    // 'X' — tool call timed out
 .const FRAME_HBEAT  = $48    // 'H' — heartbeat

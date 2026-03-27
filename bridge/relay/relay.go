@@ -42,8 +42,15 @@ type Relay struct {
 
 const textChunkMax = 120
 const textAckTimeout = 8 * time.Second
-const toolAckTimeout = 8 * time.Second
+const toolAckTimeout = 12 * time.Second
 const c64FrameTimeout = 8 * time.Second
+
+var llmTools = []llm.Tool{
+	llm.BasicExecTool,
+	llm.TextScreenshotTool,
+	llm.BasicStopTool,
+	llm.BasicStatusTool,
+}
 
 // handleSystemFrame assembles SYSTEM prompt chunks from the C64.
 func (r *Relay) handleSystemFrame(f serial.Frame) {
@@ -129,6 +136,8 @@ func (r *Relay) SetupProgress() {
 				logStream("C64 → LLM:   ")
 			case serial.FrameResult:
 				logStream("C64 → LLM:   RESULT ")
+			case serial.FrameStatus:
+				logStream("C64 → LLM:   STATUS ")
 			case serial.FrameText:
 				logStream("C64 → USER:  ")
 			case serial.FrameSystem:
@@ -207,6 +216,19 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 				return "", err
 			}
 
+		case serial.FrameStatus:
+			fmt.Fprintln(os.Stderr)
+			r.toolInFlight = nil
+			r.waitingTool = false
+			status := string(f.Payload)
+			if status == "" {
+				status = "UNKNOWN"
+			}
+			r.appendToolResult(userID, "[C64 BASIC status]: "+status)
+			if err := r.callAndDispatch(ctx, userID); err != nil {
+				return "", err
+			}
+
 		case serial.FrameError:
 			log.Printf("C64 → LLM:   ERROR (timeout)")
 			r.toolInFlight = nil
@@ -262,8 +284,8 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	msgs = append(msgs, llm.Message{Role: "system", Content: r.SystemPrompt})
 	msgs = append(msgs, history...)
 
-	r.logLLMRequest(msgs, []llm.Tool{llm.BasicExecTool, llm.TextScreenshotTool})
-	resp, err := r.LLM.Complete(ctx, msgs, []llm.Tool{llm.BasicExecTool, llm.TextScreenshotTool})
+	r.logLLMRequest(msgs, llmTools)
+	resp, err := r.LLM.Complete(ctx, msgs, llmTools)
 	if err != nil {
 		return fmt.Errorf("llm: %w", err)
 	}
@@ -324,6 +346,36 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			r.toolInFlight = r.toolInFlight[:0]
 			r.waitingTool = true
 
+		case "basic_stop":
+			logStream("LLM → C64:  STOP ")
+			fmt.Fprintln(os.Stderr)
+			r.lastToolCallID = tc.ID
+			r.lastToolName = tc.Function.Name
+			r.toolInFlight = r.toolInFlight[:0]
+			r.waitingTool = true
+
+			stopFrame := serial.Frame{Type: serial.FrameStop}
+			if err := r.sendVerified(ctx, stopFrame, "STOP"); err != nil {
+				return fmt.Errorf("send STOP: %w", err)
+			}
+			r.toolInFlight = r.toolInFlight[:0]
+			r.waitingTool = true
+
+		case "basic_status":
+			logStream("LLM → C64:  STATUS ")
+			fmt.Fprintln(os.Stderr)
+			r.lastToolCallID = tc.ID
+			r.lastToolName = tc.Function.Name
+			r.toolInFlight = r.toolInFlight[:0]
+			r.waitingTool = true
+
+			statusFrame := serial.Frame{Type: serial.FrameStatusReq}
+			if err := r.sendVerified(ctx, statusFrame, "STATUS"); err != nil {
+				return fmt.Errorf("send STATUS: %w", err)
+			}
+			r.toolInFlight = r.toolInFlight[:0]
+			r.waitingTool = true
+
 		default:
 			log.Printf("LLM → ???:   unknown tool %q", tc.Function.Name)
 			r.History.Append(userID, llm.Message{
@@ -375,9 +427,10 @@ func (r *Relay) sendExecVerified(ctx context.Context, cmd []byte) error {
 	}
 
 	goFrame := serial.Frame{Type: serial.FrameExecGo}
-	if err := r.sendVerified(ctx, goFrame, "EXECGO"); err != nil {
+	if err := r.sendWithRetry(goFrame); err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr)
 
 	r.toolInFlight = append(r.toolInFlight[:0], cmd...)
 	r.waitingTool = true

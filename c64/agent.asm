@@ -198,6 +198,19 @@ cp_bas_wr:
         lda #>irq_raster
         sta IRQ_HI
 
+        // ---- Hook ISTOP so long-running BASIC keeps a control path ----
+        // BASIC calls ISTOP frequently while a program is running.
+        // We use that path to keep serial control alive for status,
+        // screenshot, stop, and long-run detachment.
+        lda ISTOP_LO
+        sta old_istop_lo
+        lda ISTOP_HI
+        sta old_istop_hi
+        lda #<istop_hook
+        sta ISTOP_LO
+        lda #>istop_hook
+        sta ISTOP_HI
+
         // ---- Set up lobster claw sprites ----
         // Sprite 0: claw (always visible, top-right)
         // Sprite 1: dots (animated when busy, hidden when idle)
@@ -319,6 +332,13 @@ spr_cp0:lda spr_claw1,x
         sta ready_timer
         sta llm_pending
         sta busy
+        sta state_pending
+        sta state_len
+        sta running_ticks_lo
+        sta running_ticks_hi
+        sta running_reported
+        sta basic_running
+        sta stop_requested
 
         // border is not touched by the agent
 
@@ -368,72 +388,7 @@ bl_rx_done:
         jsr CLRCHN
 
 bl_inject:
-        // ---- Build next frame in send_buf if drip-send is idle ----
-        // Priority: ACKs → SYSTEM prompt chunks → RESULT chunks → LLM_MSG
-        lda send_pos
-        cmp send_total
-        bne bl_send_check       // drip-send busy → just send
-
-        // First, acknowledge the most recent verified bridge frame.
-        lda ack_pending
-        beq bl_chk_prompt
-        lda #0
-        sta ack_pending
-        lda ack_len
-        sta frame_len
-        lda #FRAME_ACK
-        jsr build_rxbuf_frame
-        jmp bl_send_check
-
-        // check if prompt chunks need sending
-bl_chk_prompt:
-        lda prompt_pending
-        beq bl_chk_result
-        jsr build_next_prompt_chunk
-        jmp bl_send_check       // start drip-sending
-
-bl_chk_result:
-        lda result_pending
-        beq bl_chk_llm
-        jsr build_next_result_chunk
-        jmp bl_send_check
-
-bl_chk_llm:
-        lda llm_pending
-        beq bl_chk_text
-        lda #0
-        sta llm_pending
-        lda #FRAME_LLM
-        jsr build_rxbuf_frame   // build LLM_MSG from AGENT_RXBUF
-        jmp bl_send_check
-
-bl_chk_text:
-        lda text_pending
-        beq bl_send_check
-        lda #0
-        sta text_pending
-        lda #FRAME_TEXT
-        jsr build_rxbuf_frame   // forward TEXT from AGENT_RXBUF
-        jmp bl_send_check
-
-bl_send_check:
-        lda send_pos
-        cmp send_total
-        beq bl_inj_check        // done (or nothing to send)
-
-        // send one byte via CHKOUT/CHROUT/CLRCHN
-        tax
-        lda send_buf,x
-        pha
-        ldx #RS232_DEV
-        jsr CHKOUT
-        pla
-        jsr CHROUT
-        jsr CLRCHN
-        inc send_pos
-        lda #0
-        sta busy_timer          // reset timeout — TX activity
-        sta dot_dir             // byte sent → dots left
+        jsr service_outbound
 
 bl_inj_check:
         // ---- Step 2: Inject keystrokes if in AG_INJECTING state ----
@@ -539,26 +494,28 @@ bl_scan:
         beq bl_scan_next
 bl_scan_do:
         lda screen_lo,x
-        sta bl_rd+1             // patch LDA address low byte
+        sta brf_rd+1            // patch LDA address low byte
         lda screen_hi,x
-        sta bl_rd+2             // patch LDA address high byte
+        sta brf_rd+2            // patch LDA address high byte
 
         // Check READY. at columns 0-5 using loop with self-modified LDA
         ldy #0
 bl_rd_loop:
-bl_rd:  lda $0400               // address self-modified by setup above
+brf_rd: lda $0400               // address self-modified by setup above
         cmp ready_codes,y
         bne bl_scan_next        // mismatch → next line
         iny
         cpy #6
         beq bl_ready_found      // all 6 matched!
-        inc bl_rd+1             // advance to next column
+        inc brf_rd+1            // advance to next column
         jmp bl_rd_loop
 
 bl_ready_found:
         // ---- READY. found! Sending RESULT → dots go left ----
         lda #0
         sta dot_dir             // left = sending
+        sta basic_running
+        sta running_reported
         jsr prepare_result_chunks
         lda #AG_IDLE
         sta agent_state
@@ -634,6 +591,280 @@ reenter:
         jmp bloop               // empty → run agent loop
 reenter_keys:
         jmp $E5D4               // continue KERNAL key loop
+
+// ISTOP hook — keeps a small control loop alive while BASIC is running.
+// This lets the bridge receive "still running", status, screenshot, and
+// stop responses even though the normal editor loop is not active.
+istop_hook:
+        pha
+        txa
+        pha
+        tya
+        pha
+
+        // Keep RS232 selected while polling here too.
+        ldx #RS232_DEV
+        jsr CHKIN
+
+ih_rx_loop:
+        jsr serial_read
+        bcs ih_rx_done
+        sta rx_byte
+        lda #0
+        sta busy_timer
+        lda #1
+        sta dot_dir
+        lda rx_byte
+        jsr frame_rx_byte
+        jmp ih_rx_loop
+
+ih_rx_done:
+        jsr CLRCHN
+        jsr service_running
+        jsr service_outbound
+
+        pla
+        tay
+        pla
+        tax
+        pla
+        jmp (old_istop_lo)
+
+// service_running — state maintenance while BASIC is executing.
+// Once a program runs for long enough without returning to READY.,
+// detach the agent logically: tell the bridge it is still running,
+// stop the busy animation, and leave control tools available.
+service_running:
+        lda stop_requested
+        beq sr_not_stop
+        lda #$7F
+        sta $91                 // make original ISTOP see STOP pressed
+        lda #0
+        sta stop_requested
+sr_not_stop:
+
+        lda agent_state
+        cmp #AG_WAITING
+        beq sr_waiting
+        rts
+
+sr_waiting:
+        inc running_ticks_lo
+        bne sr_tick_ok
+        inc running_ticks_hi
+sr_tick_ok:
+        lda running_reported
+        bne sr_done
+        lda running_ticks_hi
+        cmp #2                  // ~10s depending on loop density
+        bcc sr_done
+        jsr queue_state_running
+        lda #1
+        sta running_reported
+        sta basic_running
+        lda #AG_IDLE
+        sta agent_state
+        lda #0
+        sta busy
+sr_done:
+        rts
+
+// service_outbound — build/send one queued frame byte via RS232.
+// Shared by the normal editor loop and the ISTOP hook.
+service_outbound:
+        lda send_pos
+        cmp send_total
+        bne so_send_check
+
+        // ACKs first so verified delivery stays prompt.
+        lda ack_pending
+        beq so_chk_state
+        lda #0
+        sta ack_pending
+        lda ack_len
+        sta frame_len
+        lda #FRAME_ACK
+        jsr build_rxbuf_frame
+        jmp so_send_check
+
+so_chk_state:
+        lda state_pending
+        beq so_chk_prompt
+        lda #0
+        sta state_pending
+        lda state_len
+        sta frame_len
+        lda #FRAME_STATUS
+        jsr build_rxbuf_frame
+        jmp so_send_check
+
+so_chk_prompt:
+        lda prompt_pending
+        beq so_chk_result
+        jsr build_next_prompt_chunk
+        jmp so_send_check
+
+so_chk_result:
+        lda result_pending
+        beq so_chk_llm
+        jsr build_next_result_chunk
+        jmp so_send_check
+
+so_chk_llm:
+        lda llm_pending
+        beq so_chk_text
+        lda #0
+        sta llm_pending
+        lda #FRAME_LLM
+        jsr build_rxbuf_frame
+        jmp so_send_check
+
+so_chk_text:
+        lda text_pending
+        beq so_send_check
+        lda #0
+        sta text_pending
+        lda #FRAME_TEXT
+        jsr build_rxbuf_frame
+
+so_send_check:
+        lda send_pos
+        cmp send_total
+        beq so_done
+
+        tax
+        lda send_buf,x
+        pha
+        ldx #RS232_DEV
+        jsr CHKOUT
+        pla
+        jsr CHROUT
+        jsr CLRCHN
+        inc send_pos
+        lda #0
+        sta busy_timer
+        sta dot_dir
+so_done:
+        rts
+
+queue_state_ready:
+        lda #'R'
+        sta AGENT_RXBUF+0
+        lda #'E'
+        sta AGENT_RXBUF+1
+        lda #'A'
+        sta AGENT_RXBUF+2
+        lda #'D'
+        sta AGENT_RXBUF+3
+        lda #'Y'
+        sta AGENT_RXBUF+4
+        lda #'.'
+        sta AGENT_RXBUF+5
+        lda #6
+        sta state_len
+        lda #1
+        sta state_pending
+        lda #0
+        sta basic_running
+        rts
+
+queue_state_running:
+        lda #'R'
+        sta AGENT_RXBUF+0
+        lda #'U'
+        sta AGENT_RXBUF+1
+        lda #'N'
+        sta AGENT_RXBUF+2
+        sta AGENT_RXBUF+3
+        lda #'I'
+        sta AGENT_RXBUF+4
+        lda #'N'
+        sta AGENT_RXBUF+5
+        lda #'G'
+        sta AGENT_RXBUF+6
+        lda #7
+        sta state_len
+        lda #1
+        sta state_pending
+        rts
+
+queue_state_busy:
+        lda #'B'
+        sta AGENT_RXBUF+0
+        lda #'U'
+        sta AGENT_RXBUF+1
+        lda #'S'
+        sta AGENT_RXBUF+2
+        lda #'Y'
+        sta AGENT_RXBUF+3
+        lda #4
+        sta state_len
+        lda #1
+        sta state_pending
+        rts
+
+queue_state_stop_requested:
+        lda #'S'
+        sta AGENT_RXBUF+0
+        lda #'T'
+        sta AGENT_RXBUF+1
+        lda #'O'
+        sta AGENT_RXBUF+2
+        lda #'P'
+        sta AGENT_RXBUF+3
+        lda #' '
+        sta AGENT_RXBUF+4
+        lda #'R'
+        sta AGENT_RXBUF+5
+        lda #'E'
+        sta AGENT_RXBUF+6
+        lda #'Q'
+        sta AGENT_RXBUF+7
+        lda #'U'
+        sta AGENT_RXBUF+8
+        lda #'E'
+        sta AGENT_RXBUF+9
+        lda #'S'
+        sta AGENT_RXBUF+10
+        lda #'T'
+        sta AGENT_RXBUF+11
+        lda #'E'
+        sta AGENT_RXBUF+12
+        lda #'D'
+        sta AGENT_RXBUF+13
+        lda #14
+        sta state_len
+        lda #1
+        sta state_pending
+        rts
+
+// screen_has_ready_anywhere — check the visible screen for READY.
+// Returns carry set and X=line if found, carry clear otherwise.
+screen_has_ready_anywhere:
+        ldx #24
+sha_scan:
+        lda screen_lo,x
+        sta bl_rd+1
+        lda screen_hi,x
+        sta bl_rd+2
+        ldy #0
+sha_loop:
+bl_rd:  lda $0400
+        cmp ready_codes,y
+        bne sha_next
+        iny
+        cpy #6
+        beq sha_found
+        inc bl_rd+1
+        jmp sha_loop
+sha_next:
+        dex
+        bpl sha_scan
+        clc
+        rts
+sha_found:
+        sec
+        rts
 
 // ---------------------------------------------------------
 // Prepare screen content as chunked RESULT frames
@@ -1166,6 +1397,33 @@ fd_not_text:
         rts
 
 fd_not_screen:
+        // ---- Check for STATUS frame ($51 = 'Q') ----
+        cmp #FRAME_STATUSQ
+        bne fd_not_status
+        jsr screen_has_ready_anywhere
+        bcs fd_status_ready
+        lda basic_running
+        bne fd_status_running
+        lda agent_state
+        cmp #AG_WAITING
+        beq fd_status_running
+fd_status_ready:
+        jsr queue_state_ready
+        rts
+fd_status_running:
+        jsr queue_state_running
+        rts
+
+fd_not_status:
+        // ---- Check for STOP frame ($4B = 'K') ----
+        cmp #FRAME_STOP
+        bne fd_not_stop
+        lda #1
+        sta stop_requested
+        jsr queue_state_stop_requested
+        rts
+
+fd_not_stop:
         // ---- Check for EXECGO frame ($47 = 'G') ----
         cmp #FRAME_EXECGO       // bridge confirmed verified EXEC may run
         bne fd_not_execgo
@@ -1191,6 +1449,10 @@ fd_not_screen:
         sta agent_state
         lda #0
         sta exec_pending
+        sta running_ticks_lo
+        sta running_ticks_hi
+        sta running_reported
+        sta basic_running
         rts
 
 fd_not_execgo:
@@ -1198,12 +1460,23 @@ fd_not_execgo:
         cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
         bne fd_done             // no → unknown frame type, ignore
 
+        // Do not accept a second EXEC while BASIC is already running.
+        lda basic_running
+        bne fd_exec_busy
+        lda agent_state
+        cmp #AG_WAITING
+        beq fd_exec_busy
+
         // Keep the verified command in AGENT_RXBUF, then send an exact
         // payload echo back to the bridge before allowing injection.
         lda frame_len
         sta exec_len
         lda #1
         sta exec_pending
+        rts
+
+fd_exec_busy:
+        jsr queue_state_busy
 
 fd_done:
         rts
@@ -1391,6 +1664,8 @@ exec_pending: .byte 0   // 1 = verified EXEC payload waiting for EXECGO
 exec_len:      .byte 0  // saved EXEC payload length while waiting for EXECGO
 ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
 ack_len:      .byte 0   // saved length for FRAME_ACK payload echo
+state_pending: .byte 0  // 1 = send FRAME_STATUS payload from AGENT_RXBUF
+state_len:    .byte 0   // payload length for FRAME_STATUS
 last_rx_valid: .byte 0  // 1 = last_rx_* contains a verified bridge frame fingerprint
 last_rx_sub:  .byte 0   // subtype of last verified bridge frame
 last_rx_len:  .byte 0   // payload length of last verified bridge frame
@@ -1401,10 +1676,17 @@ scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= th
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
+old_istop_lo: .byte 0   // saved ISTOP vector low byte
+old_istop_hi: .byte 0   // saved ISTOP vector high byte
 anim_timer:   .byte 5   // frames between dot shifts
 dot_dir:      .byte 1   // 0=left (sending), 1=right (receiving)
 busy_timer:   .byte 0   // frames since last serial activity (auto-clear at 30)
 color_timer:  .byte 0   // free-running counter for lobster color pulse
+running_ticks_lo: .byte 0 // ISTOP-call timer low byte while BASIC runs
+running_ticks_hi: .byte 0 // ISTOP-call timer high byte while BASIC runs
+running_reported: .byte 0 // 1 once "RUNNING" was already reported
+basic_running: .byte 0  // 1 = BASIC program still running after detach
+stop_requested: .byte 0 // 1 = ask ISTOP to trigger RUN/STOP
 
 // color cycle for busy lobster: red → orange → yellow → white
 busy_colors:  .byte 2, 8, 7, 1
@@ -1493,35 +1775,27 @@ spr_dots:
 // This lets control chars like $0A (newline) pass through the conversion.
 .encoding "petscii_mixed"
 sys_prompt:
-        .text "You are a Commodore 64 from 1982 chatting with humans. "
-        .text "You can use BASIC as a tool."
-        .byte $0A  // newline
-        .text "Stay within 1982 knowledge. If asked about later facts, "
-        .text "say you do not know them."
+        .text "You are a Commodore 64 from 1982."
         .byte $0A
-        .text "IMPORTANT: Reply with TEXT. Do NOT use PRINT to talk."
+        .text "Stay within 1982 knowledge."
         .byte $0A
-        .text "Use basic_exec for BASIC commands."
+        .text "Reply with TEXT, not PRINT."
         .byte $0A
-        .text "Use text_screenshot to inspect the visible text screen "
-        .text "without running BASIC."
+        .text "Tools: basic_exec, text_screenshot, basic_status, basic_stop."
         .byte $0A
-        .text "Tool results are screen output, not human messages. "
-        .text "Empty result means success with no output."
+        .text "Tool results are screen output, not human messages."
         .byte $0A
-        .text "Long scrolling output may hide earlier lines and only "
-        .text "show the tail."
+        .text "After a tool result, reply with TEXT."
         .byte $0A
-        .text "After a tool result, respond with TEXT. Do not repeat "
-        .text "a successful tool call."
+        .text "Long output may only show the tail."
         .byte $0A
-        .text "Show text_screenshot output as a quoted block in normal "
-        .text "text, or fenced code if alignment matters."
+        .text "Show screenshots as quoted text, or code if alignment matters."
         .byte $0A
-        .text "For simple greetings or questions, reply directly."
+        .text "If BASIC is RUNNING, do not basic_exec again."
         .byte $0A
-        .text "basic_exec rules: one statement, no colons, max 60 "
-        .text "characters, no CHR$(147)."
+        .text "Use basic_status, basic_stop, or text_screenshot instead."
+        .byte $0A
+        .text "basic_exec: one statement, max 60 chars, no CHR$(147)."
 sys_prompt_end:
 .encoding "screencode_mixed"  // restore default
 
