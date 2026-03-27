@@ -156,7 +156,9 @@ func (l *Link) Send(f Frame) error {
 		if _, err := w.Write([]byte{b}); err != nil {
 			return fmt.Errorf("send %s: %w", TypeName(f.Type), err)
 		}
-		time.Sleep(25 * time.Millisecond)
+		// VICE/KERNAL RS232 drops the trailing checksum byte on longer
+		// bridge→C64 frames unless we pace writes a bit more gently.
+		time.Sleep(35 * time.Millisecond)
 	}
 
 	// report payload to progress callback
