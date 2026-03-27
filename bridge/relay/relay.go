@@ -34,12 +34,16 @@ type Relay struct {
 	textBuf        []byte // accumulates multi-frame TEXT chunks (receive)
 	textOutQueue   []byte // pending TEXT data to send in chunks (send)
 	textInFlight   []byte // current TEXT chunk sent, waiting for forwarded ack
+	toolInFlight   []byte // current tool payload sent, waiting for RESULT/ERROR
+	waitingTool    bool
 	lastToolCallID string
 	lastToolName   string
 }
 
 const textChunkMax = 120
 const textAckTimeout = 8 * time.Second
+const toolAckTimeout = 8 * time.Second
+const c64FrameTimeout = 8 * time.Second
 
 // handleSystemFrame assembles SYSTEM prompt chunks from the C64.
 func (r *Relay) handleSystemFrame(f serial.Frame) {
@@ -153,6 +157,7 @@ type basicExecArgs struct {
 
 // HandleMessage relays a user message through LLM and C64.
 func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (string, error) {
+	text = serial.ToASCII(text)
 	r.History.Append(userID, llm.Message{Role: "user", Content: text})
 
 	// send user message to C64 (header now, chars stream via callback)
@@ -182,6 +187,8 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 
 		case serial.FrameResult:
 			fmt.Fprintln(os.Stderr) // newline after streamed payload
+			r.toolInFlight = nil
+			r.waitingTool = false
 			resultText, complete := r.handleResultFrame(f)
 			if !complete {
 				continue
@@ -202,6 +209,8 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 
 		case serial.FrameError:
 			log.Printf("C64 → LLM:   ERROR (timeout)")
+			r.toolInFlight = nil
+			r.waitingTool = false
 			r.appendToolResult(userID, "ERROR: command timed out on C64")
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
@@ -264,7 +273,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 		}
 		// queue TEXT chunks — eventLoop sends one at a time,
 		// waiting for C64 echo before sending the next
-		r.textOutQueue = []byte(resp.Content)
+		r.textOutQueue = []byte(serial.ToASCII(resp.Content))
 		return r.sendNextTextChunk()
 	}
 
@@ -281,7 +290,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 				continue
 			}
 			// sanitize: strip newlines, take first line only, truncate to 80 chars
-			cmd := args.Command
+			cmd := serial.ToASCII(args.Command)
 			if i := strings.IndexAny(cmd, "\n\r"); i >= 0 {
 				cmd = cmd[:i]
 			}
@@ -291,6 +300,8 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			logStream("LLM → C64:  EXEC ")
 			r.lastToolCallID = tc.ID
 			r.lastToolName = tc.Function.Name
+			r.toolInFlight = append(r.toolInFlight[:0], cmd...)
+			r.waitingTool = true
 
 			execFrame := serial.Frame{Type: serial.FrameExec, Payload: []byte(cmd)}
 			if err := r.sendWithRetry(execFrame); err != nil {
@@ -302,6 +313,8 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			fmt.Fprintln(os.Stderr)
 			r.lastToolCallID = tc.ID
 			r.lastToolName = tc.Function.Name
+			r.toolInFlight = r.toolInFlight[:0]
+			r.waitingTool = true
 
 			screenFrame := serial.Frame{Type: serial.FrameScreenshot}
 			if err := r.sendWithRetry(screenFrame); err != nil {
@@ -365,6 +378,7 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 		frame serial.Frame
 		err   error
 	}, 1)
+	stallDumped := false
 	go func() {
 		f, err := r.Link.Recv()
 		resultCh <- struct {
@@ -381,6 +395,10 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 		var timeout <-chan time.Time
 		if waitingTextAck {
 			timeout = time.After(textAckTimeout)
+		} else if r.waitingTool {
+			timeout = time.After(toolAckTimeout)
+		} else {
+			timeout = time.After(c64FrameTimeout)
 		}
 
 		select {
@@ -391,6 +409,7 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 			if res.err != nil {
 				return serial.Frame{}, fmt.Errorf("recv: %w", res.err)
 			}
+			stallDumped = false
 			if res.frame.Type == serial.FrameHeartbeat {
 				go func() {
 					f, err := r.Link.Recv()
@@ -404,10 +423,21 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 			return res.frame, nil
 
 		case <-timeout:
-			if !waitingTextAck {
+			if stallDumped {
 				continue
 			}
-			r.dumpTextAckStall()
+			if waitingTextAck {
+				r.dumpTextAckStall()
+				stallDumped = true
+				continue
+			}
+			if r.waitingTool {
+				r.dumpToolAckStall()
+				stallDumped = true
+				continue
+			}
+			r.dumpC64SilenceStall()
+			stallDumped = true
 		}
 	}
 }
@@ -432,6 +462,48 @@ func (r *Relay) currentTextChunk() []byte {
 		return nil
 	}
 	return append([]byte(nil), r.textInFlight...)
+}
+
+func (r *Relay) dumpToolAckStall() {
+	reason := "waiting for tool result from C64"
+	if r.lastToolName != "" {
+		reason = fmt.Sprintf("waiting for %s result from C64", r.lastToolName)
+	}
+
+	filename, err := writeStallDump(
+		r.DebugDir,
+		r.MonitorAddr,
+		r.SymbolPath,
+		reason,
+		r.currentToolPayload(),
+	)
+	if err != nil {
+		log.Printf("     ! tool stall; debug dump failed: %v", err)
+		return
+	}
+	log.Printf("     ! tool stall; wrote debug dump to %s", filename)
+}
+
+func (r *Relay) currentToolPayload() []byte {
+	if len(r.toolInFlight) == 0 {
+		return nil
+	}
+	return append([]byte(nil), r.toolInFlight...)
+}
+
+func (r *Relay) dumpC64SilenceStall() {
+	filename, err := writeStallDump(
+		r.DebugDir,
+		r.MonitorAddr,
+		r.SymbolPath,
+		"waiting for any C64 frame",
+		nil,
+	)
+	if err != nil {
+		log.Printf("     ! c64 silence stall; debug dump failed: %v", err)
+		return
+	}
+	log.Printf("     ! c64 silence stall; wrote debug dump to %s", filename)
 }
 
 func (r *Relay) sendWithRetry(f serial.Frame) error {

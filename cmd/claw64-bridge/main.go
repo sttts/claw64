@@ -262,6 +262,7 @@ func preflightInfra(ctx context.Context, cfg CLI, ch chat.Channel, llmClient llm
 	return nil
 }
 
+
 func loaderPRGPath(cfg CLI) (string, func(), error) {
 	if cfg.LoaderPRG != "" {
 		return cfg.LoaderPRG, func() {}, nil

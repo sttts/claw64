@@ -98,22 +98,3 @@
 .const SC_D = $04
 .const SC_Y = $19
 .const SC_DOT = $2E
-
-// Parser state — defined as labels in agent.asm data section.
-// Using .var to declare names that will be resolved by label addresses.
-// (Labels in agent.asm provide the actual addresses.)
-
-// Injection
-.const zp_inj_pos     = $F6  // current inject position
-.const zp_inj_len     = $F7  // inject buffer length
-
-// Agent state
-.const zp_agent_state = $F8  // current agent state
-.const zp_ready_timer = $F9  // READY. detection countdown
-.const zp_hbeat_timer = $FA  // heartbeat countdown (lo byte)
-.const zp_hbeat_hi    = $FB  // heartbeat countdown (hi byte)
-
-// Screen scrape
-.const zp_scrape_row  = $FC  // current row being scraped
-.const zp_ptr_lo      = $FD  // general pointer low
-.const zp_ptr_hi      = $FE  // general pointer high

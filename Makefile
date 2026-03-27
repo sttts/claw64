@@ -43,6 +43,7 @@ $(KICKASS_JAR):
 
 # assemble the C64 loader (includes agent.asm via #import)
 assemble: $(KICKASS_JAR)
+	java -jar $(KICKASS_JAR) -o $(ASM_OUT) $(ASM_SRC)
 	java -jar $(KICKASS_JAR) -o $(LOADER_OUT) $(LOADER_SRC)
 
 # assemble the echo test
