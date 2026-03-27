@@ -235,7 +235,10 @@ Global flags:
 ```
 
 With `--spawn-vice`, the bridge uses an embedded copy of `claw64.prg` by
-default and writes it to a temporary file for VICE `-autostart`. `--loader-prg`
+default and writes it to a temporary file for VICE `-autostart`. In the repo
+the assembled loader lives at
+[`cmd/claw64-bridge/claw64.prg`](/Users/sts/Quellen/slagent/claw64/cmd/claw64-bridge/claw64.prg),
+so `--loader-prg`
 overrides that embedded image.
 
 #### Tools

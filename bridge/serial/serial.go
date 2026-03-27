@@ -199,7 +199,7 @@ func (l *Link) Recv() (Frame, error) {
 		// Skip bridge→C64 command frames. TEXT is not skipped because
 		// the C64 forwards the parsed TEXT payload back as the user reply.
 		switch f.Type {
-		case FrameMsg, FrameExec, FrameScreenshot:
+		case FrameMsg, FrameExec, FrameExecGo, FrameScreenshot:
 			continue
 		}
 		return f, nil

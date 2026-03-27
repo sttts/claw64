@@ -327,12 +327,19 @@ spr_cp0:lda spr_claw1,x
 bloop:
         // ---- Step 1: Drain pending serial bytes ----
         //
+        // Keep RS232 selected as the current input while polling.
+        // The KERNAL RS232 receive path appears not to stay live after
+        // OPEN alone; selecting the device before polling makes VICE
+        // actually fill the receive ring for bridge→C64 traffic.
+        ldx #RS232_DEV
+        jsr CHKIN
+
         // Keep draining until the KERNAL RS232 receive ring is empty.
         // Capping this to a small fixed batch still allows backlog to
         // build up across iterations and eventually drop bytes.
 bl_rx_loop:
         jsr serial_read
-        bcs bl_inject           // no more data pending
+        bcs bl_rx_done          // no more data pending
         sta rx_byte
         lda #0
         sta busy_timer          // reset timeout — serial activity
@@ -342,14 +349,29 @@ bl_rx_loop:
         jsr frame_rx_byte       // feed byte to the frame protocol parser
         jmp bl_rx_loop
 
+bl_rx_done:
+        jsr CLRCHN
+
 bl_inject:
         // ---- Build next frame in send_buf if drip-send is idle ----
-        // Priority: SYSTEM prompt chunks → RESULT chunks → LLM_MSG
+        // Priority: ACKs → SYSTEM prompt chunks → RESULT chunks → LLM_MSG
         lda send_pos
         cmp send_total
         bne bl_send_check       // drip-send busy → just send
 
+        // First, acknowledge the most recent verified bridge frame.
+        lda ack_pending
+        beq bl_chk_prompt
+        lda #0
+        sta ack_pending
+        lda ack_len
+        sta frame_len
+        lda #FRAME_ACK
+        jsr build_rxbuf_frame
+        jmp bl_send_check
+
         // check if prompt chunks need sending
+bl_chk_prompt:
         lda prompt_pending
         beq bl_chk_result
         jsr build_next_prompt_chunk
@@ -377,7 +399,7 @@ bl_chk_text:
         sta text_pending
         lda #FRAME_TEXT
         jsr build_rxbuf_frame   // forward TEXT from AGENT_RXBUF
-        // fall through to bl_send_check
+        jmp bl_send_check
 
 bl_send_check:
         lda send_pos
@@ -692,7 +714,6 @@ prc_init_send:
         sta result_line
         lda #1
         sta result_pending
-        jsr build_next_result_chunk
         rts
 
 // ---------------------------------------------------------
@@ -964,6 +985,7 @@ fr_sub:
         and #$7F                // strip bit 7 (VICE RS232 corruption)
         sta frame_sub           // store the subtype byte
         sta frame_chk           // initialize checksum with subtype
+        sta frame_sum           // initialize duplicate-detect sum with subtype
         inc parse_state         // advance to state 2 (LEN)
         rts
 
@@ -976,6 +998,9 @@ fr_len:
         sta frame_len           // store payload length
         eor frame_chk           // XOR length into running checksum
         sta frame_chk           // update checksum
+        clc
+        adc frame_sum           // also track an additive checksum
+        sta frame_sum
         lda #0
         sta rx_index            // reset payload byte counter to 0
         lda frame_len           // check if length is zero
@@ -995,6 +1020,10 @@ fr_pay:
         sta AGENT_RXBUF,x      // store masked byte in receive buffer
         eor frame_chk           // XOR masked byte into running checksum
         sta frame_chk           // update checksum
+        lda AGENT_RXBUF,x
+        clc
+        adc frame_sum
+        sta frame_sum
         inx                     // advance to next position
         stx rx_index            // save updated position
         cpx frame_len           // have we received all payload bytes?
@@ -1038,6 +1067,44 @@ fr_bad: lda #0                  // reset parser state to HUNT
 //   the bridge forwards the LLM's answer to chat independently.
 // ---------------------------------------------------------
 frame_dispatch:
+        // Queue an ACK for every verified bridge frame so the bridge can
+        // retry safely without guessing whether the C64 received it.
+        lda #1
+        sta ack_pending
+        lda frame_len
+        sta ack_len
+
+        // Treat an immediately repeated same frame as a retransmit.
+        // Compare subtype, length, XOR, and additive sum. This keeps
+        // bridge retries idempotent without storing a second payload copy.
+        lda last_rx_valid
+        beq fd_new_frame
+        lda frame_sub
+        cmp last_rx_sub
+        bne fd_new_frame
+        lda frame_len
+        cmp last_rx_len
+        bne fd_new_frame
+        lda frame_chk
+        cmp last_rx_chk
+        bne fd_new_frame
+        lda frame_sum
+        cmp last_rx_sum
+        bne fd_new_frame
+        rts
+
+fd_new_frame:
+        lda #1
+        sta last_rx_valid
+        lda frame_sub
+        sta last_rx_sub
+        lda frame_len
+        sta last_rx_len
+        lda frame_chk
+        sta last_rx_chk
+        lda frame_sum
+        sta last_rx_sum
+
         lda frame_sub           // load the frame subtype
 
         // ---- Check for MSG frame ($4D = 'M') ----
@@ -1084,11 +1151,13 @@ fd_not_text:
         rts
 
 fd_not_screen:
-        // ---- Check for EXEC frame ($45 = 'E') ----
-        cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
-        bne fd_done             // no → unknown frame type, ignore
+        // ---- Check for EXECGO frame ($47 = 'G') ----
+        cmp #FRAME_EXECGO       // bridge confirmed verified EXEC may run
+        bne fd_not_execgo
+        lda exec_pending
+        beq fd_done
 
-        // EXEC received = data coming in → dots go right
+        // EXEC confirmed = data coming in → dots go right
         lda #1
         sta dot_dir
 
@@ -1096,7 +1165,7 @@ fd_not_screen:
         lda CURSOR_ROW
         sta scan_start          // scanner will only check rows > scan_start
 
-        ldx frame_len
+        ldx exec_len
         lda #$0D                // RETURN key
         sta AGENT_RXBUF,x      // append after last command char
         inx
@@ -1105,10 +1174,21 @@ fd_not_screen:
         sta inj_pos             // start from position 0
         lda #AG_INJECTING
         sta agent_state
+        lda #0
+        sta exec_pending
+        rts
 
-        // No echo RESULT — can't call send_frame from inside
-        // frame_dispatch (VICE RS232 only handles one CHKOUT/CHROUT/CLRCHN
-        // per main loop iteration). The bridge doesn't need the echo.
+fd_not_execgo:
+        // ---- Check for EXEC frame ($45 = 'E') ----
+        cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
+        bne fd_done             // no → unknown frame type, ignore
+
+        // Keep the verified command in AGENT_RXBUF, then send an exact
+        // payload echo back to the bridge before allowing injection.
+        lda frame_len
+        sta exec_len
+        lda #1
+        sta exec_pending
 
 fd_done:
         rts
@@ -1275,6 +1355,7 @@ parse_state:  .byte 0   // frame parser state (0=HUNT, 1=SUB, 2=LEN, 3=PAY, 4=CH
 frame_sub:    .byte 0   // frame subtype of current frame being parsed
 frame_len:    .byte 0   // payload length of current frame being parsed
 frame_chk:    .byte 0   // running XOR checksum (used by parser and frame builder)
+frame_sum:    .byte 0   // running additive checksum for duplicate detection
 rx_index:     .byte 0   // current byte index within frame payload (0 to frame_len-1)
 agent_state:  .byte 0   // agent state machine (0=IDLE, 1=INJECTING, 2=WAITING)
 inj_pos:      .byte 0   // current position in command being injected (0 to inj_len-1)
@@ -1291,6 +1372,15 @@ llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
 prompt_pending: .byte 0 // 1 = system prompt chunks still need sending
 result_pending: .byte 0 // 1 = RESULT chunks still need sending
 text_pending: .byte 0   // 1 = forward TEXT to user via drip-send
+exec_pending: .byte 0   // 1 = verified EXEC payload waiting for EXECGO
+exec_len:      .byte 0  // saved EXEC payload length while waiting for EXECGO
+ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
+ack_len:      .byte 0   // saved length for FRAME_ACK payload echo
+last_rx_valid: .byte 0  // 1 = last_rx_* contains a verified bridge frame fingerprint
+last_rx_sub:  .byte 0   // subtype of last verified bridge frame
+last_rx_len:  .byte 0   // payload length of last verified bridge frame
+last_rx_chk:  .byte 0   // XOR checksum fingerprint of last verified bridge frame
+last_rx_sum:  .byte 0   // additive checksum fingerprint of last verified bridge frame
 prompt_sent:  .byte 0   // 1 = prompt already sent
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)

@@ -64,10 +64,12 @@
 // Bridge -> C64:
 .const FRAME_MSG    = $4D    // 'M' — user's chat message
 .const FRAME_EXEC   = $45    // 'E' — tool call: BASIC command to execute
+.const FRAME_EXECGO = $47    // 'G' — bridge confirms verified EXEC may run
 .const FRAME_SCREEN = $50    // 'P' — request current text screen snapshot
 .const FRAME_TEXT   = $54    // 'T' — LLM's final answer, forward to user
 //
 // C64 -> Bridge:
+.const FRAME_ACK    = $41    // 'A' — exact payload echo for verified delivery
 .const FRAME_RESULT = $52    // 'R' — tool result: screen scrape
 .const FRAME_LLM    = $4C    // 'L' — context message for the LLM
 .const FRAME_ERROR  = $58    // 'X' — tool call timed out

@@ -28,12 +28,12 @@ archives:
     files:
       - README.md
       - LICENSE
-      - c64/claw64.prg
+      - cmd/claw64-bridge/claw64.prg
 
 checksum:
   name_template: checksums.txt
 
 release:
   extra_files:
-    - glob: c64/claw64.prg
+    - glob: cmd/claw64-bridge/claw64.prg
     - glob: c64/agent.prg

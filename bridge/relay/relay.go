@@ -163,7 +163,7 @@ func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (
 	// send user message to C64 (header now, chars stream via callback)
 	logStream("USER → C64:  MSG ")
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
-	if err := r.sendWithRetry(msgFrame); err != nil {
+	if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
 		return "", fmt.Errorf("send MSG: %w", err)
 	}
 
@@ -223,7 +223,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			r.textInFlight = nil
 			if len(r.textOutQueue) > 0 {
 				// more chunks to send — wait for this echo, then send next
-				if err := r.sendNextTextChunk(); err != nil {
+				if err := r.sendNextTextChunk(ctx); err != nil {
 					return "", err
 				}
 				continue
@@ -236,6 +236,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 		case serial.FrameSystem:
 			fmt.Fprintln(os.Stderr) // newline after streamed payload
 			r.handleSystemFrame(f)
+			continue
+
+		case serial.FrameAck:
+			fmt.Fprintln(os.Stderr)
+			log.Printf("C64 → bridge: unexpected ACK frame")
 			continue
 
 		case serial.FrameHeartbeat:
@@ -274,7 +279,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 		// queue TEXT chunks — eventLoop sends one at a time,
 		// waiting for C64 echo before sending the next
 		r.textOutQueue = []byte(serial.ToASCII(resp.Content))
-		return r.sendNextTextChunk()
+		return r.sendNextTextChunk(ctx)
 	}
 
 	// tool calls
@@ -300,11 +305,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			logStream("LLM → C64:  EXEC ")
 			r.lastToolCallID = tc.ID
 			r.lastToolName = tc.Function.Name
-			r.toolInFlight = append(r.toolInFlight[:0], cmd...)
-			r.waitingTool = true
-
-			execFrame := serial.Frame{Type: serial.FrameExec, Payload: []byte(cmd)}
-			if err := r.sendWithRetry(execFrame); err != nil {
+			if err := r.sendExecVerified(ctx, []byte(cmd)); err != nil {
 				return fmt.Errorf("send EXEC: %w", err)
 			}
 
@@ -317,9 +318,11 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			r.waitingTool = true
 
 			screenFrame := serial.Frame{Type: serial.FrameScreenshot}
-			if err := r.sendWithRetry(screenFrame); err != nil {
+			if err := r.sendVerified(ctx, screenFrame, "SCREENSHOT"); err != nil {
 				return fmt.Errorf("send SCREENSHOT: %w", err)
 			}
+			r.toolInFlight = r.toolInFlight[:0]
+			r.waitingTool = true
 
 		default:
 			log.Printf("LLM → ???:   unknown tool %q", tc.Function.Name)
@@ -346,7 +349,7 @@ func (r *Relay) logLLMRequest(messages []llm.Message, tools []llm.Tool) {
 }
 
 // sendNextTextChunk sends one TEXT chunk from the queue.
-func (r *Relay) sendNextTextChunk() error {
+func (r *Relay) sendNextTextChunk(ctx context.Context) error {
 	if len(r.textOutQueue) == 0 {
 		return nil
 	}
@@ -358,11 +361,71 @@ func (r *Relay) sendNextTextChunk() error {
 	r.textInFlight = append(r.textInFlight[:0], chunk...)
 	logStream("LLM → C64:  TEXT ")
 	textFrame := serial.Frame{Type: serial.FrameText, Payload: chunk}
-	if err := r.sendWithRetry(textFrame); err != nil {
+	if err := r.sendVerified(ctx, textFrame, "TEXT"); err != nil {
 		fmt.Fprintln(os.Stderr)
 		return fmt.Errorf("send TEXT: %w", err)
 	}
 	return nil
+}
+
+func (r *Relay) sendExecVerified(ctx context.Context, cmd []byte) error {
+	execFrame := serial.Frame{Type: serial.FrameExec, Payload: cmd}
+	if err := r.sendVerified(ctx, execFrame, "EXEC"); err != nil {
+		return err
+	}
+
+	goFrame := serial.Frame{Type: serial.FrameExecGo}
+	if err := r.sendVerified(ctx, goFrame, "EXECGO"); err != nil {
+		return err
+	}
+
+	r.toolInFlight = append(r.toolInFlight[:0], cmd...)
+	r.waitingTool = true
+	return nil
+}
+
+func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name string) error {
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := r.sendWithRetry(frame); err != nil {
+			return err
+		}
+
+		ack, err := r.waitForAck(ctx)
+		if err != nil {
+			log.Printf("     ! %s ack attempt %d failed: %v", name, attempt, err)
+			continue
+		}
+		if string(ack.Payload) != string(frame.Payload) {
+			log.Printf("     ! %s ack attempt %d mismatch: got %q want %q", name, attempt, string(ack.Payload), string(frame.Payload))
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("%s delivery could not be verified after 3 attempts", name)
+}
+
+func (r *Relay) waitForAck(ctx context.Context) (serial.Frame, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, toolAckTimeout)
+	defer cancel()
+
+	for {
+		f, err := r.recvFromC64(waitCtx, false)
+		if err != nil {
+			return serial.Frame{}, err
+		}
+		switch f.Type {
+		case serial.FrameAck:
+			fmt.Fprintln(os.Stderr)
+			return f, nil
+		case serial.FrameSystem:
+			fmt.Fprintln(os.Stderr)
+			r.handleSystemFrame(f)
+		case serial.FrameHeartbeat:
+			continue
+		default:
+			return serial.Frame{}, fmt.Errorf("unexpected frame while waiting for ACK: %s", serial.TypeName(f.Type))
+		}
+	}
 }
 
 func (r *Relay) appendToolResult(userID, result string) {

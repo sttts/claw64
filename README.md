@@ -107,7 +107,9 @@ roughly two seconds before restoring the normal BASIC text screen and
 starting the agent.
 
 When `--spawn-vice` is used, the bridge uses an embedded copy of the loader
-PRG by default. `--loader-prg` is only needed to override that embedded image.
+PRG by default. The repo build writes that loader directly to
+[`cmd/claw64-bridge/claw64.prg`](/Users/sts/Quellen/slagent/claw64/cmd/claw64-bridge/claw64.prg),
+so `--loader-prg` is only needed to override it.
 
 ## Architecture
 

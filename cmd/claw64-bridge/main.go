@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -213,7 +214,7 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 		History:     relay.NewHistory(),
 		DebugDir:    "debug",
 		MonitorAddr: "127.0.0.1:6510",
-		SymbolPath:  "c64/agent.sym",
+		SymbolPath:  defaultSymbolPath(),
 	}
 	rl.SetupProgress()
 
@@ -268,6 +269,11 @@ func loaderPRGPath(cfg CLI) (string, func(), error) {
 		return cfg.LoaderPRG, func() {}, nil
 	}
 
+	// Prefer the freshly assembled repo artifact during development.
+	if _, err := os.Stat(filepath.Join("cmd", "claw64-bridge", "claw64.prg")); err == nil {
+		return filepath.Join("cmd", "claw64-bridge", "claw64.prg"), func() {}, nil
+	}
+
 	f, err := os.CreateTemp("", "claw64-loader-*.prg")
 	if err != nil {
 		return "", nil, fmt.Errorf("create embedded loader temp file: %w", err)
@@ -283,6 +289,19 @@ func loaderPRGPath(cfg CLI) (string, func(), error) {
 	}
 
 	return f.Name(), func() { _ = os.Remove(f.Name()) }, nil
+}
+
+func defaultSymbolPath() string {
+	candidates := []string{
+		filepath.Join("c64", "loader.sym"),
+		filepath.Join("c64", "agent.sym"),
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return filepath.Join("c64", "loader.sym")
 }
 
 func spawnVICE(cfg CLI, loaderPath string) (*exec.Cmd, error) {

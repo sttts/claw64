@@ -27,10 +27,12 @@ const (
 	// Bridge → C64
 	FrameMsg        byte = 0x4D // 'M' — user's chat message
 	FrameExec       byte = 0x45 // 'E' — tool call: BASIC command to execute
+	FrameExecGo     byte = 0x47 // 'G' — bridge confirmed EXEC may run
 	FrameText       byte = 0x54 // 'T' — LLM's final answer, forward to user
 	FrameScreenshot byte = 0x50 // 'P' — request current text screen snapshot
 
 	// C64 → Bridge
+	FrameAck       byte = 0x41 // 'A' — exact payload echo for verified delivery
 	FrameResult    byte = 0x52 // 'R' — tool result: screen scrape
 	FrameLLM       byte = 0x4C // 'L' — context message for the LLM
 	FrameError     byte = 0x58 // 'X' — tool call timed out
@@ -127,8 +129,9 @@ readType:
 	chk ^= length
 
 	// sanity check: reject unrecognized frame types
-	if typ != FrameMsg && typ != FrameExec && typ != FrameText && typ != FrameScreenshot &&
-		typ != FrameResult && typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat &&
+	if typ != FrameMsg && typ != FrameExec && typ != FrameExecGo && typ != FrameText &&
+		typ != FrameScreenshot && typ != FrameAck && typ != FrameResult &&
+		typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat &&
 		typ != FrameSystem {
 		log.Printf("  bad type 0x%02X, resync", typ)
 		return Decode(r)
@@ -175,10 +178,14 @@ func TypeName(t byte) string {
 		return "MSG"
 	case FrameExec:
 		return "EXEC"
+	case FrameExecGo:
+		return "EXECGO"
 	case FrameText:
 		return "TEXT"
 	case FrameScreenshot:
 		return "SCREENSHOT"
+	case FrameAck:
+		return "ACK"
 	case FrameResult:
 		return "RESULT"
 	case FrameLLM:
