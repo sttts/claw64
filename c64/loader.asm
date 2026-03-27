@@ -45,9 +45,9 @@ ldr_cp: lda (LDR_SRC_LO),y
         dex
         bne ldr_cp
 
+        cli
         jsr wait_logo
         jsr hide_logo
-        cli
 
         // Jump to agent install at $C000
         jmp AGENT_BASE
@@ -177,23 +177,143 @@ show_logo:
         lda vic_d011_save
         ora #$20                // bitmap mode on
         sta $D011
+
+        // Set up raster split: multicolor top, hires bottom.
+        // Save the KERNAL IRQ vector so we can restore it later.
+        lda IRQ_LO
+        sta irq_lo_save
+        lda IRQ_HI
+        sta irq_hi_save
+
+        // First raster IRQ fires at line 211 (bitmap row 160).
+        lda #211
+        sta $D012
+        lda $D011
+        and #%01111111          // clear bit 7 (raster line 9th bit)
+        sta $D011
+
+        // Point IRQ vector to the hires-switch handler.
+        lda #<raster_to_hires
+        sta IRQ_LO
+        lda #>raster_to_hires
+        sta IRQ_HI
+
+        // Disable CIA1 timer IRQ (conflicts with raster IRQ timing).
+        lda #$7F
+        sta $DC0D               // disable all CIA1 interrupts
+        lda $DC0D               // acknowledge pending
+
+        // Enable raster IRQ only.
+        lda #$01
+        sta $D01A
         rts
 
 // ---------------------------------------------------------
+// Raster IRQ: switch to hires bitmap at scanline 211.
+// ---------------------------------------------------------
+raster_to_hires:
+        lda $D019
+        sta $D019               // acknowledge raster IRQ
+
+        // Clear multicolor bit => hires bitmap for CLAW64 text.
+        lda $D016
+        and #%11101111
+        sta $D016
+
+        // Set next raster trigger to line 45 (before visible area).
+        lda #45
+        sta $D012
+
+        // Point IRQ to the multicolor-restore handler.
+        lda #<raster_to_multi
+        sta IRQ_LO
+        lda #>raster_to_multi
+        sta IRQ_HI
+
+        // Pull saved registers and return from interrupt.
+        pla
+        tay
+        pla
+        tax
+        pla
+        rti
+
+// ---------------------------------------------------------
+// Raster IRQ: switch back to multicolor at top of screen.
+// ---------------------------------------------------------
+raster_to_multi:
+        lda $D019
+        sta $D019               // acknowledge raster IRQ
+
+        // Set multicolor bit => multicolor bitmap for lobster.
+        lda $D016
+        ora #%00010000
+        sta $D016
+
+        // Set next raster trigger to line 211 (bitmap row 160).
+        lda #211
+        sta $D012
+
+        // Point IRQ to the hires-switch handler.
+        lda #<raster_to_hires
+        sta IRQ_LO
+        lda #>raster_to_hires
+        sta IRQ_HI
+
+        // Pull saved registers and return from interrupt.
+        pla
+        tay
+        pla
+        tax
+        pla
+        rti
+
+// ---------------------------------------------------------
 // Keep the logo visible for roughly two seconds.
+// Uses a simple delay loop instead of polling $D012
+// (which conflicts with the raster IRQ changing $D012).
 // ---------------------------------------------------------
 wait_logo:
+        // ~2 seconds: 120 frames × ~16.7ms. Each outer iteration
+        // burns ~16700 cycles (one frame at ~1MHz).
         ldx #120
 wl_frame:
-        lda #$FF
-wl_wait1:
-        cmp $D012
-        bne wl_wait1
-wl_wait2:
-        lda $D012
-        beq wl_done_frame
-        jmp wl_wait2
-wl_done_frame:
+        ldy #0
+wl_inner1:
+        nop
+        nop
+        nop
+        dey
+        bne wl_inner1           // 256 × ~7 cycles = ~1792
+        ldy #0
+wl_inner2:
+        nop
+        nop
+        nop
+        dey
+        bne wl_inner2           // another ~1792
+        // ... repeat a few more times for ~16700 total
+        ldy #0
+wl_inner3:
+        nop
+        nop
+        nop
+        dey
+        bne wl_inner3
+        ldy #0
+wl_inner4:
+        nop
+        nop
+        nop
+        dey
+        bne wl_inner4
+        ldy #0
+wl_inner5:
+        nop
+        nop
+        nop
+        dey
+        bne wl_inner5
         dex
         bne wl_frame
         rts
@@ -202,6 +322,26 @@ wl_done_frame:
 // Restore plain text mode and clear the temporary bitmap screen.
 // ---------------------------------------------------------
 hide_logo:
+        sei
+
+        // Disable raster IRQ and restore original IRQ vector.
+        lda $D01A
+        and #%11111110
+        sta $D01A
+        lda #$FF
+        sta $D019               // acknowledge any pending raster IRQ
+        lda irq_lo_save
+        sta IRQ_LO
+        lda irq_hi_save
+        sta IRQ_HI
+
+        // Re-enable CIA1 timer IRQ (disabled during logo).
+        lda #$81
+        sta $DC0D
+
+        cli
+
+        // Restore VIC and CIA registers.
         lda vic_d018_save
         sta $D018
         lda vic_d016_save
@@ -288,6 +428,8 @@ border_save:    .byte 0
 bg_save:        .byte 0
 cursor_col_save: .byte 0
 cursor_row_save: .byte 0
+irq_lo_save:     .byte 0
+irq_hi_save:     .byte 0
 
 // Agent code stored inline — assembled as if at $C000
 #define LOADER_MODE
