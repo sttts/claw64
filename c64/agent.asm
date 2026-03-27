@@ -1764,7 +1764,7 @@ sys_prompt:
         .byte $0A
         .text "Use status, stop, or screen instead."
         .byte $0A
-        .text "exec: one statement, no colons, max 60 chars, no CHR$(147)."
+        .text "exec: max 127 chars; colons and numbered program lines are OK; no CHR$(147)."
 sys_prompt_end:
 .encoding "screencode_mixed"  // restore default
 

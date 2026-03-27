@@ -275,6 +275,7 @@ LLM may then use:
 - stop()
 - screen()
 
+`exec()` accepts immediate commands, colon-separated statements, and numbered BASIC program lines, up to 127 characters.
 While BASIC is running, a second exec is rejected.
 ```
 

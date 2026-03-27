@@ -316,13 +316,14 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 				})
 				continue
 			}
-			// sanitize: strip newlines, take first line only, truncate to 80 chars
+			// Sanitize: strip newlines, take first line only, truncate to the
+			// maximum EXEC payload the C64 frame receiver can hold.
 			cmd := serial.ToASCII(args.Command)
 			if i := strings.IndexAny(cmd, "\n\r"); i >= 0 {
 				cmd = cmd[:i]
 			}
-			if len(cmd) > 80 {
-				cmd = cmd[:80]
+			if len(cmd) > 127 {
+				cmd = cmd[:127]
 			}
 			logStream("LLM → C64:  EXEC ")
 			r.lastToolCallID = tc.ID
