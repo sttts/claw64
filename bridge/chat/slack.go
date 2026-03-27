@@ -40,7 +40,7 @@ func (s *SlackChannel) Start(ctx context.Context, handler MessageHandler) error 
 		return err
 	}
 
-	thread := slagent.NewThread(sc, resolved, slagent.WithOwner(ownerID))
+	thread := slagent.NewThread(sc, resolved, slagent.WithOwner(ownerID), slagent.WithInstanceID("joystick"))
 	if threadTS != "" {
 		thread.Resume(threadTS)
 		log.Printf("slack: workspace=%s target=%s thread=%s", workspaceLabel(s.workspace), display, s.target)
@@ -84,22 +84,22 @@ func (s *SlackChannel) Send(_ context.Context, _ string, text string) error {
 	if s.thread == nil {
 		return fmt.Errorf("slack: no active thread")
 	}
-	_, err := s.thread.Post(text)
+	_, err := s.thread.Post(s.decorateSlackReply(text))
 	return err
 }
 
 func (s *SlackChannel) Stop() error { return nil }
 
 func (s *SlackChannel) handleSlackMessage(ctx context.Context, handler MessageHandler, userID, text string) error {
-	text = strings.TrimSpace(text)
-	if text == "" {
+	text, ok := stripSlackJoystickTrigger(text)
+	if !ok {
 		return nil
 	}
 
 	reply, err := handler(ctx, userID, text)
 	if err != nil {
 		if s.thread != nil {
-			_, _ = s.thread.Post(fmt.Sprintf("error: %v", err))
+			_, _ = s.thread.Post(s.decorateSlackReply(fmt.Sprintf("error: %v", err)))
 		}
 		return err
 	}
@@ -107,8 +107,12 @@ func (s *SlackChannel) handleSlackMessage(ctx context.Context, handler MessageHa
 		return nil
 	}
 
-	_, err = s.thread.Post(reply)
+	_, err = s.thread.Post(s.decorateSlackReply(reply))
 	return err
+}
+
+func (s *SlackChannel) decorateSlackReply(text string) string {
+	return formatSlackJoystickQuote(text)
 }
 
 func (s *SlackChannel) connect() (*slagentclient.Client, string, string, string, string, error) {

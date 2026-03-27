@@ -46,11 +46,13 @@ type SlackCmd struct {
 }
 
 type WhatsAppCmd struct {
-	DB string `name:"db" default:"whatsapp.db" help:"SQLite session database path."`
+	Target string `arg:"" required:"" help:"Explicit WhatsApp chat target JID (private or group)." `
+	DB     string `name:"db" default:"whatsapp.db" help:"SQLite session database path."`
 }
 
 type SignalCmd struct {
 	Account string `arg:"" required:"" help:"Signal account / phone number used by signal-cli."`
+	Target  string `arg:"" required:"" help:"Explicit Signal target: user:<phone> or group:<group-id>."`
 	Config  string `name:"config" help:"Optional signal-cli config directory."`
 }
 
@@ -74,16 +76,16 @@ func main() {
 	switch ctx.Command() {
 	case "stdin":
 		runChatBridge(cli, chat.NewStdin())
-	case "slack":
+	case "slack <target>":
 		runChatBridge(cli, chat.NewSlack(cli.Slack.Workspace, cli.Slack.Target, cli.Slack.Topic))
-	case "whatsapp":
-		waCh, err := chat.NewWhatsApp(cli.WhatsApp.DB)
+	case "whatsapp <target>":
+		waCh, err := chat.NewWhatsApp(cli.WhatsApp.DB, cli.WhatsApp.Target)
 		if err != nil {
 			log.Fatalf("whatsapp: %v", err)
 		}
 		runChatBridge(cli, waCh)
-	case "signal":
-		runChatBridge(cli, chat.NewSignal(cli.Signal.Account, cli.Signal.Config))
+	case "signal <account> <target>":
+		runChatBridge(cli, chat.NewSignal(cli.Signal.Account, cli.Signal.Config, cli.Signal.Target))
 	case "test-serial":
 		testSerial(cli.SerialAddr, cli.TestSerial.Command)
 	default:

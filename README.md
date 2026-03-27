@@ -32,7 +32,8 @@ go run ./cmd/claw64-bridge stdin
 ```
 
 Starts the local terminal chat. This is the default and the fastest way to
-get a working setup.
+get a working setup. `stdin` does not use chat-target filtering or the `🕹️`
+message trigger.
 
 ### Slack
 
@@ -42,27 +43,35 @@ go run ./cmd/claw64-bridge slack @alice
 go run ./cmd/claw64-bridge slack 'https://team.slack.com/archives/C123/p1234567890123456'
 ```
 
+Only messages in that explicit Slack target are considered, and only if they
+start exactly with `:joystick: ` or `:joystick::`.
+
 ### WhatsApp
 
 ```bash
-go run ./cmd/claw64-bridge whatsapp
+go run ./cmd/claw64-bridge whatsapp 491701234567@s.whatsapp.net
+go run ./cmd/claw64-bridge whatsapp 120363123456789012@g.us
 ```
 
-On first run, scan the QR code shown by the bridge.
-After pairing, the bridge listens on that WhatsApp account and replies to
-incoming direct messages.
+On first run, scan the QR code shown by the bridge. After pairing, the bridge
+only listens in the explicit target chat JID, and only for messages that start
+exactly with `🕹️ ` or `🕹️:`.
 
 ### Signal
 
 ```bash
-go run ./cmd/claw64-bridge signal +49...
+go run ./cmd/claw64-bridge signal +49... user:+491701234567
+go run ./cmd/claw64-bridge signal +49... group:BASE64GROUPID
 ```
 
 Optional:
 
 ```bash
-go run ./cmd/claw64-bridge signal +49... --config ~/.local/share/signal-cli
+go run ./cmd/claw64-bridge signal +49... user:+491701234567 --config ~/.local/share/signal-cli
 ```
+
+The bridge only listens in the explicit Signal target, and only for messages
+that start exactly with `🕹️ ` or `🕹️:`.
 
 ### LLM Provider
 
@@ -194,8 +203,8 @@ first message, it's sent as chunked SYSTEM frames before the LLM_MSG.
 
 SYSTEM and RESULT use a 2-byte chunk header: `[chunk_index, total_chunks]`.
 TEXT is chunked by the bridge into 120-byte payload frames and reassembled
-after the C64 echoes them back. The bridge waits for each TEXT echo before
-sending the next chunk.
+after the C64 forwards them back. The bridge waits for each forwarded TEXT
+chunk before sending the next chunk.
 
 ### Example flow
 
@@ -241,20 +250,26 @@ Credentials are auto-extracted from the local Slack desktop app on first use.
 Accepts a thread URL, `@user`, `#channel`, or a Slack channel ID as the positional target.
 `--workspace` is optional if a default slagent workspace exists.
 For new threads, the bridge prompts for a topic unless `--topic` is given.
+Only messages in the explicit target are considered, and only if they start
+exactly with `:joystick: ` or `:joystick::`. Slack output is also rendered
+with `:joystick:` quote prefixes so it matches `slagent` shortcode rendering.
 
 ### WhatsApp
 
 Uses [whatsmeow](https://github.com/tulir/whatsmeow) with local session
-persistence. First run pairs by QR code. After pairing, it responds to
-incoming direct messages on that WhatsApp account.
+persistence. First run pairs by QR code. After pairing, it listens only in the
+explicit target chat JID and only for messages that start exactly with `🕹️ `
+or `🕹️:`.
 
 ### Signal
 
 Uses [signal-cli](https://github.com/AsamK/signal-cli) as a subprocess.
 The current backend polls with `receive` and replies with `send`.
-The positional argument is the Signal account / phone number used by
-`signal-cli`. It responds to incoming direct and group messages for that
-account. `--config` is optional.
+The first positional argument is the Signal account / phone number used by
+`signal-cli`. The second positional argument is the explicit target,
+`user:<phone>` or `group:<group-id>`. Only messages from that target are
+considered, and only if they start exactly with `🕹️ ` or `🕹️:`.
+`--config` is optional.
 
 ### stdin
 

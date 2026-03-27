@@ -22,20 +22,21 @@ const (
 type SignalChannel struct {
 	account string
 	config  string
+	target  string
 
 	mu sync.Mutex
 }
 
 // NewSignal creates a Signal backend bound to one signal-cli account.
-func NewSignal(account, config string) *SignalChannel {
-	return &SignalChannel{account: account, config: config}
+func NewSignal(account, config, target string) *SignalChannel {
+	return &SignalChannel{account: account, config: config, target: target}
 }
 
 func (s *SignalChannel) Name() string { return "signal" }
 
 // Start polls signal-cli receive and dispatches incoming messages.
 func (s *SignalChannel) Start(ctx context.Context, handler MessageHandler) error {
-	log.Printf("signal: ready on %s (responds to incoming direct and group messages)", s.account)
+	log.Printf("signal: ready on %s target=%s trigger=%q", s.account, s.target, "🕹️")
 
 	for {
 		if ctx.Err() != nil {
@@ -47,7 +48,16 @@ func (s *SignalChannel) Start(ctx context.Context, handler MessageHandler) error
 			return err
 		}
 		for _, evt := range events {
-			reply, err := handler(ctx, evt.userID, evt.text)
+			if evt.userID != s.target {
+				continue
+			}
+
+			text, ok := stripJoystickTrigger(evt.text)
+			if !ok {
+				continue
+			}
+
+			reply, err := handler(ctx, evt.userID, text)
 			if err != nil {
 				log.Printf("signal: handler error for %s: %v", evt.userID, err)
 				reply = fmt.Sprintf("error: %v", err)
@@ -77,7 +87,7 @@ func (s *SignalChannel) Send(ctx context.Context, user, text string) error {
 	}
 
 	cmd := exec.CommandContext(ctx, "signal-cli", args...)
-	cmd.Stdin = strings.NewReader(text)
+	cmd.Stdin = strings.NewReader(formatJoystickQuote(text))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("signal send: %w: %s", err, strings.TrimSpace(string(out)))

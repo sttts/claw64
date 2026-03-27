@@ -21,11 +21,12 @@ type WhatsAppChannel struct {
 	client  *whatsmeow.Client
 	store   *sqlstore.Container
 	handler MessageHandler
+	target  string
 	mu      sync.Mutex
 }
 
 // NewWhatsApp creates a new WhatsApp channel with SQLite session persistence.
-func NewWhatsApp(dbPath string) (*WhatsAppChannel, error) {
+func NewWhatsApp(dbPath, target string) (*WhatsAppChannel, error) {
 	// Open the SQLite device store.
 	container, err := sqlstore.New(context.Background(), "sqlite", fmt.Sprintf("file:%s?_pragma=foreign_keys(1)", dbPath), waLog.Noop)
 	if err != nil {
@@ -43,6 +44,7 @@ func NewWhatsApp(dbPath string) (*WhatsAppChannel, error) {
 	return &WhatsAppChannel{
 		client: client,
 		store:  container,
+		target: target,
 	}, nil
 }
 
@@ -83,9 +85,9 @@ func (w *WhatsAppChannel) Start(ctx context.Context, handler MessageHandler) err
 	}
 
 	if w.client.Store.ID != nil {
-		log.Printf("whatsapp: ready as %s (responds to incoming direct messages)", w.client.Store.ID.String())
+		log.Printf("whatsapp: ready as %s target=%s trigger=%q", w.client.Store.ID.String(), w.target, "🕹️")
 	} else {
-		log.Printf("whatsapp: ready (responds to incoming direct messages)")
+		log.Printf("whatsapp: ready target=%s trigger=%q", w.target, "🕹️")
 	}
 
 	// Block until the context is cancelled.
@@ -127,8 +129,8 @@ func (w *WhatsAppChannel) onEvent(evt interface{}) {
 		return
 	}
 
-	// Ignore group messages.
-	if msg.Info.IsGroup {
+	chatJID := msg.Info.Chat.String()
+	if chatJID != w.target {
 		return
 	}
 
@@ -140,11 +142,13 @@ func (w *WhatsAppChannel) onEvent(evt interface{}) {
 			text = ext.GetText()
 		}
 	}
-	if text == "" {
+	var triggered bool
+	text, triggered = stripJoystickTrigger(text)
+	if !triggered {
 		return
 	}
 
-	sender := msg.Info.Sender.String()
+	sender := chatJID
 
 	// Serialize handler calls to avoid concurrent access issues.
 	w.mu.Lock()
@@ -161,6 +165,7 @@ func (w *WhatsAppChannel) onEvent(evt interface{}) {
 	}
 
 	// Send the reply back to the sender.
+	reply = formatJoystickQuote(reply)
 	_, err = w.client.SendMessage(context.Background(), msg.Info.Sender, &waE2E.Message{
 		Conversation: &reply,
 	})

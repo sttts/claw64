@@ -190,9 +190,18 @@ Implementations:
 
 - **Slack**: slagent-backed Slack thread backend with local credential extraction.
   Target may be a thread URL, `@user`, `#channel`, or a Slack channel ID.
-- **WhatsApp**: whatsmeow multi-device backend. Pairs one WhatsApp account and responds to incoming direct messages on that account.
-- **Signal**: signal-cli subprocess backend. Binds to one account, polls with `receive`, and replies to incoming direct and group messages with `send`.
-- **stdin**: local terminal REPL backend with colored prompts/logs.
+  Only messages in that explicit target are handled, and only if they begin
+  exactly with `:joystick: ` or `:joystick::`. Replies are rendered with
+  quoted `:joystick:` prefixes to match Slack shortcode rendering.
+- **WhatsApp**: whatsmeow multi-device backend. Pairs one WhatsApp account and
+  listens only in one explicit private or group chat JID. Only messages in that
+  target are handled, and only if they begin exactly with `🕹️ ` or `🕹️:`.
+- **Signal**: signal-cli subprocess backend. Binds to one account, polls with
+  `receive`, and listens only for one explicit target, `user:<phone>` or
+  `group:<group-id>`. Only messages from that target are handled, and only if
+  they begin exactly with `🕹️ ` or `🕹️:`.
+- **stdin**: local terminal REPL backend with colored prompts/logs. No target
+  filtering or joystick-prefix rule applies.
 
 #### LLM backends
 
@@ -208,8 +217,8 @@ Configuration via environment variables:
 ```
 claw64-bridge [global flags] stdin
 claw64-bridge [global flags] slack TARGET [--workspace ...] [--topic ...]
-claw64-bridge [global flags] whatsapp [--db whatsapp.db]
-claw64-bridge [global flags] signal ACCOUNT [--config ...]
+claw64-bridge [global flags] whatsapp TARGET [--db whatsapp.db]
+claw64-bridge [global flags] signal ACCOUNT TARGET [--config ...]
 
 Global flags:
   --serial-addr
