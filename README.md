@@ -76,11 +76,23 @@ that start exactly with `🕹️ ` or `🕹️:`.
 ### LLM Provider
 
 ```bash
-go run ./cmd/claw64-bridge --llm anthropic stdin
-go run ./cmd/claw64-bridge --llm anthropic-api --llm-key ... stdin
+go run ./cmd/claw64-bridge stdin
+go run ./cmd/claw64-bridge --llm openai stdin
+export OPENAI_API_KEY=sk-proj-...
+go run ./cmd/claw64-bridge auth set-key
+export ANTHROPIC_API_KEY=sk-ant-...
+go run ./cmd/claw64-bridge --llm openai --llm-key ... stdin
 go run ./cmd/claw64-bridge --llm openai --llm-key ... --model gpt-4o stdin
 go run ./cmd/claw64-bridge --llm ollama --llm-url http://localhost:11434/v1/chat/completions stdin
 ```
+
+OpenAI is the default backend. If no `OPENAI_API_KEY` is configured, the bridge
+can reuse an existing Codex/ChatGPT OAuth login and talk to the Codex backend
+directly.
+
+Anthropic uses the direct Messages API and requires a real Anthropic API key.
+Claude subscription tokens are not supported. Provide the key via `--llm-key`,
+`ANTHROPIC_API_KEY`, or `claw64-bridge auth set-key`.
 
 ### Manual Steps
 
@@ -278,11 +290,10 @@ wire logs.
 
 ## LLM Backends
 
-| Backend | `CLAW64_LLM=` | Auth |
-|---------|---------------|------|
-| Anthropic (CLI) | `anthropic` (default) | `claude` CLI handles it |
-| Anthropic (API) | `anthropic-api` | `CLAW64_LLM_KEY` |
-| OpenAI | `openai` | `CLAW64_LLM_KEY` |
+| Backend | `--llm` | Auth |
+|---------|---------|------|
+| OpenAI / Codex | `openai` (default) | `OPENAI_API_KEY`, `--llm-key`, or Codex/ChatGPT OAuth |
+| Anthropic (API) | `anthropic` | `ANTHROPIC_API_KEY`, `--llm-key`, or `auth set-key` |
 | Ollama | `ollama` | none needed |
 
 ## Status

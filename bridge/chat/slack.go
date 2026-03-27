@@ -20,7 +20,8 @@ type SlackChannel struct {
 	target    string
 	topic     string
 
-	thread *slagent.Thread
+	thread   *slagent.Thread
+	prepared bool
 }
 
 // NewSlack creates a Slack backend using slagent credentials and a target channel.
@@ -34,7 +35,11 @@ func NewSlack(workspace, target, topic string) *SlackChannel {
 
 func (s *SlackChannel) Name() string { return "slack" }
 
-func (s *SlackChannel) Start(ctx context.Context, handler MessageHandler) error {
+func (s *SlackChannel) Preflight(ctx context.Context) error {
+	if s.prepared {
+		return nil
+	}
+
 	sc, resolved, threadTS, display, ownerID, err := s.connect()
 	if err != nil {
 		return err
@@ -52,6 +57,16 @@ func (s *SlackChannel) Start(ctx context.Context, handler MessageHandler) error 
 		log.Printf("slack: workspace=%s target=%s thread=%s", workspaceLabel(s.workspace), display, url)
 	}
 	s.thread = thread
+	s.prepared = true
+	return nil
+}
+
+func (s *SlackChannel) Start(ctx context.Context, handler MessageHandler) error {
+	if err := s.Preflight(ctx); err != nil {
+		return err
+	}
+
+	thread := s.thread
 
 	for {
 		messages, err := thread.Replies(ctx)

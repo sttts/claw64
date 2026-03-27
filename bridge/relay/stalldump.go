@@ -1,0 +1,156 @@
+package relay
+
+import (
+	"bufio"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type monitorSymbolTable map[string]uint16
+
+func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk []byte) (string, error) {
+	if debugDir == "" || monitorAddr == "" {
+		return "", fmt.Errorf("debug dump disabled")
+	}
+	if err := os.MkdirAll(debugDir, 0o755); err != nil {
+		return "", fmt.Errorf("create debug dir: %w", err)
+	}
+
+	filename := filepath.Join(debugDir, "stall-"+time.Now().Format("20060102-150405")+".log")
+	f, err := os.Create(filename)
+	if err != nil {
+		return "", fmt.Errorf("create debug log: %w", err)
+	}
+	defer f.Close()
+
+	fmt.Fprintf(f, "reason: %s\n", reason)
+	fmt.Fprintf(f, "time: %s\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(f, "monitor: %s\n", monitorAddr)
+	fmt.Fprintf(f, "sym: %s\n", symPath)
+	fmt.Fprintf(f, "pending_chunk_len: %d\n", len(pendingChunk))
+	if len(pendingChunk) > 0 {
+		fmt.Fprintf(f, "pending_chunk_text: %q\n", string(pendingChunk))
+	}
+	fmt.Fprintln(f)
+
+	syms, _ := loadMonitorSymbols(symPath)
+
+	conn, err := net.DialTimeout("tcp", monitorAddr, 2*time.Second)
+	if err != nil {
+		return filename, fmt.Errorf("connect monitor: %w", err)
+	}
+	defer conn.Close()
+
+	commands := []string{
+		"r",
+		"m 029b 029e",
+		"m 00f7 00fa",
+		"m 0400 07ff",
+		"m cd00 ceff",
+		"m c000 cfff",
+	}
+	if start, end, ok := symbolRange(syms,
+		"parse_state", "frame_sub", "frame_len", "frame_chk", "rx_index",
+		"agent_state", "inj_pos", "inj_len", "ready_timer", "send_pos",
+		"send_total", "llm_pending", "prompt_pending", "result_pending",
+		"text_pending", "prompt_sent", "scan_start", "busy", "old_irq_lo",
+		"old_irq_hi", "anim_timer", "dot_dir", "busy_timer", "color_timer",
+		"claw_timer",
+	); ok {
+		commands = append(commands, fmt.Sprintf("m %04x %04x", start, end))
+	}
+
+	for _, cmd := range commands {
+		fmt.Fprintf(f, ">>> %s\n", cmd)
+		out, err := runMonitorCommand(conn, cmd)
+		if err != nil {
+			fmt.Fprintf(f, "error: %v\n\n", err)
+			continue
+		}
+		f.WriteString(out)
+		if !strings.HasSuffix(out, "\n") {
+			f.WriteString("\n")
+		}
+		f.WriteString("\n")
+	}
+
+	return filename, nil
+}
+
+func runMonitorCommand(conn net.Conn, cmd string) (string, error) {
+	if _, err := fmt.Fprintf(conn, "%s\n", cmd); err != nil {
+		return "", err
+	}
+
+	var out strings.Builder
+	buf := make([]byte, 8192)
+	for {
+		if err := conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond)); err != nil {
+			return out.String(), err
+		}
+		n, err := conn.Read(buf)
+		if n > 0 {
+			out.Write(buf[:n])
+		}
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				break
+			}
+			return out.String(), err
+		}
+	}
+	return out.String(), nil
+}
+
+func loadMonitorSymbols(path string) (monitorSymbolTable, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	syms := monitorSymbolTable{}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, ".label ") {
+			continue
+		}
+		line = strings.TrimPrefix(line, ".label ")
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		value, err := strconv.ParseUint(strings.TrimPrefix(parts[1], "$"), 16, 16)
+		if err != nil {
+			continue
+		}
+		syms[parts[0]] = uint16(value)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return syms, nil
+}
+
+func symbolRange(syms monitorSymbolTable, names ...string) (uint16, uint16, bool) {
+	var addrs []uint16
+	for _, name := range names {
+		addr, ok := syms[name]
+		if !ok {
+			continue
+		}
+		addrs = append(addrs, addr)
+	}
+	if len(addrs) == 0 {
+		return 0, 0, false
+	}
+	slices.Sort(addrs)
+	return addrs[0], addrs[len(addrs)-1], true
+}

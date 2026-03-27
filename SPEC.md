@@ -207,18 +207,21 @@ Implementations:
 
 The bridge supports multiple LLM backends:
 
-- **Anthropic** (default): uses `claude` CLI for auth, or direct API
-  with `X-Api-Key` header. Messages API with tool use.
-- **OpenAI**: `/v1/chat/completions` with `Authorization: Bearer`.
+- **OpenAI** (default): direct OpenAI API with `OPENAI_API_KEY` / `--llm-key`,
+  or ChatGPT/Codex OAuth against the Codex backend.
+- **Anthropic**: direct Messages API using a real Anthropic API key via
+  `--llm-key`, `ANTHROPIC_API_KEY`, or `claw64-bridge auth set-key`.
+  Claude subscription tokens are not supported.
 - **Ollama**: OpenAI-compatible endpoint at localhost.
 
-Configuration via environment variables:
+Configuration via CLI:
 
 ```
 claw64-bridge [global flags] stdin
 claw64-bridge [global flags] slack TARGET [--workspace ...] [--topic ...]
 claw64-bridge [global flags] whatsapp TARGET [--db whatsapp.db]
 claw64-bridge [global flags] signal ACCOUNT TARGET [--config ...]
+claw64-bridge auth set-key [API_KEY]
 
 Global flags:
   --serial-addr
@@ -302,7 +305,6 @@ message, the C64 sends it to the bridge as multiple SYSTEM frames before
 the LLM_MSG (max 120 bytes text per frame, drip-sent one byte per main
 loop iteration). Each frame's payload: `[chunk_index, total_chunks, text...]`.
 The bridge assembles the chunks and uses the result as the LLM system prompt.
-Falls back to a hardcoded prompt if no SYSTEM frames arrive.
 
 All payloads are plain text. No JSON, no quoting, no escaping.
 

@@ -24,9 +24,8 @@ bridge/
   serial/serial.go           — TCP connection to VICE, frame send/recv
   serial/frame.go            — Frame types, marshal/unmarshal, checksum
   llm/llm.go                 — Completer interface
-  llm/tools.go               — basic_exec + text_screenshot tools, system prompt
+  llm/tools.go               — basic_exec + text_screenshot tool schemas
   llm/anthropic.go           — Anthropic Messages API client
-  llm/claude_cli.go          — Claude CLI backend (shells out to claude)
   llm/openai.go              — OpenAI-compatible chat completions client
   chat/chat.go               — Channel interface
   chat/slack.go              — Slack via slagent library
@@ -73,7 +72,11 @@ Module: `github.com/sttts/claw64`
 - Buffers pinned at top of $C000-$CFFF block: RXBUF=$CD00, TXBUF=$CE00.
 - Tools: basic_exec (run BASIC), text_screenshot (read screen without executing).
 - Chat channels: Slack, WhatsApp, Signal, stdin.
-- LLM backends: Anthropic API, Claude CLI, OpenAI-compatible, Ollama.
+- LLM backends: Anthropic API, OpenAI-compatible, Ollama.
+- Bridge invariant: the bridge is a pure router. The only soul/system prompt lives in `c64/agent.asm`.
+- The bridge must not define, preload, append, rewrite, or "help" with prompt logic.
+- The bridge must not contain fallback personality, tool-usage instructions, output-style instructions, or safety/behavior rules.
+- If behavior needs to change, change the C64 soul, not the bridge.
 - Lobby splash: multicolor bitmap logo shown during loader copy phase.
 
 ## 6502 Assembly Style

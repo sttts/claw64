@@ -26,3 +26,8 @@ type Channel interface {
 	// Stop disconnects from the platform and releases resources.
 	Stop() error
 }
+
+// Preflighter is implemented by backends that need setup before serial or VICE startup.
+type Preflighter interface {
+	Preflight(ctx context.Context) error
+}

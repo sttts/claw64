@@ -2,3 +2,4 @@ build/
 c64/*.prg
 c64/*.sym
 /claw64-bridge
+/debug/
