@@ -159,7 +159,7 @@ func (r *Relay) SetupProgress() {
 	}
 }
 
-// basicExecArgs is the JSON structure the LLM passes to basic_exec.
+// basicExecArgs is the JSON structure the LLM passes to exec.
 type basicExecArgs struct {
 	Command string `json:"command"`
 }
@@ -204,7 +204,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			}
 
 			resultPrefix := "[C64 screen output]: "
-			if r.lastToolName == "text_screenshot" {
+			if r.lastToolName == "screen" {
 				resultPrefix = "[C64 text screen screenshot]: "
 			}
 			result := resultPrefix + resultText
@@ -307,7 +307,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	// tool calls
 	for _, tc := range resp.ToolCalls {
 		switch tc.Function.Name {
-		case "basic_exec":
+		case "exec":
 			var args basicExecArgs
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 				log.Printf("LLM → ???:   bad args: %v", err)
@@ -331,7 +331,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 				return fmt.Errorf("send EXEC: %w", err)
 			}
 
-		case "text_screenshot":
+		case "screen":
 			logStream("LLM → C64:  SCREENSHOT ")
 			fmt.Fprintln(os.Stderr)
 			r.lastToolCallID = tc.ID
@@ -346,7 +346,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			r.toolInFlight = r.toolInFlight[:0]
 			r.waitingTool = true
 
-		case "basic_stop":
+		case "stop":
 			logStream("LLM → C64:  STOP ")
 			fmt.Fprintln(os.Stderr)
 			r.lastToolCallID = tc.ID
@@ -361,7 +361,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			r.toolInFlight = r.toolInFlight[:0]
 			r.waitingTool = true
 
-		case "basic_status":
+		case "status":
 			logStream("LLM → C64:  STATUS ")
 			fmt.Fprintln(os.Stderr)
 			r.lastToolCallID = tc.ID

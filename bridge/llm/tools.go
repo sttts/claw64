@@ -4,7 +4,7 @@ package llm
 var BasicExecTool = Tool{
 	Type: "function",
 	Function: Function{
-		Name:        "basic_exec",
+		Name:        "exec",
 		Description: "Execute a C64 BASIC command and return screen output",
 		Parameters: Parameters{
 			Type: "object",
@@ -23,7 +23,7 @@ var BasicExecTool = Tool{
 var TextScreenshotTool = Tool{
 	Type: "function",
 	Function: Function{
-		Name:        "text_screenshot",
+		Name:        "screen",
 		Description: "Return the current visible C64 text screen without running BASIC",
 		Parameters: Parameters{
 			Type:       "object",
@@ -37,7 +37,7 @@ var TextScreenshotTool = Tool{
 var BasicStopTool = Tool{
 	Type: "function",
 	Function: Function{
-		Name:        "basic_stop",
+		Name:        "stop",
 		Description: "Stop the currently running BASIC program and return control to READY if possible",
 		Parameters: Parameters{
 			Type:       "object",
@@ -51,7 +51,7 @@ var BasicStopTool = Tool{
 var BasicStatusTool = Tool{
 	Type: "function",
 	Function: Function{
-		Name:        "basic_status",
+		Name:        "status",
 		Description: "Return whether the C64 BASIC interpreter is still running a program or is back at READY",
 		Parameters: Parameters{
 			Type:       "object",

@@ -748,95 +748,56 @@ so_done:
         rts
 
 queue_state_ready:
-        lda #'R'
-        sta AGENT_RXBUF+0
-        lda #'E'
-        sta AGENT_RXBUF+1
-        lda #'A'
-        sta AGENT_RXBUF+2
-        lda #'D'
-        sta AGENT_RXBUF+3
-        lda #'Y'
-        sta AGENT_RXBUF+4
-        lda #'.'
-        sta AGENT_RXBUF+5
-        lda #6
-        sta state_len
-        lda #1
-        sta state_pending
         lda #0
         sta basic_running
-        rts
+        lda #6
+        ldx #<state_ready_text
+        ldy #>state_ready_text
+        jmp queue_state_text
 
 queue_state_running:
-        lda #'R'
-        sta AGENT_RXBUF+0
-        lda #'U'
-        sta AGENT_RXBUF+1
-        lda #'N'
-        sta AGENT_RXBUF+2
-        sta AGENT_RXBUF+3
-        lda #'I'
-        sta AGENT_RXBUF+4
-        lda #'N'
-        sta AGENT_RXBUF+5
-        lda #'G'
-        sta AGENT_RXBUF+6
         lda #7
-        sta state_len
-        lda #1
-        sta state_pending
-        rts
+        ldx #<state_running_text
+        ldy #>state_running_text
+        jmp queue_state_text
 
 queue_state_busy:
-        lda #'B'
-        sta AGENT_RXBUF+0
-        lda #'U'
-        sta AGENT_RXBUF+1
-        lda #'S'
-        sta AGENT_RXBUF+2
-        lda #'Y'
-        sta AGENT_RXBUF+3
         lda #4
+        ldx #<state_busy_text
+        ldy #>state_busy_text
+        jmp queue_state_text
+
+queue_state_stop_requested:
+        lda #14
+        ldx #<state_stop_requested_text
+        ldy #>state_stop_requested_text
+        jmp queue_state_text
+
+queue_state_text:
         sta state_len
+        stx qst_src+1
+        sty qst_src+2
+        ldx #0
+qst_loop:
+        cpx state_len
+        beq qst_done
+qst_src: lda state_ready_text,x
+        sta AGENT_RXBUF,x
+        inx
+        bne qst_loop
+qst_done:
         lda #1
         sta state_pending
         rts
 
-queue_state_stop_requested:
-        lda #'S'
-        sta AGENT_RXBUF+0
-        lda #'T'
-        sta AGENT_RXBUF+1
-        lda #'O'
-        sta AGENT_RXBUF+2
-        lda #'P'
-        sta AGENT_RXBUF+3
-        lda #' '
-        sta AGENT_RXBUF+4
-        lda #'R'
-        sta AGENT_RXBUF+5
-        lda #'E'
-        sta AGENT_RXBUF+6
-        lda #'Q'
-        sta AGENT_RXBUF+7
-        lda #'U'
-        sta AGENT_RXBUF+8
-        lda #'E'
-        sta AGENT_RXBUF+9
-        lda #'S'
-        sta AGENT_RXBUF+10
-        lda #'T'
-        sta AGENT_RXBUF+11
-        lda #'E'
-        sta AGENT_RXBUF+12
-        lda #'D'
-        sta AGENT_RXBUF+13
-        lda #14
-        sta state_len
-        lda #1
-        sta state_pending
-        rts
+state_ready_text:
+        .text "READY."
+state_running_text:
+        .text "RUNNING"
+state_busy_text:
+        .text "BUSY"
+state_stop_requested_text:
+        .text "STOP REQUESTED"
 
 // screen_has_ready_anywhere — check the visible screen for READY.
 // Returns carry set and X=line if found, carry clear otherwise.
@@ -1775,27 +1736,35 @@ spr_dots:
 // This lets control chars like $0A (newline) pass through the conversion.
 .encoding "petscii_mixed"
 sys_prompt:
-        .text "You are a Commodore 64 from 1982."
+        .text "You are a Commodore 64 from 1982 chatting with humans."
         .byte $0A
         .text "Stay within 1982 knowledge."
         .byte $0A
-        .text "Reply with TEXT, not PRINT."
+        .text "IMPORTANT: Reply with TEXT. Do NOT use PRINT to talk."
         .byte $0A
-        .text "Tools: basic_exec, text_screenshot, basic_status, basic_stop."
+        .text "Use exec for BASIC commands."
+        .byte $0A
+        .text "Use screen to inspect the visible text screen."
+        .byte $0A
+        .text "Use status to check whether BASIC is RUNNING or READY."
+        .byte $0A
+        .text "Use stop to stop a running BASIC program."
         .byte $0A
         .text "Tool results are screen output, not human messages."
         .byte $0A
-        .text "After a tool result, reply with TEXT."
+        .text "Long scrolling output may only show the tail."
         .byte $0A
-        .text "Long output may only show the tail."
+        .text "After a tool result, reply with TEXT."
         .byte $0A
         .text "Show screenshots as quoted text, or code if alignment matters."
         .byte $0A
-        .text "If BASIC is RUNNING, do not basic_exec again."
+        .text "For simple greetings or questions, reply directly."
         .byte $0A
-        .text "Use basic_status, basic_stop, or text_screenshot instead."
+        .text "If BASIC is RUNNING, do not call exec again."
         .byte $0A
-        .text "basic_exec: one statement, max 60 chars, no CHR$(147)."
+        .text "Use status, stop, or screen instead."
+        .byte $0A
+        .text "exec: one statement, no colons, max 60 chars, no CHR$(147)."
 sys_prompt_end:
 .encoding "screencode_mixed"  // restore default
 

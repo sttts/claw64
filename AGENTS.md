@@ -24,8 +24,7 @@ bridge/
   serial/serial.go           — TCP connection to VICE, frame send/recv
   serial/frame.go            — Frame types, marshal/unmarshal, checksum
   llm/llm.go                 — Completer interface
-  llm/tools.go               — basic_exec, text_screenshot,
-                               basic_status, basic_stop tool schemas
+  llm/tools.go               — exec, screen, status, stop tool schemas
   llm/anthropic.go           — Anthropic Messages API client
   llm/openai.go              — OpenAI-compatible chat completions client
   chat/chat.go               — Channel interface
@@ -71,8 +70,8 @@ Module: `github.com/sttts/claw64`
 - System prompt (the C64's soul) stored in agent.asm, sent as SYSTEM frames on first MSG.
 - TEXT responses flow LLM→bridge→C64→bridge→user (no bridge shortcuts).
 - Buffers live below $D000 with RXBUF at $CF00 and TXBUF at $CF80.
-- Tools: basic_exec, text_screenshot, basic_status, basic_stop.
-- If BASIC is already running, reject a new basic_exec and keep screenshot/status/stop available.
+- Tools: exec, screen, status, stop.
+- If BASIC is already running, reject a new exec and keep screen/status/stop available.
 - ALWAYS verify that assembled agent code does not overlap the fixed RX/TX buffers.
 - After changing C64 code or buffer addresses, check the KickAssembler memory map and symbol output before committing.
 - Chat channels: Slack, WhatsApp, Signal, stdin.

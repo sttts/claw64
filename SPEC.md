@@ -243,10 +243,10 @@ overrides that embedded image.
 
 #### Tools
 
-- `basic_exec(command)` — execute one BASIC command and return the resulting screen output.
-- `text_screenshot()` — return the current visible text screen without running BASIC.
-- `basic_status()` — return whether BASIC is still running or back at `READY.`.
-- `basic_stop()` — request a RUN/STOP break for the currently running BASIC program.
+- `exec(command)` — execute one BASIC command and return the resulting screen output.
+- `screen()` — return the current visible text screen without running BASIC.
+- `status()` — return whether BASIC is still running or back at `READY.`.
+- `stop()` — request a RUN/STOP break for the currently running BASIC program.
 
 #### System prompt
 
@@ -256,13 +256,13 @@ The soul lives on the C64 and is sent as chunked SYSTEM frames.
 Current intent:
 - Speak as a machine from 1982.
 - Stay within 1982 knowledge. If asked about later facts, say you do not know them.
-- Use `basic_exec` for BASIC commands.
-- Use `text_screenshot` to inspect the visible text screen without running BASIC.
-- Use `basic_status` to check whether BASIC is still running or back at `READY.`.
-- Use `basic_stop` to stop a running BASIC program.
+- Use `exec` for BASIC commands.
+- Use `screen` to inspect the visible text screen without running BASIC.
+- Use `status` to check whether BASIC is still running or back at `READY.`.
+- Use `stop` to stop a running BASIC program.
 - Tool results are screen output, not human messages.
 - Long scrolling output may only show the tail.
-- If BASIC is already running, do not call `basic_exec`; use status, stop, or screenshot.
+- If BASIC is already running, do not call `exec`; use status, stop, or screen.
 - Show screenshot output as quoted text or fenced code when alignment matters.
 ```
 
@@ -351,8 +351,8 @@ Used by: TEXT, SYSTEM, RESULT.
 
 - If a BASIC program keeps running too long, the C64 may detach from the
   wait and return `STATUS "RUNNING"` instead of stalling the whole tool turn.
-- While BASIC is running, `text_screenshot`, `basic_status`, and `basic_stop`
-  remain valid, but a second `basic_exec` is rejected with `STATUS "BUSY"`.
+- While BASIC is running, `screen`, `status`, and `stop`
+  remain valid, but a second `exec` is rejected with `STATUS "BUSY"`.
 
 - Bad checksum: frame dropped silently, parser resets to SYNC hunt.
 - The bridge retries EXEC frames on timeout (3 attempts, 500ms/1s/2s).
@@ -364,7 +364,7 @@ Used by: TEXT, SYSTEM, RESULT.
 1. Chat user sends "What is 6502*8?"
 2. Bridge sends MSG frame to C64:  U | "What is 6502*8?"
 3. Bridge calls LLM with user message.
-4. LLM returns tool_call: basic_exec("PRINT 6502*8")
+4. LLM returns tool_call: exec("PRINT 6502*8")
 5. Bridge sends EXEC frame to C64:     E | "PRINT 6502*8"
 6. C64 injects keystrokes, waits for READY.
 7. C64 scrapes screen, sends RESULT:   R | " 52016"
@@ -419,7 +419,7 @@ Build:       make assemble / make vice / make bridge
 - C64 TSR agent in 6502 assembly.
 - Frame protocol (MSG/EXEC/SCREENSHOT/TEXT/RESULT/LLM_MSG/ERROR/HEARTBEAT/SYSTEM).
 - Bridge in Go: LLM proxy + chat relay + serial link.
-- Two tools: `basic_exec`, `text_screenshot`.
+- Tools: `exec`, `screen`, `status`, `stop`.
 - Multi-user chat support.
 - VICE development environment.
 
@@ -451,7 +451,7 @@ The serial link is not the bottleneck; the LLM API latency dominates.
 User (Slack):    "What is 6502 * 8?"
 Bridge:          -> C64: MSG "What is 6502 * 8?"
 Bridge:          -> LLM: user message
-LLM:             -> tool_call: basic_exec("PRINT 6502*8")
+LLM:             -> tool_call: exec("PRINT 6502*8")
 Bridge:          -> C64: EXEC "PRINT 6502*8"
 C64 agent:       types P,R,I,N,T, ,6,5,0,2,*,8,RETURN
 BASIC:           prints " 52016"
@@ -466,7 +466,7 @@ Bridge:          -> Slack: "6502 * 8 = 52016"
 User (Slack):    "Make the screen cyan"
 Bridge:          -> C64: MSG "Make the screen cyan"
 Bridge:          -> LLM: user message
-LLM:             -> tool_call: basic_exec("POKE 53281,3")
+LLM:             -> tool_call: exec("POKE 53281,3")
 Bridge:          -> C64: EXEC "POKE 53281,3"
 C64 agent:       injects POKE 53281,3 + RETURN
 BASIC:           executes, screen turns cyan
@@ -480,6 +480,6 @@ Bridge:          -> Slack: "Done, background is now cyan!"
 ```
 C64 agent:       sends LLM_MSG "Screen is blue. PEEK(53281)=6"
 Bridge:          -> LLM: appends to history, calls LLM
-LLM:             -> tool_call: basic_exec("POKE 53281,3")
+LLM:             -> tool_call: exec("POKE 53281,3")
 ...
 ```

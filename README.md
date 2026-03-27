@@ -228,7 +228,7 @@ User (Slack):     "What is 6502 * 8?"
 Bridge → C64:      M │ What is 6502 * 8?      ← user's message
 C64 → Bridge:      L │ What is 6502 * 8?      ← C64 asks bridge to call LLM
 Bridge → LLM:      (calls model with user message)
-LLM → Bridge:      tool_call: basic_exec("PRINT 6502*8")
+LLM → Bridge:      tool_call: exec("PRINT 6502*8")
 Bridge → C64:      E │ PRINT 6502*8            ← tool call
 
 C64 types "PRINT 6502*8" into BASIC REPL
@@ -248,7 +248,7 @@ Screenshot-only flow:
 User:               "Do a screenshot"
 Bridge → C64:       M │ Do a screenshot
 C64 → Bridge:       L │ Do a screenshot
-LLM → Bridge:       tool_call: text_screenshot()
+LLM → Bridge:       tool_call: screen()
 Bridge → C64:       P │
 C64 → Bridge:       R │ [chunked visible text screen]
 Bridge → LLM:       (feeds screenshot text back)
@@ -261,7 +261,7 @@ Long-running BASIC flow:
 User:               "Print 1 to 1001"
 Bridge → C64:       M │ Print 1 to 1001
 C64 → Bridge:       L │ Print 1 to 1001
-LLM → Bridge:       tool_call: basic_exec("FORI=1TO1001:PRINTI:NEXTI")
+LLM → Bridge:       tool_call: exec("FORI=1TO1001:PRINTI:NEXTI")
 Bridge → C64:       E │ FORI=1TO1001:PRINTI:NEXTI
 Bridge → C64:       G │
 
@@ -271,11 +271,11 @@ If it keeps running too long, the C64 returns:
 C64 → Bridge:       U │ RUNNING
 
 LLM may then use:
-- basic_status()
-- basic_stop()
-- text_screenshot()
+- status()
+- stop()
+- screen()
 
-While BASIC is running, a second basic_exec is rejected.
+While BASIC is running, a second exec is rejected.
 ```
 
 ## Chat Platforms
@@ -331,9 +331,9 @@ wire logs.
 | Keystroke Injection | :white_check_mark: |
 | Screen Scraping + READY. Detection | :white_check_mark: |
 | Startup Loader Logo | :white_check_mark: |
-| Tool: text_screenshot | :white_check_mark: |
-| Tool: basic_status | :white_check_mark: |
-| Tool: basic_stop | :white_check_mark: |
+| Tool: screen | :white_check_mark: |
+| Tool: status | :white_check_mark: |
+| Tool: stop | :white_check_mark: |
 | Bridge LLM Client | :white_check_mark: |
 | Bridge Relay (orchestrator) | :white_check_mark: |
 | Chat: Slack | :white_check_mark: |
