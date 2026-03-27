@@ -243,7 +243,7 @@ overrides that embedded image.
 
 #### Tools
 
-- `exec(command)` — send BASIC input and return the resulting screen output. Immediate commands, colon-separated statements, and numbered program lines are allowed, up to 127 characters.
+- `exec(command)` — send BASIC input and return the resulting screen output. Immediate commands, colon-separated statements, and numbered program lines are allowed, up to 127 characters. Numbered program lines return `STORED` and are not executed; run them with a later `exec("RUN")`.
 - `screen()` — return the current visible text screen without running BASIC.
 - `status()` — return whether BASIC is still running or back at `READY.`.
 - `stop()` — request a RUN/STOP break for the currently running BASIC program.
@@ -346,6 +346,9 @@ Used by: TEXT, SYSTEM, RESULT.
   leave the wire. Never buffer and print a complete message at once.
 - Bridge→C64 command frames use explicit ACK verification. `EXEC` is
   verified before the empty `EXECGO` trigger is sent.
+- Tool calls are strictly sequential. The bridge executes at most one tool
+  call from a single model response, appends that tool result to history,
+  and only then asks the model for the next step.
 
 #### Error handling
 
@@ -373,6 +376,13 @@ Used by: TEXT, SYSTEM, RESULT.
 10. Bridge sends TEXT frames to C64, one chunk at a time.
 11. C64 forwards TEXT back to bridge.
 12. Bridge sends text to the chat user.
+
+If the LLM wants multiple BASIC steps, they happen in separate turns:
+
+1. LLM returns tool_call: `exec("10 FOR I=1 TO 1000:PRINT I:NEXT I")`
+2. C64 stores the line and returns `STATUS "STORED"`
+3. Bridge feeds `STORED` back to the LLM
+4. LLM returns tool_call: `exec("RUN")`
 ```
 
 The C64 can inject context at any point:

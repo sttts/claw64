@@ -388,7 +388,7 @@ func buildOpenAICodexBody(model string, messages []Message, tools []Tool) (map[s
 		"text":                map[string]any{"verbosity": "medium"},
 		"include":             []string{"reasoning.encrypted_content"},
 		"tool_choice":         "auto",
-		"parallel_tool_calls": true,
+		"parallel_tool_calls": false,
 	}
 	if len(tools) > 0 {
 		body["tools"] = convertOpenAICodexTools(tools)

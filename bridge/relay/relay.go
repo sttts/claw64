@@ -224,6 +224,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if status == "" {
 				status = "UNKNOWN"
 			}
+			log.Printf("C64 → LLM:   STATUS %s", status)
 			r.appendToolResult(userID, "[C64 BASIC status]: "+status)
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
@@ -304,85 +305,89 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 		return r.sendNextTextChunk(ctx)
 	}
 
-	// tool calls
-	for _, tc := range resp.ToolCalls {
-		switch tc.Function.Name {
-		case "exec":
-			var args basicExecArgs
-			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				log.Printf("LLM → ???:   bad args: %v", err)
-				r.History.Append(userID, llm.Message{
-					Role: "tool", Content: fmt.Sprintf("ERROR: %v", err), ToolCallID: tc.ID,
-				})
-				continue
-			}
-			// Sanitize: strip newlines, take first line only, truncate to the
-			// maximum EXEC payload the C64 frame receiver can hold.
-			cmd := serial.ToASCII(args.Command)
-			if i := strings.IndexAny(cmd, "\n\r"); i >= 0 {
-				cmd = cmd[:i]
-			}
-			if len(cmd) > 127 {
-				cmd = cmd[:127]
-			}
-			logStream("LLM → C64:  EXEC ")
-			r.lastToolCallID = tc.ID
-			r.lastToolName = tc.Function.Name
-			if err := r.sendExecVerified(ctx, []byte(cmd)); err != nil {
-				return fmt.Errorf("send EXEC: %w", err)
-			}
+	// Tools are sequential here. The C64 is stateful, so each tool result
+	// must feed the next model decision before another tool is dispatched.
+	tc := resp.ToolCalls[0]
+	if len(resp.ToolCalls) > 1 {
+		log.Printf("LLM → bridge: extra tool calls ignored in this turn (%d total)", len(resp.ToolCalls))
+	}
 
-		case "screen":
-			logStream("LLM → C64:  SCREENSHOT ")
-			fmt.Fprintln(os.Stderr)
-			r.lastToolCallID = tc.ID
-			r.lastToolName = tc.Function.Name
-			r.toolInFlight = r.toolInFlight[:0]
-			r.waitingTool = true
-
-			screenFrame := serial.Frame{Type: serial.FrameScreenshot}
-			if err := r.sendVerified(ctx, screenFrame, "SCREENSHOT"); err != nil {
-				return fmt.Errorf("send SCREENSHOT: %w", err)
-			}
-			r.toolInFlight = r.toolInFlight[:0]
-			r.waitingTool = true
-
-		case "stop":
-			logStream("LLM → C64:  STOP ")
-			fmt.Fprintln(os.Stderr)
-			r.lastToolCallID = tc.ID
-			r.lastToolName = tc.Function.Name
-			r.toolInFlight = r.toolInFlight[:0]
-			r.waitingTool = true
-
-			stopFrame := serial.Frame{Type: serial.FrameStop}
-			if err := r.sendVerified(ctx, stopFrame, "STOP"); err != nil {
-				return fmt.Errorf("send STOP: %w", err)
-			}
-			r.toolInFlight = r.toolInFlight[:0]
-			r.waitingTool = true
-
-		case "status":
-			logStream("LLM → C64:  STATUS ")
-			fmt.Fprintln(os.Stderr)
-			r.lastToolCallID = tc.ID
-			r.lastToolName = tc.Function.Name
-			r.toolInFlight = r.toolInFlight[:0]
-			r.waitingTool = true
-
-			statusFrame := serial.Frame{Type: serial.FrameStatusReq}
-			if err := r.sendVerified(ctx, statusFrame, "STATUS"); err != nil {
-				return fmt.Errorf("send STATUS: %w", err)
-			}
-			r.toolInFlight = r.toolInFlight[:0]
-			r.waitingTool = true
-
-		default:
-			log.Printf("LLM → ???:   unknown tool %q", tc.Function.Name)
+	switch tc.Function.Name {
+	case "exec":
+		var args basicExecArgs
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			log.Printf("LLM → ???:   bad args: %v", err)
 			r.History.Append(userID, llm.Message{
-				Role: "tool", Content: "ERROR: unknown tool", ToolCallID: tc.ID,
+				Role: "tool", Content: fmt.Sprintf("ERROR: %v", err), ToolCallID: tc.ID,
 			})
+			return nil
 		}
+		// Sanitize: strip newlines, take first line only, truncate to the
+		// maximum EXEC payload the C64 frame receiver can hold.
+		cmd := serial.ToASCII(args.Command)
+		if i := strings.IndexAny(cmd, "\n\r"); i >= 0 {
+			cmd = cmd[:i]
+		}
+		if len(cmd) > 127 {
+			cmd = cmd[:127]
+		}
+		logStream("LLM → C64:  EXEC ")
+		r.lastToolCallID = tc.ID
+		r.lastToolName = tc.Function.Name
+		if err := r.sendExecVerified(ctx, []byte(cmd)); err != nil {
+			return fmt.Errorf("send EXEC: %w", err)
+		}
+
+	case "screen":
+		logStream("LLM → C64:  SCREENSHOT ")
+		fmt.Fprintln(os.Stderr)
+		r.lastToolCallID = tc.ID
+		r.lastToolName = tc.Function.Name
+		r.toolInFlight = r.toolInFlight[:0]
+		r.waitingTool = true
+
+		screenFrame := serial.Frame{Type: serial.FrameScreenshot}
+		if err := r.sendVerified(ctx, screenFrame, "SCREENSHOT"); err != nil {
+			return fmt.Errorf("send SCREENSHOT: %w", err)
+		}
+		r.toolInFlight = r.toolInFlight[:0]
+		r.waitingTool = true
+
+	case "stop":
+		logStream("LLM → C64:  STOP ")
+		fmt.Fprintln(os.Stderr)
+		r.lastToolCallID = tc.ID
+		r.lastToolName = tc.Function.Name
+		r.toolInFlight = r.toolInFlight[:0]
+		r.waitingTool = true
+
+		stopFrame := serial.Frame{Type: serial.FrameStop}
+		if err := r.sendVerified(ctx, stopFrame, "STOP"); err != nil {
+			return fmt.Errorf("send STOP: %w", err)
+		}
+		r.toolInFlight = r.toolInFlight[:0]
+		r.waitingTool = true
+
+	case "status":
+		logStream("LLM → C64:  STATUS ")
+		fmt.Fprintln(os.Stderr)
+		r.lastToolCallID = tc.ID
+		r.lastToolName = tc.Function.Name
+		r.toolInFlight = r.toolInFlight[:0]
+		r.waitingTool = true
+
+		statusFrame := serial.Frame{Type: serial.FrameStatusReq}
+		if err := r.sendVerified(ctx, statusFrame, "STATUS"); err != nil {
+			return fmt.Errorf("send STATUS: %w", err)
+		}
+		r.toolInFlight = r.toolInFlight[:0]
+		r.waitingTool = true
+
+	default:
+		log.Printf("LLM → ???:   unknown tool %q", tc.Function.Name)
+		r.History.Append(userID, llm.Message{
+			Role: "tool", Content: "ERROR: unknown tool", ToolCallID: tc.ID,
+		})
 	}
 	return nil
 }

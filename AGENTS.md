@@ -69,6 +69,8 @@ Module: `github.com/sttts/claw64`
 - KERNAL patches: $E5D1 (agent reentry), $E8EA (scroll tracking for scan_start).
 - System prompt (the C64's soul) stored in agent.asm, sent as SYSTEM frames on first MSG.
 - TEXT responses flow LLM→bridge→C64→bridge→user (no bridge shortcuts).
+- Tool calls are sequential. Execute at most one tool call per model response,
+  then feed its result back into history before asking the model again.
 - Buffers live below $D000 with RXBUF at $CF00 and TXBUF at $CF80.
 - Tools: exec, screen, status, stop.
 - If BASIC is already running, reject a new exec and keep screen/status/stop available.

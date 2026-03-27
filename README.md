@@ -211,6 +211,9 @@ C64 → Bridge:
 
 The bridge is a pure relay — no shortcuts. TEXT responses flow
 LLM→bridge→C64→bridge→user. The C64 forwards every TEXT frame back.
+Tool calls are strictly sequential: the bridge executes at most one tool
+call from a model response, feeds that tool result back into history, and
+only then asks the model for the next step.
 
 The system prompt — the C64's soul — lives in the C64's memory. On the
 first message, it's sent as chunked SYSTEM frames before the LLM_MSG.
@@ -218,7 +221,9 @@ first message, it's sent as chunked SYSTEM frames before the LLM_MSG.
 SYSTEM and RESULT use a 2-byte chunk header: `[chunk_index, total_chunks]`.
 TEXT is chunked by the bridge into 120-byte payload frames and reassembled
 after the C64 forwards them back. The bridge waits for each forwarded TEXT
-chunk before sending the next chunk.
+chunk before sending the next chunk. Tool calls are also one-at-a-time:
+if the model wants to store a numbered BASIC line and then run it, it must
+first wait for `STORED`, then issue a later `exec("RUN")`.
 
 ### Example flow
 
@@ -275,7 +280,7 @@ LLM may then use:
 - stop()
 - screen()
 
-`exec()` accepts immediate commands, colon-separated statements, and numbered BASIC program lines, up to 127 characters.
+`exec()` accepts immediate commands, colon-separated statements, and numbered BASIC program lines, up to 127 characters. Numbered program lines return `STORED` and are not executed; follow them with `exec("RUN")` if you want to run the program.
 While BASIC is running, a second exec is rejected.
 ```
 
