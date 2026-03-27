@@ -5,13 +5,13 @@ var BasicExecTool = Tool{
 	Type: "function",
 	Function: Function{
 		Name:        "exec",
-		Description: "Execute a C64 BASIC command and return screen output",
+		Description: "Execute C64 BASIC input and return screen output",
 		Parameters: Parameters{
 			Type: "object",
 			Properties: map[string]Property{
 				"command": {
 					Type:        "string",
-					Description: "C64 BASIC input, max 127 chars. Colons and numbered program lines allowed. No newlines.",
+					Description: "C64 BASIC input, max 127 chars. Colons and numbered program lines allowed. Numbered lines return STORED and are not run. No newlines.",
 				},
 			},
 			Required: []string{"command"},

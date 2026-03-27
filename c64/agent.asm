@@ -47,10 +47,11 @@
 
 // Agent state machine constants.
 // The agent cycles through these states as it processes commands:
-//   IDLE → INJECTING → WAITING → (scrape & send) → IDLE
+//   IDLE → INJECTING → WAITING/STOREWAIT → (send) → IDLE
 .const AG_IDLE      = 0     // waiting for an EXEC frame from bridge
 .const AG_INJECTING = 1     // drip-feeding command chars into keyboard buffer
 .const AG_WAITING   = 2     // waiting for BASIC's READY. prompt to appear
+.const AG_STOREWAIT = 3     // waiting for a numbered program line to settle
 
 // ---------------------------------------------------------
 // Install — one-time setup, called via SYS 49152 from BASIC
@@ -339,6 +340,7 @@ spr_cp0:lda spr_claw1,x
         sta running_reported
         sta basic_running
         sta stop_requested
+        sta progline_pending
 
         // border is not touched by the agent
 
@@ -440,11 +442,21 @@ bl_fill_done:
         // Check if all chars have been injected
         ldx inj_pos
         cpx inj_len
-        bne bl_kb               // more remaining → process this batch
+        beq bl_inj_complete
+        jmp bl_kb               // more remaining → process this batch
 
-        // All injected (including RETURN) → transition to AG_WAITING
+        // All injected (including RETURN) → wait for either READY. or
+        // a stored numbered program line to settle.
+bl_inj_complete:
         lda #0
         sta ready_timer
+        lda progline_pending
+        beq bl_inj_wait_ready
+        lda #AG_STOREWAIT
+        sta agent_state
+        jmp bl_kb
+
+bl_inj_wait_ready:
         lda #AG_WAITING
         sta agent_state
         jmp bl_kb
@@ -457,7 +469,41 @@ bl_wait:
         // screen memory to detect this.
         lda agent_state
         cmp #AG_WAITING         // are we waiting for READY.?
-        bne bl_kb               // no → skip to keyboard processing
+        beq bl_wait_ready_jump
+        cmp #AG_STOREWAIT
+        beq bl_wait_store
+        jmp bl_kb               // no → skip to keyboard processing
+
+bl_wait_ready_jump:
+        jmp bl_wait_ready
+
+        // Numbered BASIC lines are stored, not executed, and therefore
+        // do not print READY. again. Once the keyboard buffer drained
+        // and BASIC had a short moment to settle, return an empty RESULT.
+bl_wait_store:
+        lda KBUF_LEN
+        beq bl_wait_store_idle
+        jmp bl_kb
+
+bl_wait_store_idle:
+        inc ready_timer
+        lda ready_timer
+        cmp #10
+        bcs bl_wait_store_done
+        jmp bl_kb
+
+bl_wait_store_done:
+        lda #0
+        sta progline_pending
+        sta basic_running
+        sta running_reported
+        sta busy
+        jsr send_state_stored_now
+        lda #AG_IDLE
+        sta agent_state
+        jmp bl_kb
+
+bl_wait_ready:
 
         // Increment timer — we don't check for READY. immediately because
         // BASIC needs time to process the command and print output.
@@ -737,6 +783,7 @@ so_send_check:
         pha
         ldx #RS232_DEV
         jsr CHKOUT
+        bcs so_send_fail
         pla
         jsr CHROUT
         jsr CLRCHN
@@ -745,6 +792,11 @@ so_send_check:
         sta busy_timer
         sta dot_dir
 so_done:
+        rts
+
+so_send_fail:
+        pla
+        jsr CLRCHN
         rts
 
 queue_state_ready:
@@ -773,8 +825,30 @@ queue_state_stop_requested:
         ldy #>state_stop_requested_text
         jmp queue_state_text
 
+queue_state_stored:
+        lda #6
+        ldx #<state_stored_text
+        ldy #>state_stored_text
+        jmp queue_state_text
+
+send_state_stored_now:
+        lda #6
+        ldx #<state_stored_text
+        ldy #>state_stored_text
+        jsr copy_state_text
+        lda #6
+        sta frame_len
+        lda #FRAME_STATUS
+        jmp send_frame
+
 queue_state_text:
         sta state_len
+        jsr copy_state_text
+        lda #1
+        sta state_pending
+        rts
+
+copy_state_text:
         stx qst_src+1
         sty qst_src+2
         ldx #0
@@ -786,8 +860,6 @@ qst_src: lda state_ready_text,x
         inx
         bne qst_loop
 qst_done:
-        lda #1
-        sta state_pending
         rts
 
 state_ready_text:
@@ -796,6 +868,8 @@ state_running_text:
         .text "RUNNING"
 state_busy_text:
         .text "BUSY"
+state_stored_text:
+        .text "STORED"
 state_stop_requested_text:
         .text "STOP REQUESTED"
 
@@ -1274,12 +1348,17 @@ fr_bad: lda #0                  // reset parser state to HUNT
 //   the bridge forwards the LLM's answer to chat independently.
 // ---------------------------------------------------------
 frame_dispatch:
-        // Queue an ACK for every verified bridge frame so the bridge can
-        // retry safely without guessing whether the C64 received it.
+        // Queue an ACK only for bridge frames that the bridge verifies.
+        // EXECGO is intentionally fire-and-forget, so emitting an ACK for
+        // it leaks a stray empty ACK back into the normal receive loop.
+        lda frame_sub
+        cmp #FRAME_EXECGO
+        beq fd_ack_done
         lda #1
         sta ack_pending
         lda frame_len
         sta ack_len
+fd_ack_done:
 
         // Treat an immediately repeated same frame as a retransmit.
         // Compare subtype, length, XOR, and additive sum. This keeps
@@ -1432,6 +1511,7 @@ fd_not_execgo:
         // payload echo back to the bridge before allowing injection.
         lda frame_len
         sta exec_len
+        jsr detect_program_line
         lda #1
         sta exec_pending
         rts
@@ -1440,6 +1520,31 @@ fd_exec_busy:
         jsr queue_state_busy
 
 fd_done:
+        rts
+
+detect_program_line:
+        ldx #0
+dpl_skip_spaces:
+        cpx frame_len
+        beq dpl_no
+        lda AGENT_RXBUF,x
+        cmp #' '
+        bne dpl_check_digit
+        inx
+        jmp dpl_skip_spaces
+
+dpl_check_digit:
+        cmp #'0'
+        bcc dpl_no
+        cmp #'9'+1
+        bcs dpl_no
+        lda #1
+        sta progline_pending
+        rts
+
+dpl_no:
+        lda #0
+        sta progline_pending
         rts
 
 // ---------------------------------------------------------
@@ -1495,11 +1600,17 @@ sf_byte:
         pha
         ldx #RS232_DEV
         jsr CHKOUT
+        bcs sf_fail
         pla
         pha
         jsr CHROUT
         jsr CLRCHN
         pla
+        rts
+
+sf_fail:
+        pla
+        jsr CLRCHN
         rts
 
 // ---------------------------------------------------------
@@ -1606,7 +1717,7 @@ frame_len:    .byte 0   // payload length of current frame being parsed
 frame_chk:    .byte 0   // running XOR checksum (used by parser and frame builder)
 frame_sum:    .byte 0   // running additive checksum for duplicate detection
 rx_index:     .byte 0   // current byte index within frame payload (0 to frame_len-1)
-agent_state:  .byte 0   // agent state machine (0=IDLE, 1=INJECTING, 2=WAITING)
+agent_state:  .byte 0   // agent state machine (0=IDLE, 1=INJECTING, 2=WAITING, 3=STOREWAIT)
 inj_pos:      .byte 0   // current position in command being injected (0 to inj_len-1)
 inj_len:      .byte 0   // total length of command to inject
 ready_timer:  .byte 0   // countdown timer for READY. detection (increments each loop)
@@ -1648,6 +1759,7 @@ running_ticks_hi: .byte 0 // ISTOP-call timer high byte while BASIC runs
 running_reported: .byte 0 // 1 once "RUNNING" was already reported
 basic_running: .byte 0  // 1 = BASIC program still running after detach
 stop_requested: .byte 0 // 1 = ask ISTOP to trigger RUN/STOP
+progline_pending: .byte 0 // 1 = current EXEC starts with a BASIC line number
 
 // color cycle for busy lobster: red → orange → yellow → white
 busy_colors:  .byte 2, 8, 7, 1
@@ -1746,9 +1858,9 @@ sys_prompt:
         .byte $0A
         .text "Use screen to inspect the visible text screen."
         .byte $0A
-        .text "Use status to check whether BASIC is RUNNING or READY."
+        .text "Use status for RUNNING or READY."
         .byte $0A
-        .text "Use stop to stop a running BASIC program."
+        .text "Use stop to break a running BASIC program."
         .byte $0A
         .text "Tool results are screen output, not human messages."
         .byte $0A
@@ -1763,6 +1875,8 @@ sys_prompt:
         .text "If BASIC is RUNNING, do not call exec again."
         .byte $0A
         .text "Use status, stop, or screen instead."
+        .byte $0A
+        .text "Program lines return STORED. Then exec RUN."
         .byte $0A
         .text "exec: max 127 chars; colons and numbered program lines are OK; no CHR$(147)."
 sys_prompt_end:
