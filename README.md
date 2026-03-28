@@ -12,6 +12,12 @@ BASIC commands into its own REPL — reading the screen to see what happened.
 The bridge is a dumb relay: it proxies LLM calls and chat messages on
 behalf of the C64, which cannot reach the internet at 2400 baud.
 
+> [!IMPORTANT]
+> The bridge must never become the agent.
+> The bridge only translates protocols and stores history.
+> All agent logic, state transitions, tool semantics, and user-visible control flow belong on the C64.
+> Data must flow `user <-> C64 <-> bridge <-> LLM`, with the bridge acting only as transport/protocol glue.
+
 [![Release](https://github.com/sttts/claw64/actions/workflows/release.yml/badge.svg)](https://github.com/sttts/claw64/actions/workflows/release.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/sttts/claw64)](https://goreportcard.com/report/github.com/sttts/claw64)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)

@@ -40,7 +40,6 @@ type Relay struct {
 	lastToolName   string
 	toolStartedAt  time.Time
 	basicRunning   bool
-	directReply    string
 	skipNextExecAck bool
 }
 
@@ -192,9 +191,6 @@ func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (
 		if err := r.callAndDispatch(ctx, userID); err != nil {
 			return "", err
 		}
-		if text := r.takeDirectReply(); text != "" {
-			return text, nil
-		}
 		return r.eventLoop(ctx, userID)
 	}
 
@@ -222,9 +218,6 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
-			if text := r.takeDirectReply(); text != "" {
-				return text, nil
-			}
 
 		case serial.FrameResult:
 			fmt.Fprintln(os.Stderr) // newline after streamed payload
@@ -248,9 +241,6 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
-			if text := r.takeDirectReply(); text != "" {
-				return text, nil
-			}
 
 		case serial.FrameStatus:
 			fmt.Fprintln(os.Stderr)
@@ -266,9 +256,6 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
-			if text := r.takeDirectReply(); text != "" {
-				return text, nil
-			}
 
 		case serial.FrameError:
 			log.Printf("C64 → LLM:   ERROR (timeout)")
@@ -279,23 +266,18 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
-			if text := r.takeDirectReply(); text != "" {
-				return text, nil
-			}
 
 		case serial.FrameText:
 			// TEXT forwarded by C64 after parsing — accumulate and send next chunk
-			fmt.Fprintln(os.Stderr) // newline after streamed payload
+			fmt.Fprintln(os.Stderr)
 			r.textBuf = append(r.textBuf, f.Payload...)
 			r.textInFlight = nil
 			if len(r.textOutQueue) > 0 {
-				// more chunks to send — wait for this echo, then send next
 				if err := r.sendNextTextChunk(ctx); err != nil {
 					return "", err
 				}
 				continue
 			}
-			// all chunks sent and echoed — return full text
 			text := string(r.textBuf)
 			r.textBuf = nil
 			return text, nil
@@ -336,7 +318,8 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	}
 	r.History.Append(userID, resp)
 
-	// text response — send to C64, which forwards to user
+	// Text responses still flow through the C64. The bridge only translates
+	// protocols; the C64 remains the user-facing agent.
 	if len(resp.ToolCalls) == 0 {
 		if resp.Content == "" {
 			logStream("LLM → C64:  TEXT ")
@@ -344,16 +327,6 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			return nil
 		}
 
-		// Once BASIC is running, return chat text directly to the human.
-		// Routing it back through the C64 stalls behind the active program.
-		if r.basicRunning {
-			log.Printf("LLM → USER:  %s", resp.Content)
-			r.directReply = resp.Content
-			return nil
-		}
-
-		// queue TEXT chunks — eventLoop sends one at a time,
-		// waiting for C64 echo before sending the next
 		r.textOutQueue = []byte(serial.ToASCII(resp.Content))
 		return r.sendNextTextChunk(ctx)
 	}
@@ -364,6 +337,8 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	if len(resp.ToolCalls) > 1 {
 		log.Printf("LLM → bridge: extra tool calls ignored in this turn (%d total)", len(resp.ToolCalls))
 	}
+	r.lastToolCallID = tc.ID
+	r.lastToolName = tc.Function.Name
 
 	switch tc.Function.Name {
 		case "exec":
@@ -385,8 +360,6 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			cmd = cmd[:127]
 		}
 			logStream("LLM → C64:  EXEC ")
-			r.lastToolCallID = tc.ID
-			r.lastToolName = tc.Function.Name
 			if err := r.sendExecVerified(ctx, []byte(cmd)); err != nil {
 				return fmt.Errorf("send EXEC: %w", err)
 			}
@@ -400,19 +373,18 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			}
 
 		case "screen":
+			if r.basicRunning {
+				r.appendToolResult(userID, "ERROR: BASIC is RUNNING. Use stop first, then screen.")
+				return r.callAndDispatch(ctx, userID)
+			}
+
 			logStream("LLM → C64:  SCREENSHOT ")
 			fmt.Fprintln(os.Stderr)
-			r.lastToolCallID = tc.ID
-			r.lastToolName = tc.Function.Name
 			r.toolInFlight = r.toolInFlight[:0]
 			r.startToolWait()
 
 			screenFrame := serial.Frame{Type: serial.FrameScreenshot}
-			if r.basicRunning {
-				if err := r.sendWithRetry(screenFrame); err != nil {
-					return fmt.Errorf("send SCREENSHOT: %w", err)
-				}
-			} else if err := r.sendVerified(ctx, screenFrame, "SCREENSHOT"); err != nil {
+			if err := r.sendVerified(ctx, screenFrame, "SCREENSHOT"); err != nil {
 				return fmt.Errorf("send SCREENSHOT: %w", err)
 			}
 			r.toolInFlight = r.toolInFlight[:0]
@@ -421,8 +393,6 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 		case "stop":
 			logStream("LLM → C64:  STOP ")
 			fmt.Fprintln(os.Stderr)
-			r.lastToolCallID = tc.ID
-			r.lastToolName = tc.Function.Name
 			r.toolInFlight = r.toolInFlight[:0]
 			r.startToolWait()
 
@@ -438,19 +408,18 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			r.startToolWait()
 
 		case "status":
+			if r.basicRunning {
+				r.appendToolResult(userID, "[C64 BASIC status]: RUNNING")
+				return r.callAndDispatch(ctx, userID)
+			}
+
 			logStream("LLM → C64:  STATUS ")
 			fmt.Fprintln(os.Stderr)
-			r.lastToolCallID = tc.ID
-			r.lastToolName = tc.Function.Name
 			r.toolInFlight = r.toolInFlight[:0]
 			r.startToolWait()
 
 			statusFrame := serial.Frame{Type: serial.FrameStatusReq}
-			if r.basicRunning {
-				if err := r.sendWithRetry(statusFrame); err != nil {
-					return fmt.Errorf("send STATUS: %w", err)
-				}
-			} else if err := r.sendVerified(ctx, statusFrame, "STATUS"); err != nil {
+			if err := r.sendVerified(ctx, statusFrame, "STATUS"); err != nil {
 				return fmt.Errorf("send STATUS: %w", err)
 			}
 			r.toolInFlight = r.toolInFlight[:0]
@@ -479,7 +448,6 @@ func (r *Relay) logLLMRequest(messages []llm.Message, tools []llm.Tool) {
 	log.Printf("     → LLM:  request")
 }
 
-// sendNextTextChunk sends one TEXT chunk from the queue.
 func (r *Relay) sendNextTextChunk(ctx context.Context) error {
 	if len(r.textOutQueue) == 0 {
 		return nil
@@ -502,12 +470,6 @@ func (r *Relay) sendNextTextChunk(ctx context.Context) error {
 func (r *Relay) startToolWait() {
 	r.waitingTool = true
 	r.toolStartedAt = time.Now()
-}
-
-func (r *Relay) takeDirectReply() string {
-	text := r.directReply
-	r.directReply = ""
-	return text
 }
 
 func (r *Relay) sendExecVerified(ctx context.Context, cmd []byte) error {

@@ -3,6 +3,12 @@
 ## Project
 The Commodore 64 is the agent. BASIC is its tool. A tiny TSR in 6502 assembly types commands into the BASIC REPL and reads the screen to see what happened. A Go bridge connects the C64 to chat platforms and an LLM over serial. The bridge is a pure relay — no shortcuts, all data flows through the C64.
 
+## Non-Negotiable Invariant
+- The bridge must never become the agent.
+- The bridge may only do protocol translation, transport, and history storage.
+- Agent logic, state transitions, tool semantics, and user-visible control flow must live on the C64.
+- If a behavior choice seems convenient in the bridge, that is usually a bug. Move it to the C64 instead.
+
 ## Structure
 ```
 SPEC.md                      — Full project specification

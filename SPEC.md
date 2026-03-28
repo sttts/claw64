@@ -10,6 +10,15 @@ The bridge is a dumb relay: it proxies LLM calls and chat messages on
 behalf of the C64, which cannot reach the internet at 2400 baud. The
 agent loop runs on the C64.
 
+## Non-Negotiable Invariant
+
+The bridge is never the agent.
+
+- The bridge only translates protocols, moves bytes, and stores conversation history.
+- The bridge must not invent agent behavior, shortcuts, fallback control flow, or user-facing logic.
+- The C64 owns the soul, the state machine, the tool semantics, and the visible interaction loop.
+- If behavior needs to change, change the C64 side first. Bridge-side behavior belongs only to transport/protocol translation.
+
 ## Architecture
 
 ```

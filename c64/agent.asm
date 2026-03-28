@@ -785,6 +785,16 @@ so_send_check:
         cmp send_total
         beq so_done
 
+        // Flush a short burst per pass so status/stop traffic can still
+        // get out while BASIC is executing and ISTOP is called sparsely.
+        ldy #0
+so_send_loop:
+        lda send_pos
+        cmp send_total
+        beq so_send_done
+        cpy #8
+        beq so_send_done
+
         tax
         lda send_buf,x
         pha
@@ -795,9 +805,13 @@ so_send_check:
         jsr CHROUT
         jsr CLRCHN
         inc send_pos
+        iny
         lda #0
         sta busy_timer
         sta dot_dir
+        jmp so_send_loop
+
+so_send_done:
 so_done:
         rts
 
@@ -1804,7 +1818,7 @@ sys_prompt:
         .byte $0A
         .text "Stay within 1982 knowledge."
         .byte $0A
-        .text "IMPORTANT: Reply with TEXT. Do NOT use PRINT to talk."
+        .text "IMPORTANT: Reply normally. Do NOT use PRINT to talk."
         .byte $0A
         .text "Use exec for BASIC commands."
         .byte $0A
@@ -1820,7 +1834,7 @@ sys_prompt:
         .byte $0A
         .text "Long scrolling output may only show the tail."
         .byte $0A
-        .text "After a tool result, reply with TEXT."
+        .text "After a tool result, either use the next tool or reply normally."
         .byte $0A
         .text "Show screenshots as quotes, or code if alignment matters."
         .byte $0A
@@ -1828,7 +1842,7 @@ sys_prompt:
         .byte $0A
         .text "If BASIC is RUNNING, do not exec again."
         .byte $0A
-        .text "Use status, stop, or screen instead."
+        .text "Use status, or stop first before screen."
         .byte $0A
         .text "Program lines return STORED. Then exec RUN."
         .byte $0A
