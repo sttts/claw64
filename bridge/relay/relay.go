@@ -183,17 +183,6 @@ func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (
 	text = serial.ToASCII(text)
 	r.History.Append(userID, llm.Message{Role: "user", Content: text})
 
-	// While BASIC is running, the C64 is no longer the right place to ack
-	// ordinary chat input. Go straight to the LLM and only send any
-	// resulting control tools back to the machine.
-	if r.basicRunning {
-		log.Printf("USER → bridge: BASIC running; skipping C64 MSG ack")
-		if err := r.callAndDispatch(ctx, userID); err != nil {
-			return "", err
-		}
-		return r.eventLoop(ctx, userID)
-	}
-
 	// send user message to C64 (header now, chars stream via callback)
 	logStream("USER → C64:  MSG ")
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
@@ -502,6 +491,7 @@ func (r *Relay) sendExecVerified(ctx context.Context, cmd []byte) error {
 }
 
 func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name string) error {
+	expected := ackFingerprint(frame)
 	for attempt := 1; attempt <= 3; attempt++ {
 		if err := r.sendWithRetry(frame); err != nil {
 			return err
@@ -512,13 +502,24 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 			log.Printf("     ! %s ack attempt %d failed: %v", name, attempt, err)
 			continue
 		}
-		if string(ack.Payload) != string(frame.Payload) {
-			log.Printf("     ! %s ack attempt %d mismatch: got %q want %q", name, attempt, string(ack.Payload), string(frame.Payload))
+		if string(ack.Payload) != string(expected) {
+			log.Printf("     ! %s ack attempt %d mismatch: got %v want %v", name, attempt, ack.Payload, expected)
 			continue
 		}
 		return nil
 	}
 	return fmt.Errorf("%s delivery could not be verified after 3 attempts", name)
+}
+
+func ackFingerprint(frame serial.Frame) []byte {
+	var chk byte = frame.Type & 0x7F
+	length := byte(len(frame.Payload) & 0x7F)
+	chk ^= length
+	for _, b := range frame.Payload {
+		m := b & 0x7F
+		chk ^= m
+	}
+	return []byte{frame.Type & 0x7F, length, chk}
 }
 
 func (r *Relay) waitForAck(ctx context.Context) (serial.Frame, error) {

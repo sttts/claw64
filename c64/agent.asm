@@ -538,10 +538,9 @@ bl_scan:
         bcc bl_scan_next
         beq bl_scan_next
 bl_scan_do:
-        lda screen_lo,x
+        jsr screen_ptr_from_x
         sta brf_rd+1            // patch LDA address low byte
-        lda screen_hi,x
-        sta brf_rd+2            // patch LDA address high byte
+        sty brf_rd+2            // patch LDA address high byte
 
         // Check READY. at columns 0-5 using loop with self-modified LDA
         ldy #0
@@ -727,17 +726,17 @@ sr_done:
 service_outbound:
         lda send_pos
         cmp send_total
-        bne so_send_check
+        beq so_build_next
+        jmp so_send_check
+
+so_build_next:
 
         // ACKs first so verified delivery stays prompt.
         lda ack_pending
         beq so_chk_state
         lda #0
         sta ack_pending
-        lda ack_len
-        sta frame_len
-        lda #FRAME_ACK
-        jsr build_rxbuf_frame
+        jsr build_ack_frame
         jmp so_send_check
 
 so_chk_state:
@@ -798,6 +797,7 @@ so_send_loop:
         tax
         lda send_buf,x
         pha
+        jsr CLRCHN
         ldx #RS232_DEV
         jsr CHKOUT
         bcs so_send_fail
@@ -819,6 +819,23 @@ so_send_fail:
         pla
         jsr CLRCHN
         rts
+
+irq_service_io:
+        ldx #4
+irq_rx_loop:
+        jsr serial_read
+        bcs irq_rx_done
+        sta rx_byte
+        lda #0
+        sta busy_timer
+        lda #1
+        sta dot_dir
+        lda rx_byte
+        jsr frame_rx_byte
+        dex
+        bne irq_rx_loop
+irq_rx_done:
+        jmp service_outbound
 
 queue_state_ready:
         lda #0
@@ -846,17 +863,38 @@ queue_state_stop_requested:
         ldy #>state_stop_requested_text
         jmp queue_state_text
 
-queue_state_stored:
-        lda #6
-        ldx #<state_stored_text
-        ldy #>state_stored_text
-        jmp queue_state_text
-
 queue_state_text:
         sta state_len
         jsr copy_state_text
         lda #1
         sta state_pending
+        rts
+
+build_ack_frame:
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda #FRAME_ACK
+        sta send_buf+1
+        lda #3
+        sta send_buf+2
+        lda last_rx_sub
+        sta send_buf+3
+        lda last_rx_len
+        sta send_buf+4
+        lda last_rx_chk
+        sta send_buf+5
+
+        lda send_buf+1
+        eor send_buf+2
+        eor send_buf+3
+        eor send_buf+4
+        eor send_buf+5
+        sta send_buf+6
+
+        lda #7
+        sta send_total
+        lda #0
+        sta send_pos
         rts
 
 copy_state_text:
@@ -879,8 +917,6 @@ state_running_text:
         .text "RUNNING"
 state_busy_text:
         .text "BUSY"
-state_stored_text:
-        .text "STORED"
 state_stop_requested_text:
         .text "STOP REQUESTED"
 
@@ -889,10 +925,9 @@ state_stop_requested_text:
 screen_has_ready_anywhere:
         ldx #24
 sha_scan:
-        lda screen_lo,x
+        jsr screen_ptr_from_x
         sta bl_rd+1
-        lda screen_hi,x
-        sta bl_rd+2
+        sty bl_rd+2
         ldy #0
 sha_loop:
 bl_rd:  lda $0400
@@ -1080,10 +1115,9 @@ brc_maybe_newline:
 
 brc_copy_char:
         ldx result_line
-        lda screen_lo,x
+        jsr screen_ptr_from_x
         sta brc_rd+1
-        lda screen_hi,x
-        sta brc_rd+2
+        sty brc_rd+2
         ldx result_col
 brc_rd: lda $0400,x
         beq brc_space
@@ -1158,10 +1192,9 @@ brc_more:
 // Output: A = number of non-trailing-space characters on that line
 // ---------------------------------------------------------
 ssr_line_len:
-        lda screen_lo,x
+        jsr screen_ptr_from_x
         sta ssr_len_rd+1
-        lda screen_hi,x
-        sta ssr_len_rd+2
+        sty ssr_len_rd+2
         lda #0
         sta ssr_line_len_tmp
         ldy #0
@@ -1277,7 +1310,6 @@ fr_sub:
         and #$7F                // strip bit 7 (VICE RS232 corruption)
         sta frame_sub           // store the subtype byte
         sta frame_chk           // initialize checksum with subtype
-        sta frame_sum           // initialize duplicate-detect sum with subtype
         inc parse_state         // advance to state 2 (LEN)
         rts
 
@@ -1290,9 +1322,6 @@ fr_len:
         sta frame_len           // store payload length
         eor frame_chk           // XOR length into running checksum
         sta frame_chk           // update checksum
-        clc
-        adc frame_sum           // also track an additive checksum
-        sta frame_sum
         lda #0
         sta rx_index            // reset payload byte counter to 0
         lda frame_len           // check if length is zero
@@ -1312,10 +1341,6 @@ fr_pay:
         sta AGENT_RXBUF,x      // store masked byte in receive buffer
         eor frame_chk           // XOR masked byte into running checksum
         sta frame_chk           // update checksum
-        lda AGENT_RXBUF,x
-        clc
-        adc frame_sum
-        sta frame_sum
         inx                     // advance to next position
         stx rx_index            // save updated position
         cpx frame_len           // have we received all payload bytes?
@@ -1368,14 +1393,14 @@ frame_dispatch:
         beq fd_ack_done
         cmp #FRAME_EXECNOW
         beq fd_ack_done
+        cmp #FRAME_STOP
+        beq fd_ack_done
         lda #1
         sta ack_pending
-        lda frame_len
-        sta ack_len
 fd_ack_done:
 
         // Treat an immediately repeated same frame as a retransmit.
-        // Compare subtype, length, XOR, and additive sum. This keeps
+        // Compare subtype, length, and XOR checksum. This keeps
         // bridge retries idempotent without storing a second payload copy.
         lda last_rx_valid
         beq fd_new_frame
@@ -1388,9 +1413,6 @@ fd_ack_done:
         lda frame_chk
         cmp last_rx_chk
         bne fd_new_frame
-        lda frame_sum
-        cmp last_rx_sum
-        bne fd_new_frame
         rts
 
 fd_new_frame:
@@ -1402,8 +1424,6 @@ fd_new_frame:
         sta last_rx_len
         lda frame_chk
         sta last_rx_chk
-        lda frame_sum
-        sta last_rx_sum
 
         lda frame_sub           // load the frame subtype
 
@@ -1433,10 +1453,23 @@ fd_not_msg:
         // ---- Check for TEXT frame ($54 = 'T') ----
         cmp #FRAME_TEXT         // is it a TEXT frame (LLM's final answer)?
         bne fd_not_text         // no → check next type
+        lda basic_running
+        bne fd_text_running
+        lda agent_state
+        cmp #AG_WAITING
+        beq fd_text_busy
         lda #0
         sta busy                // conversation done — stop border animation
         lda #1
         sta text_pending        // forward text to user via drip-send
+        rts
+
+fd_text_running:
+        jsr queue_state_running
+        rts
+
+fd_text_busy:
+        jsr queue_state_busy
         rts
 
 fd_not_text:
@@ -1615,60 +1648,33 @@ brf_done:
         rts
 
 // ---------------------------------------------------------
-// Send LLM message as FRAME_LLM frame (stub)
+// screen_ptr_from_x — return the screen RAM address of line X in A/Y.
 //
-// Intended to send context/data to the LLM via the bridge.
-// Frame format: SYNC($FE) + TYPE('L') + LENGTH(n) + PAYLOAD(n) + CHK(1)
-// Checksum = XOR of TYPE, LENGTH, and all PAYLOAD bytes.
-//
-// On entry: AGENT_TXBUF contains the payload data
-//           X = payload length (0-255)
-//
-// Currently a stub — sends a zero-length FRAME_LLM frame as
-// a placeholder. Will be expanded when the C64 needs to push
-// context (e.g. screen state, BASIC variables) to the LLM.
+// Output: A = low byte, Y = high byte
+// Uses:   $FB/$FC as scratch, preserves X
 // ---------------------------------------------------------
-send_llm_msg:
-        ldx #RS232_DEV          // X = logical file number 2 (RS232)
-        jsr CHKOUT              // KERNAL: redirect output to RS232
-        lda #SYNC_BYTE          // $FE — frame synchronization byte
-        jsr CHROUT              // send SYNC byte to start the frame
-        lda #FRAME_LLM          // $4C ('L') — LLM message frame type
-        jsr CHROUT              // send frame type byte
-        lda #0                  // payload length = 0 (stub: no data yet)
-        jsr CHROUT              // send length byte
-        lda #FRAME_LLM          // checksum = TYPE ^ 0 = TYPE = $4C
-        jsr CHROUT              // send checksum byte to close the frame
-        jsr CLRCHN              // KERNAL: reset I/O channels to defaults
-        rts                     // return to caller
-
-// ---------------------------------------------------------
-// Screen line address lookup tables
-//
-// The C64 screen RAM starts at $0400 and has 25 lines of 40
-// characters each. These tables provide the start address of
-// each line to avoid runtime multiplication.
-//
-// Line 0: $0400, Line 1: $0428 (=$0400+40), Line 2: $0450, ...
-// Line 24: $07C0
-//
-// screen_lo[n] = low byte of line n's address
-// screen_hi[n] = high byte of line n's address
-// Usage: lda screen_lo,x / sta $FB / lda screen_hi,x / sta $FC
-//        then ($FB),y addresses column Y of line X.
-// ---------------------------------------------------------
-screen_lo:
-        .byte <$0400, <$0428, <$0450, <$0478, <$04A0
-        .byte <$04C8, <$04F0, <$0518, <$0540, <$0568
-        .byte <$0590, <$05B8, <$05E0, <$0608, <$0630
-        .byte <$0658, <$0680, <$06A8, <$06D0, <$06F8
-        .byte <$0720, <$0748, <$0770, <$0798, <$07C0
-screen_hi:
-        .byte >$0400, >$0428, >$0450, >$0478, >$04A0
-        .byte >$04C8, >$04F0, >$0518, >$0540, >$0568
-        .byte >$0590, >$05B8, >$05E0, >$0608, >$0630
-        .byte >$0658, >$0680, >$06A8, >$06D0, >$06F8
-        .byte >$0720, >$0748, >$0770, >$0798, >$07C0
+screen_ptr_from_x:
+        lda #<$0400
+        sta $FB
+        lda #>$0400
+        sta $FC
+        txa
+        beq spx_done
+        tay
+spx_add:
+        clc
+        lda $FB
+        adc #40
+        sta $FB
+        bcc spx_next
+        inc $FC
+spx_next:
+        dey
+        bne spx_add
+spx_done:
+        lda $FB
+        ldy $FC
+        rts
 
 // ---------------------------------------------------------
 // Data section — agent state variables
@@ -1681,7 +1687,6 @@ parse_state:  .byte 0   // frame parser state (0=HUNT, 1=SUB, 2=LEN, 3=PAY, 4=CH
 frame_sub:    .byte 0   // frame subtype of current frame being parsed
 frame_len:    .byte 0   // payload length of current frame being parsed
 frame_chk:    .byte 0   // running XOR checksum (used by parser and frame builder)
-frame_sum:    .byte 0   // running additive checksum for duplicate detection
 rx_index:     .byte 0   // current byte index within frame payload (0 to frame_len-1)
 agent_state:  .byte 0   // agent state machine (0=IDLE, 1=INJECTING, 2=WAITING, 3=STOREWAIT, 4=SENDWAIT)
 inj_pos:      .byte 0   // current position in command being injected (0 to inj_len-1)
@@ -1701,14 +1706,12 @@ text_pending: .byte 0   // 1 = forward TEXT to user via drip-send
 exec_pending: .byte 0   // 1 = verified EXEC payload waiting for EXECGO
 exec_len:      .byte 0  // saved EXEC payload length while waiting for EXECGO
 ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
-ack_len:      .byte 0   // saved length for FRAME_ACK payload echo
 state_pending: .byte 0  // 1 = send FRAME_STATUS payload from AGENT_RXBUF
 state_len:    .byte 0   // payload length for FRAME_STATUS
 last_rx_valid: .byte 0  // 1 = last_rx_* contains a verified bridge frame fingerprint
 last_rx_sub:  .byte 0   // subtype of last verified bridge frame
 last_rx_len:  .byte 0   // payload length of last verified bridge frame
 last_rx_chk:  .byte 0   // XOR checksum fingerprint of last verified bridge frame
-last_rx_sum:  .byte 0   // additive checksum fingerprint of last verified bridge frame
 prompt_sent:  .byte 0   // 1 = prompt already sent
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
@@ -1822,7 +1825,7 @@ sys_prompt:
         .byte $0A
         .text "Use exec for BASIC commands."
         .byte $0A
-        .text "If asked to write or run BASIC here, use exec."
+        .text "Use exec to write or run BASIC."
         .byte $0A
         .text "Use screen to inspect text."
         .byte $0A
@@ -1830,7 +1833,7 @@ sys_prompt:
         .byte $0A
         .text "Use stop to break BASIC"
         .byte $0A
-        .text "Tool results are screen output, not human messages."
+        .text "Tool results are screen output, not chat."
         .byte $0A
         .text "Long scrolling output may only show the tail."
         .byte $0A
@@ -2020,12 +2023,24 @@ ssp_text_len:   .byte 0
 // When idle: dots sprite hidden. Border is never touched.
 // ---------------------------------------------------------
 irq_raster:
+        // Keep serial service alive whenever BASIC owns the foreground,
+        // even after the agent has logically detached and cleared busy.
+        lda basic_running
+        bne irq_service
+        lda agent_state
+        cmp #AG_WAITING
+        beq irq_service
+
         // Check if agent is busy (in a conversation cycle)
         lda busy
-        bne irq_busy_check
+        bne irq_busy_anim
         jmp irq_idle
 
-irq_busy_check:
+irq_service:
+        jsr irq_service_io
+        lda busy
+        bne irq_busy_anim
+        jmp irq_idle
 
 irq_busy_anim:
 
