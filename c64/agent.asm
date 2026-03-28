@@ -493,12 +493,12 @@ bl_wait_store_idle:
         jmp bl_kb
 
 bl_wait_store_done:
+        jsr send_state_stored_now
         lda #0
         sta progline_pending
         sta basic_running
         sta running_reported
         sta busy
-        jsr send_state_stored_now
         lda #AG_IDLE
         sta agent_state
         jmp bl_kb
@@ -832,14 +832,19 @@ queue_state_stored:
         jmp queue_state_text
 
 send_state_stored_now:
-        lda #6
-        ldx #<state_stored_text
-        ldy #>state_stored_text
-        jsr copy_state_text
-        lda #6
+        jsr queue_state_stored
+        lda state_len
         sta frame_len
         lda #FRAME_STATUS
-        jmp send_frame
+        jsr send_frame
+        bcs sssn_fail
+        lda #0
+        sta state_pending
+        clc
+        rts
+sssn_fail:
+        sec
+        rts
 
 queue_state_text:
         sta state_len
@@ -1565,15 +1570,18 @@ send_frame:
         // send SYNC
         lda #SYNC_BYTE
         jsr sf_byte
+        bcs sf_abort
 
         // send TYPE, init checksum
         lda send_pos
         jsr sf_byte
+        bcs sf_abort
         sta frame_chk
 
         // send LEN, update checksum
         lda frame_len
         jsr sf_byte
+        bcs sf_abort
         eor frame_chk
         sta frame_chk
 
@@ -1584,6 +1592,7 @@ sf_pay: cpx frame_len
         lda AGENT_RXBUF,x
         stx send_pos            // save X (sf_byte clobbers it)
         jsr sf_byte
+        bcs sf_abort_restore
         eor frame_chk
         sta frame_chk
         ldx send_pos            // restore X
@@ -1593,6 +1602,14 @@ sf_pay: cpx frame_len
         // send checksum
 sf_chk: lda frame_chk
         jsr sf_byte
+        bcs sf_abort
+        clc
+        rts
+
+sf_abort_restore:
+        ldx send_pos
+sf_abort:
+        sec
         rts
 
 // Send one byte via CHKOUT/CHROUT/CLRCHN. Preserves A.
@@ -1606,11 +1623,13 @@ sf_byte:
         jsr CHROUT
         jsr CLRCHN
         pla
+        clc
         rts
 
 sf_fail:
         pla
         jsr CLRCHN
+        sec
         rts
 
 // ---------------------------------------------------------
@@ -1717,7 +1736,7 @@ frame_len:    .byte 0   // payload length of current frame being parsed
 frame_chk:    .byte 0   // running XOR checksum (used by parser and frame builder)
 frame_sum:    .byte 0   // running additive checksum for duplicate detection
 rx_index:     .byte 0   // current byte index within frame payload (0 to frame_len-1)
-agent_state:  .byte 0   // agent state machine (0=IDLE, 1=INJECTING, 2=WAITING, 3=STOREWAIT)
+agent_state:  .byte 0   // agent state machine (0=IDLE, 1=INJECTING, 2=WAITING, 3=STOREWAIT, 4=SENDWAIT)
 inj_pos:      .byte 0   // current position in command being injected (0 to inj_len-1)
 inj_len:      .byte 0   // total length of command to inject
 ready_timer:  .byte 0   // countdown timer for READY. detection (increments each loop)
@@ -1856,11 +1875,11 @@ sys_prompt:
         .byte $0A
         .text "Use exec for BASIC commands."
         .byte $0A
-        .text "Use screen to inspect the visible text screen."
+        .text "Use screen to inspect the text screen."
         .byte $0A
         .text "Use status for RUNNING or READY."
         .byte $0A
-        .text "Use stop to break a running BASIC program."
+        .text "Use stop to break a BASIC program."
         .byte $0A
         .text "Tool results are screen output, not human messages."
         .byte $0A
@@ -1868,11 +1887,11 @@ sys_prompt:
         .byte $0A
         .text "After a tool result, reply with TEXT."
         .byte $0A
-        .text "Show screenshots as quoted text, or code if alignment matters."
+        .text "Show screenshots as quotes, or code if alignment matters."
         .byte $0A
-        .text "For simple greetings or questions, reply directly."
+        .text "For greetings or questions, reply directly."
         .byte $0A
-        .text "If BASIC is RUNNING, do not call exec again."
+        .text "If BASIC is RUNNING, do not exec again."
         .byte $0A
         .text "Use status, stop, or screen instead."
         .byte $0A
@@ -2054,7 +2073,12 @@ ssp_text_len:   .byte 0
 irq_raster:
         // Check if agent is busy (in a conversation cycle)
         lda busy
-        beq irq_idle
+        bne irq_busy_check
+        jmp irq_idle
+
+irq_busy_check:
+
+irq_busy_anim:
 
         // Busy — pulse lobster color while the agent is working.
         inc busy_timer

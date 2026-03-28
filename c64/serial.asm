@@ -117,6 +117,7 @@ serial_write:
         sty RODBE           // NMI sees RODBE != RODBS → starts transmitting
         rts
 
+
 // ---------------------------------------------------------
 // Close RS232 device (cleanup — disables NMI, frees buffers)
 // Must be called from main context, NOT from IRQ.

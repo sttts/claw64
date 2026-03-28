@@ -293,8 +293,8 @@ func loaderPRGPath(cfg CLI) (string, func(), error) {
 
 func defaultSymbolPath() string {
 	candidates := []string{
-		filepath.Join("c64", "loader.sym"),
 		filepath.Join("c64", "agent.sym"),
+		filepath.Join("c64", "loader.sym"),
 	}
 	for _, path := range candidates {
 		if _, err := os.Stat(path); err == nil {
