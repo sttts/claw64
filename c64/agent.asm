@@ -51,7 +51,6 @@
 .const AG_IDLE      = 0     // waiting for an EXEC frame from bridge
 .const AG_INJECTING = 1     // drip-feeding command chars into keyboard buffer
 .const AG_WAITING   = 2     // waiting for BASIC's READY. prompt to appear
-.const AG_STOREWAIT = 3     // waiting for a numbered program line to settle
 
 // ---------------------------------------------------------
 // Install — one-time setup, called via SYS 49152 from BASIC
@@ -450,13 +449,6 @@ bl_fill_done:
 bl_inj_complete:
         lda #0
         sta ready_timer
-        lda progline_pending
-        beq bl_inj_wait_ready
-        lda #AG_STOREWAIT
-        sta agent_state
-        jmp bl_kb
-
-bl_inj_wait_ready:
         lda #AG_WAITING
         sta agent_state
         jmp bl_kb
@@ -470,37 +462,10 @@ bl_wait:
         lda agent_state
         cmp #AG_WAITING         // are we waiting for READY.?
         beq bl_wait_ready_jump
-        cmp #AG_STOREWAIT
-        beq bl_wait_store
         jmp bl_kb               // no → skip to keyboard processing
 
 bl_wait_ready_jump:
         jmp bl_wait_ready
-
-        // Numbered BASIC lines are stored, not executed, and therefore
-        // do not print READY. again. Once the keyboard buffer drained
-        // and BASIC had a short moment to settle, return to idle.
-bl_wait_store:
-        lda KBUF_LEN
-        beq bl_wait_store_idle
-        jmp bl_kb
-
-bl_wait_store_idle:
-        inc ready_timer
-        lda ready_timer
-        cmp #10
-        bcs bl_wait_store_done
-        jmp bl_kb
-
-bl_wait_store_done:
-        lda #0
-        sta progline_pending
-        sta basic_running
-        sta running_reported
-        sta busy
-        lda #AG_IDLE
-        sta agent_state
-        jmp bl_kb
 
 bl_wait_ready:
 
@@ -560,6 +525,21 @@ bl_ready_found:
         sta dot_dir             // left = sending
         sta basic_running
         sta running_reported
+        lda progline_pending
+        beq bl_ready_result
+        lda CURSOR_ROW
+        cmp scan_start
+        bcc bl_scan_next
+        beq bl_scan_next
+        lda #0
+        sta progline_pending
+        sta busy
+        jsr queue_state_stored
+        lda #AG_IDLE
+        sta agent_state
+        jmp bl_kb
+
+bl_ready_result:
         jsr prepare_result_chunks
         lda #AG_IDLE
         sta agent_state
@@ -730,25 +710,10 @@ service_outbound:
         jmp so_send_check
 
 so_build_next:
-
-        // ACKs first so verified delivery stays prompt.
-        lda ack_pending
-        beq so_chk_state
-        lda #0
-        sta ack_pending
-        jsr build_ack_frame
-        jmp so_send_check
-
-so_chk_state:
-        lda state_pending
-        beq so_chk_prompt
-        lda #0
-        sta state_pending
-        lda state_len
-        sta frame_len
-        lda #FRAME_STATUS
-        jsr build_rxbuf_frame
-        jmp so_send_check
+        jsr build_priority_outbound
+        lda send_pos
+        cmp send_total
+        bne so_send_check
 
 so_chk_prompt:
         lda prompt_pending
@@ -820,6 +785,28 @@ so_send_fail:
         jsr CLRCHN
         rts
 
+build_priority_outbound:
+
+        // ACKs first so verified delivery stays prompt.
+        lda ack_pending
+        beq bpo_chk_state
+        lda #0
+        sta ack_pending
+        jsr build_ack_frame
+        rts
+
+bpo_chk_state:
+        lda state_pending
+        beq bpo_done
+        lda #0
+        sta state_pending
+        lda state_len
+        sta frame_len
+        lda #FRAME_STATUS
+        jsr build_rxbuf_frame
+bpo_done:
+        rts
+
 irq_service_io:
         ldx #4
 irq_rx_loop:
@@ -835,7 +822,31 @@ irq_rx_loop:
         dex
         bne irq_rx_loop
 irq_rx_done:
-        jmp service_outbound
+        lda send_pos
+        cmp send_total
+        bne irq_tx
+        jsr build_priority_outbound
+
+irq_tx:
+        ldy #0
+irq_tx_loop:
+        lda send_pos
+        cmp send_total
+        beq irq_done_io
+        cpy #4
+        beq irq_done_io
+        tax
+        lda send_buf,x
+        jsr serial_write
+        inc send_pos
+        iny
+        lda #0
+        sta busy_timer
+        sta dot_dir
+        jmp irq_tx_loop
+
+irq_done_io:
+        rts
 
 queue_state_ready:
         lda #0
@@ -855,6 +866,12 @@ queue_state_busy:
         lda #4
         ldx #<state_busy_text
         ldy #>state_busy_text
+        jmp queue_state_text
+
+queue_state_stored:
+        lda #6
+        ldx #<state_stored_text
+        ldy #>state_stored_text
         jmp queue_state_text
 
 queue_state_stop_requested:
@@ -897,6 +914,20 @@ build_ack_frame:
         sta send_pos
         rts
 
+send_ack_now:
+        jsr build_ack_frame
+        ldx #0
+sao_loop:
+        cpx send_total
+        beq sao_done
+        lda send_buf,x
+        jsr serial_write
+        inx
+        bne sao_loop
+sao_done:
+        stx send_pos
+        rts
+
 copy_state_text:
         stx qst_src+1
         sty qst_src+2
@@ -917,6 +948,8 @@ state_running_text:
         .text "RUNNING"
 state_busy_text:
         .text "BUSY"
+state_stored_text:
+        .text "STORED"
 state_stop_requested_text:
         .text "STOP REQUESTED"
 
@@ -1393,8 +1426,12 @@ frame_dispatch:
         beq fd_ack_done
         cmp #FRAME_EXECNOW
         beq fd_ack_done
-        cmp #FRAME_STOP
-        beq fd_ack_done
+        lda basic_running
+        beq fd_ack_queue
+        jsr send_ack_now
+        jmp fd_ack_done
+
+fd_ack_queue:
         lda #1
         sta ack_pending
 fd_ack_done:
@@ -1821,13 +1858,13 @@ sys_prompt:
         .byte $0A
         .text "Stay within 1982 knowledge."
         .byte $0A
-        .text "IMPORTANT: Reply normally. Do NOT use PRINT to talk."
+        .text "IMPORTANT: Reply normally. Never PRINT to talk."
         .byte $0A
         .text "Use exec for BASIC commands."
         .byte $0A
         .text "Use exec to write or run BASIC."
         .byte $0A
-        .text "Use screen to inspect text."
+        .text "Use screen."
         .byte $0A
         .text "Use status for RUNNING or READY."
         .byte $0A
@@ -1835,17 +1872,17 @@ sys_prompt:
         .byte $0A
         .text "Tool results are screen output, not chat."
         .byte $0A
-        .text "Long scrolling output may only show the tail."
+        .text "Long output may only show the tail."
         .byte $0A
         .text "After a tool result, either use the next tool or reply normally."
         .byte $0A
         .text "Show screenshots as quotes, or code if alignment matters."
         .byte $0A
-        .text "For greetings or questions, reply directly."
+        .text "For greetings/questions, reply directly."
         .byte $0A
-        .text "If BASIC is RUNNING, do not exec again."
+        .text "If BASIC is RUNNING, do not exec."
         .byte $0A
-        .text "Use status, or stop first before screen."
+        .text "Use status, or stop before screen."
         .byte $0A
         .text "Program lines return STORED. Then exec RUN."
         .byte $0A

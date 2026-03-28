@@ -257,16 +257,10 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			}
 
 		case serial.FrameText:
-			// TEXT forwarded by C64 after parsing — accumulate and send next chunk
+			// TEXT forwarded by C64 for the user — accumulate until the
+			// C64 finishes this burst, then return it to the chat frontend.
 			fmt.Fprintln(os.Stderr)
 			r.textBuf = append(r.textBuf, f.Payload...)
-			r.textInFlight = nil
-			if len(r.textOutQueue) > 0 {
-				if err := r.sendNextTextChunk(ctx); err != nil {
-					return "", err
-				}
-				continue
-			}
 			text := string(r.textBuf)
 			r.textBuf = nil
 			return text, nil
@@ -386,11 +380,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			r.startToolWait()
 
 			stopFrame := serial.Frame{Type: serial.FrameStop}
-			if r.basicRunning {
-				if err := r.sendWithRetry(stopFrame); err != nil {
-					return fmt.Errorf("send STOP: %w", err)
-				}
-			} else if err := r.sendVerified(ctx, stopFrame, "STOP"); err != nil {
+			if err := r.sendVerified(ctx, stopFrame, "STOP"); err != nil {
 				return fmt.Errorf("send STOP: %w", err)
 			}
 			r.toolInFlight = r.toolInFlight[:0]
@@ -438,20 +428,18 @@ func (r *Relay) logLLMRequest(messages []llm.Message, tools []llm.Tool) {
 }
 
 func (r *Relay) sendNextTextChunk(ctx context.Context) error {
-	if len(r.textOutQueue) == 0 {
-		return nil
-	}
-	chunk := r.textOutQueue
-	if len(chunk) > textChunkMax {
-		chunk = chunk[:textChunkMax]
-	}
-	r.textOutQueue = r.textOutQueue[len(chunk):]
-	r.textInFlight = append(r.textInFlight[:0], chunk...)
-	logStream("LLM → C64:  TEXT ")
-	textFrame := serial.Frame{Type: serial.FrameText, Payload: chunk}
-	if err := r.sendVerified(ctx, textFrame, "TEXT"); err != nil {
-		fmt.Fprintln(os.Stderr)
-		return fmt.Errorf("send TEXT: %w", err)
+	for len(r.textOutQueue) > 0 {
+		chunk := r.textOutQueue
+		if len(chunk) > textChunkMax {
+			chunk = chunk[:textChunkMax]
+		}
+		r.textOutQueue = r.textOutQueue[len(chunk):]
+		logStream("LLM → C64:  TEXT ")
+		textFrame := serial.Frame{Type: serial.FrameText, Payload: chunk}
+		if err := r.sendWithRetry(textFrame); err != nil {
+			fmt.Fprintln(os.Stderr)
+			return fmt.Errorf("send TEXT: %w", err)
+		}
 	}
 	return nil
 }
@@ -578,6 +566,8 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 			timeout = time.After(textAckTimeout)
 		} else if r.waitingTool {
 			timeout = time.After(toolAckTimeout)
+		} else if r.basicRunning {
+			timeout = nil
 		} else {
 			timeout = time.After(c64FrameTimeout)
 		}
