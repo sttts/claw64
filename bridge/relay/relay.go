@@ -38,12 +38,18 @@ type Relay struct {
 	waitingTool    bool
 	lastToolCallID string
 	lastToolName   string
+	toolStartedAt  time.Time
+	basicRunning   bool
+	directReply    string
+	skipNextExecAck bool
 }
 
 const textChunkMax = 120
 const textAckTimeout = 8 * time.Second
 const toolAckTimeout = 12 * time.Second
+const execRunningTimeout = 10 * time.Second
 const c64FrameTimeout = 8 * time.Second
+const storeSettleDelay = 1500 * time.Millisecond
 
 var llmTools = []llm.Tool{
 	llm.BasicExecTool,
@@ -164,10 +170,33 @@ type basicExecArgs struct {
 	Command string `json:"command"`
 }
 
+// isProgramLine reports whether the BASIC input starts with a line number.
+func isProgramLine(cmd string) bool {
+	cmd = strings.TrimLeft(cmd, " ")
+	if cmd == "" {
+		return false
+	}
+	return cmd[0] >= '0' && cmd[0] <= '9'
+}
+
 // HandleMessage relays a user message through LLM and C64.
 func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (string, error) {
 	text = serial.ToASCII(text)
 	r.History.Append(userID, llm.Message{Role: "user", Content: text})
+
+	// While BASIC is running, the C64 is no longer the right place to ack
+	// ordinary chat input. Go straight to the LLM and only send any
+	// resulting control tools back to the machine.
+	if r.basicRunning {
+		log.Printf("USER → bridge: BASIC running; skipping C64 MSG ack")
+		if err := r.callAndDispatch(ctx, userID); err != nil {
+			return "", err
+		}
+		if text := r.takeDirectReply(); text != "" {
+			return text, nil
+		}
+		return r.eventLoop(ctx, userID)
+	}
 
 	// send user message to C64 (header now, chars stream via callback)
 	logStream("USER → C64:  MSG ")
@@ -193,11 +222,15 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
+			if text := r.takeDirectReply(); text != "" {
+				return text, nil
+			}
 
 		case serial.FrameResult:
 			fmt.Fprintln(os.Stderr) // newline after streamed payload
 			r.toolInFlight = nil
 			r.waitingTool = false
+			r.basicRunning = false
 			resultText, complete := r.handleResultFrame(f)
 			if !complete {
 				continue
@@ -215,6 +248,9 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
+			if text := r.takeDirectReply(); text != "" {
+				return text, nil
+			}
 
 		case serial.FrameStatus:
 			fmt.Fprintln(os.Stderr)
@@ -224,19 +260,27 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if status == "" {
 				status = "UNKNOWN"
 			}
+			r.basicRunning = status == "RUNNING"
 			log.Printf("C64 → LLM:   STATUS %s", status)
 			r.appendToolResult(userID, "[C64 BASIC status]: "+status)
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
+			}
+			if text := r.takeDirectReply(); text != "" {
+				return text, nil
 			}
 
 		case serial.FrameError:
 			log.Printf("C64 → LLM:   ERROR (timeout)")
 			r.toolInFlight = nil
 			r.waitingTool = false
+			r.basicRunning = false
 			r.appendToolResult(userID, "ERROR: command timed out on C64")
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
+			}
+			if text := r.takeDirectReply(); text != "" {
+				return text, nil
 			}
 
 		case serial.FrameText:
@@ -299,6 +343,15 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			fmt.Fprintln(os.Stderr, "(empty)")
 			return nil
 		}
+
+		// Once BASIC is running, return chat text directly to the human.
+		// Routing it back through the C64 stalls behind the active program.
+		if r.basicRunning {
+			log.Printf("LLM → USER:  %s", resp.Content)
+			r.directReply = resp.Content
+			return nil
+		}
+
 		// queue TEXT chunks — eventLoop sends one at a time,
 		// waiting for C64 echo before sending the next
 		r.textOutQueue = []byte(serial.ToASCII(resp.Content))
@@ -313,9 +366,9 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	}
 
 	switch tc.Function.Name {
-	case "exec":
-		var args basicExecArgs
-		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+		case "exec":
+			var args basicExecArgs
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 			log.Printf("LLM → ???:   bad args: %v", err)
 			r.History.Append(userID, llm.Message{
 				Role: "tool", Content: fmt.Sprintf("ERROR: %v", err), ToolCallID: tc.ID,
@@ -331,57 +384,77 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 		if len(cmd) > 127 {
 			cmd = cmd[:127]
 		}
-		logStream("LLM → C64:  EXEC ")
-		r.lastToolCallID = tc.ID
-		r.lastToolName = tc.Function.Name
-		if err := r.sendExecVerified(ctx, []byte(cmd)); err != nil {
-			return fmt.Errorf("send EXEC: %w", err)
-		}
+			logStream("LLM → C64:  EXEC ")
+			r.lastToolCallID = tc.ID
+			r.lastToolName = tc.Function.Name
+			if err := r.sendExecVerified(ctx, []byte(cmd)); err != nil {
+				return fmt.Errorf("send EXEC: %w", err)
+			}
+			if isProgramLine(cmd) {
+				time.Sleep(storeSettleDelay)
+				r.toolInFlight = nil
+				r.waitingTool = false
+				r.skipNextExecAck = true
+				r.appendToolResult(userID, "[C64 BASIC status]: STORED")
+				return r.callAndDispatch(ctx, userID)
+			}
 
-	case "screen":
-		logStream("LLM → C64:  SCREENSHOT ")
-		fmt.Fprintln(os.Stderr)
-		r.lastToolCallID = tc.ID
-		r.lastToolName = tc.Function.Name
-		r.toolInFlight = r.toolInFlight[:0]
-		r.waitingTool = true
+		case "screen":
+			logStream("LLM → C64:  SCREENSHOT ")
+			fmt.Fprintln(os.Stderr)
+			r.lastToolCallID = tc.ID
+			r.lastToolName = tc.Function.Name
+			r.toolInFlight = r.toolInFlight[:0]
+			r.startToolWait()
 
-		screenFrame := serial.Frame{Type: serial.FrameScreenshot}
-		if err := r.sendVerified(ctx, screenFrame, "SCREENSHOT"); err != nil {
-			return fmt.Errorf("send SCREENSHOT: %w", err)
-		}
-		r.toolInFlight = r.toolInFlight[:0]
-		r.waitingTool = true
+			screenFrame := serial.Frame{Type: serial.FrameScreenshot}
+			if r.basicRunning {
+				if err := r.sendWithRetry(screenFrame); err != nil {
+					return fmt.Errorf("send SCREENSHOT: %w", err)
+				}
+			} else if err := r.sendVerified(ctx, screenFrame, "SCREENSHOT"); err != nil {
+				return fmt.Errorf("send SCREENSHOT: %w", err)
+			}
+			r.toolInFlight = r.toolInFlight[:0]
+			r.startToolWait()
 
-	case "stop":
-		logStream("LLM → C64:  STOP ")
-		fmt.Fprintln(os.Stderr)
-		r.lastToolCallID = tc.ID
-		r.lastToolName = tc.Function.Name
-		r.toolInFlight = r.toolInFlight[:0]
-		r.waitingTool = true
+		case "stop":
+			logStream("LLM → C64:  STOP ")
+			fmt.Fprintln(os.Stderr)
+			r.lastToolCallID = tc.ID
+			r.lastToolName = tc.Function.Name
+			r.toolInFlight = r.toolInFlight[:0]
+			r.startToolWait()
 
-		stopFrame := serial.Frame{Type: serial.FrameStop}
-		if err := r.sendVerified(ctx, stopFrame, "STOP"); err != nil {
-			return fmt.Errorf("send STOP: %w", err)
-		}
-		r.toolInFlight = r.toolInFlight[:0]
-		r.waitingTool = true
+			stopFrame := serial.Frame{Type: serial.FrameStop}
+			if r.basicRunning {
+				if err := r.sendWithRetry(stopFrame); err != nil {
+					return fmt.Errorf("send STOP: %w", err)
+				}
+			} else if err := r.sendVerified(ctx, stopFrame, "STOP"); err != nil {
+				return fmt.Errorf("send STOP: %w", err)
+			}
+			r.toolInFlight = r.toolInFlight[:0]
+			r.startToolWait()
 
-	case "status":
-		logStream("LLM → C64:  STATUS ")
-		fmt.Fprintln(os.Stderr)
-		r.lastToolCallID = tc.ID
-		r.lastToolName = tc.Function.Name
-		r.toolInFlight = r.toolInFlight[:0]
-		r.waitingTool = true
+		case "status":
+			logStream("LLM → C64:  STATUS ")
+			fmt.Fprintln(os.Stderr)
+			r.lastToolCallID = tc.ID
+			r.lastToolName = tc.Function.Name
+			r.toolInFlight = r.toolInFlight[:0]
+			r.startToolWait()
 
-		statusFrame := serial.Frame{Type: serial.FrameStatusReq}
-		if err := r.sendVerified(ctx, statusFrame, "STATUS"); err != nil {
-			return fmt.Errorf("send STATUS: %w", err)
-		}
-		r.toolInFlight = r.toolInFlight[:0]
-		r.waitingTool = true
+			statusFrame := serial.Frame{Type: serial.FrameStatusReq}
+			if r.basicRunning {
+				if err := r.sendWithRetry(statusFrame); err != nil {
+					return fmt.Errorf("send STATUS: %w", err)
+				}
+			} else if err := r.sendVerified(ctx, statusFrame, "STATUS"); err != nil {
+				return fmt.Errorf("send STATUS: %w", err)
+			}
+			r.toolInFlight = r.toolInFlight[:0]
+			r.startToolWait()
 
 	default:
 		log.Printf("LLM → ???:   unknown tool %q", tc.Function.Name)
@@ -426,7 +499,30 @@ func (r *Relay) sendNextTextChunk(ctx context.Context) error {
 	return nil
 }
 
+func (r *Relay) startToolWait() {
+	r.waitingTool = true
+	r.toolStartedAt = time.Now()
+}
+
+func (r *Relay) takeDirectReply() string {
+	text := r.directReply
+	r.directReply = ""
+	return text
+}
+
 func (r *Relay) sendExecVerified(ctx context.Context, cmd []byte) error {
+	if r.skipNextExecAck {
+		r.skipNextExecAck = false
+		execFrame := serial.Frame{Type: serial.FrameExecNow, Payload: cmd}
+		if err := r.sendWithRetry(execFrame); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr)
+		r.toolInFlight = append(r.toolInFlight[:0], cmd...)
+		r.startToolWait()
+		return nil
+	}
+
 	execFrame := serial.Frame{Type: serial.FrameExec, Payload: cmd}
 	if err := r.sendVerified(ctx, execFrame, "EXEC"); err != nil {
 		return err
@@ -439,7 +535,7 @@ func (r *Relay) sendExecVerified(ctx context.Context, cmd []byte) error {
 	fmt.Fprintln(os.Stderr)
 
 	r.toolInFlight = append(r.toolInFlight[:0], cmd...)
-	r.waitingTool = true
+	r.startToolWait()
 	return nil
 }
 
@@ -545,6 +641,11 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 			return res.frame, nil
 
 		case <-timeout:
+			if r.waitingTool && r.lastToolName == "exec" && !r.toolStartedAt.IsZero() &&
+				time.Since(r.toolStartedAt) >= execRunningTimeout {
+				log.Printf("     ! exec still running after %s; synthesizing RUNNING", execRunningTimeout)
+				return serial.Frame{Type: serial.FrameStatus, Payload: []byte("RUNNING")}, nil
+			}
 			if stallDumped {
 				continue
 			}

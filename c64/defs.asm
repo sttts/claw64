@@ -71,6 +71,7 @@
 .const FRAME_MSG    = $4D    // 'M' — user's chat message
 .const FRAME_EXEC   = $45    // 'E' — tool call: BASIC command to execute
 .const FRAME_EXECGO = $47    // 'G' — bridge confirms verified EXEC may run
+.const FRAME_EXECNOW = $4A   // 'J' — execute payload immediately, no ACK/EXECGO
 .const FRAME_STOP   = $4B    // 'K' — request RUN/STOP for current BASIC program
 .const FRAME_STATUSQ = $51   // 'Q' — ask whether BASIC is RUNNING or READY
 .const FRAME_SCREEN = $50    // 'P' — request current text screen snapshot

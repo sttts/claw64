@@ -479,7 +479,7 @@ bl_wait_ready_jump:
 
         // Numbered BASIC lines are stored, not executed, and therefore
         // do not print READY. again. Once the keyboard buffer drained
-        // and BASIC had a short moment to settle, return an empty RESULT.
+        // and BASIC had a short moment to settle, return to idle.
 bl_wait_store:
         lda KBUF_LEN
         beq bl_wait_store_idle
@@ -493,7 +493,6 @@ bl_wait_store_idle:
         jmp bl_kb
 
 bl_wait_store_done:
-        jsr send_state_stored_now
         lda #0
         sta progline_pending
         sta basic_running
@@ -701,9 +700,17 @@ sr_waiting:
 sr_tick_ok:
         lda running_reported
         bne sr_done
+
+        // ISTOP runs much less frequently than the editor loop, so a
+        // practical long-run threshold must be based on observed hook
+        // density, not on frame counts. Around 40 ISTOP passes is enough
+        // to mean "this command is still running" in VICE.
         lda running_ticks_hi
-        cmp #2                  // ~10s depending on loop density
+        bne sr_report
+        lda running_ticks_lo
+        cmp #40
         bcc sr_done
+sr_report:
         jsr queue_state_running
         lda #1
         sta running_reported
@@ -830,21 +837,6 @@ queue_state_stored:
         ldx #<state_stored_text
         ldy #>state_stored_text
         jmp queue_state_text
-
-send_state_stored_now:
-        jsr queue_state_stored
-        lda state_len
-        sta frame_len
-        lda #FRAME_STATUS
-        jsr send_frame
-        bcs sssn_fail
-        lda #0
-        sta state_pending
-        clc
-        rts
-sssn_fail:
-        sec
-        rts
 
 queue_state_text:
         sta state_len
@@ -1354,10 +1346,13 @@ fr_bad: lda #0                  // reset parser state to HUNT
 // ---------------------------------------------------------
 frame_dispatch:
         // Queue an ACK only for bridge frames that the bridge verifies.
-        // EXECGO is intentionally fire-and-forget, so emitting an ACK for
-        // it leaks a stray empty ACK back into the normal receive loop.
+        // EXECGO and EXECNOW are intentionally fire-and-forget, so emitting
+        // an ACK for them leaks a stray empty ACK back into the normal
+        // receive loop and can block the real result frame behind it.
         lda frame_sub
         cmp #FRAME_EXECGO
+        beq fd_ack_done
+        cmp #FRAME_EXECNOW
         beq fd_ack_done
         lda #1
         sta ack_pending
@@ -1474,33 +1469,25 @@ fd_not_stop:
         bne fd_not_execgo
         lda exec_pending
         beq fd_done
-
-        // EXEC confirmed = data coming in → dots go right
-        lda #1
-        sta dot_dir
-
-        // ---- Start keystroke injection ----
-        lda CURSOR_ROW
-        sta scan_start          // scanner will only check rows > scan_start
-
-        ldx exec_len
-        lda #$0D                // RETURN key
-        sta AGENT_RXBUF,x      // append after last command char
-        inx
-        stx inj_len             // injection length = command + RETURN
-        lda #0
-        sta inj_pos             // start from position 0
-        lda #AG_INJECTING
-        sta agent_state
-        lda #0
-        sta exec_pending
-        sta running_ticks_lo
-        sta running_ticks_hi
-        sta running_reported
-        sta basic_running
-        rts
+        jmp fd_exec_start
 
 fd_not_execgo:
+        // ---- Check for EXECNOW frame ($4A = 'J') ----
+        cmp #FRAME_EXECNOW
+        bne fd_not_execnow
+
+        lda basic_running
+        bne fd_exec_busy
+        lda agent_state
+        cmp #AG_WAITING
+        beq fd_exec_busy
+
+        lda frame_len
+        sta exec_len
+        jsr detect_program_line
+        jmp fd_exec_start
+
+fd_not_execnow:
         // ---- Check for EXEC frame ($45 = 'E') ----
         cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
         bne fd_done             // no → unknown frame type, ignore
@@ -1527,6 +1514,32 @@ fd_exec_busy:
 fd_done:
         rts
 
+fd_exec_start:
+        // EXEC confirmed = data coming in → dots go right
+        lda #1
+        sta dot_dir
+
+        // ---- Start keystroke injection ----
+        lda CURSOR_ROW
+        sta scan_start          // scanner will only check rows > scan_start
+
+        ldx exec_len
+        lda #$0D                // RETURN key
+        sta AGENT_RXBUF,x       // append after last command char
+        inx
+        stx inj_len             // injection length = command + RETURN
+        lda #0
+        sta inj_pos             // start from position 0
+        lda #AG_INJECTING
+        sta agent_state
+        lda #0
+        sta exec_pending
+        sta running_ticks_lo
+        sta running_ticks_hi
+        sta running_reported
+        sta basic_running
+        rts
+
 detect_program_line:
         ldx #0
 dpl_skip_spaces:
@@ -1550,86 +1563,6 @@ dpl_check_digit:
 dpl_no:
         lda #0
         sta progline_pending
-        rts
-
-// ---------------------------------------------------------
-// send_frame — send a frame one byte at a time
-//
-// Each byte uses CHKOUT/CHROUT/CLRCHN (the ONLY transmit method
-// that works on VICE RS232 — ring buffer writes and multi-byte
-// CHROUT per CHKOUT session both fail).
-//
-// Input: A = frame type byte
-//        AGENT_RXBUF[0..frame_len-1] = payload
-//        frame_len = payload length
-// Uses:  frame_chk, send_pos, X
-// ---------------------------------------------------------
-send_frame:
-        sta send_pos            // save type byte
-
-        // send SYNC
-        lda #SYNC_BYTE
-        jsr sf_byte
-        bcs sf_abort
-
-        // send TYPE, init checksum
-        lda send_pos
-        jsr sf_byte
-        bcs sf_abort
-        sta frame_chk
-
-        // send LEN, update checksum
-        lda frame_len
-        jsr sf_byte
-        bcs sf_abort
-        eor frame_chk
-        sta frame_chk
-
-        // send payload
-        ldx #0
-sf_pay: cpx frame_len
-        beq sf_chk
-        lda AGENT_RXBUF,x
-        stx send_pos            // save X (sf_byte clobbers it)
-        jsr sf_byte
-        bcs sf_abort_restore
-        eor frame_chk
-        sta frame_chk
-        ldx send_pos            // restore X
-        inx
-        jmp sf_pay
-
-        // send checksum
-sf_chk: lda frame_chk
-        jsr sf_byte
-        bcs sf_abort
-        clc
-        rts
-
-sf_abort_restore:
-        ldx send_pos
-sf_abort:
-        sec
-        rts
-
-// Send one byte via CHKOUT/CHROUT/CLRCHN. Preserves A.
-sf_byte:
-        pha
-        ldx #RS232_DEV
-        jsr CHKOUT
-        bcs sf_fail
-        pla
-        pha
-        jsr CHROUT
-        jsr CLRCHN
-        pla
-        clc
-        rts
-
-sf_fail:
-        pla
-        jsr CLRCHN
-        sec
         rts
 
 // ---------------------------------------------------------
@@ -1875,11 +1808,13 @@ sys_prompt:
         .byte $0A
         .text "Use exec for BASIC commands."
         .byte $0A
-        .text "Use screen to inspect the text screen."
+        .text "If asked to write or run BASIC here, use exec."
+        .byte $0A
+        .text "Use screen to inspect text."
         .byte $0A
         .text "Use status for RUNNING or READY."
         .byte $0A
-        .text "Use stop to break a BASIC program."
+        .text "Use stop to break BASIC"
         .byte $0A
         .text "Tool results are screen output, not human messages."
         .byte $0A
