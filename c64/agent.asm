@@ -51,6 +51,7 @@
 .const AG_IDLE      = 0     // waiting for an EXEC frame from bridge
 .const AG_INJECTING = 1     // drip-feeding command chars into keyboard buffer
 .const AG_WAITING   = 2     // waiting for BASIC's READY. prompt to appear
+.const AG_STOREWAIT = 3     // waiting for a numbered program line to settle
 
 // ---------------------------------------------------------
 // Install — one-time setup, called via SYS 49152 from BASIC
@@ -198,6 +199,16 @@ cp_bas_wr:
         lda #>irq_raster
         sta IRQ_HI
 
+        // ---- Hook BASIC main loop so prompt-idle drains outbound ----
+        lda IMAIN_LO
+        sta old_imain_lo
+        lda IMAIN_HI
+        sta old_imain_hi
+        lda #<imain_hook
+        sta IMAIN_LO
+        lda #>imain_hook
+        sta IMAIN_HI
+
         // ---- Hook ISTOP so long-running BASIC keeps a control path ----
         // BASIC calls ISTOP frequently while a program is running.
         // We use that path to keep serial control alive for status,
@@ -333,7 +344,10 @@ spr_cp0:lda spr_claw1,x
         sta llm_pending
         sta busy
         sta state_pending
+        sta ack_deferred
         sta state_len
+        sta state_src_lo
+        sta state_src_hi
         sta running_ticks_lo
         sta running_ticks_hi
         sta running_reported
@@ -387,10 +401,9 @@ bl_rx_loop:
 
 bl_rx_done:
         jsr CLRCHN
-
-bl_inject:
         jsr service_outbound
 
+bl_inject:
 bl_inj_check:
         // ---- Step 2: Inject keystrokes if in AG_INJECTING state ----
         //
@@ -449,12 +462,18 @@ bl_fill_done:
 bl_inj_complete:
         lda #0
         sta ready_timer
+        lda progline_pending
+        beq bl_inj_wait_exec
+        lda #AG_STOREWAIT
+        bne bl_inj_set_wait
+bl_inj_wait_exec:
         lda #AG_WAITING
+bl_inj_set_wait:
         sta agent_state
         jmp bl_kb
 
 bl_wait:
-        // ---- Step 3: Wait for READY. prompt if in AG_WAITING state ----
+        // ---- Step 3: Wait for READY. or stored-line settle ----
         //
         // After injecting RETURN, BASIC executes the command. When done,
         // it prints "READY." at the start of a screen line. We scan
@@ -462,10 +481,30 @@ bl_wait:
         lda agent_state
         cmp #AG_WAITING         // are we waiting for READY.?
         beq bl_wait_ready_jump
+        cmp #AG_STOREWAIT
+        beq bl_wait_store
         jmp bl_kb               // no → skip to keyboard processing
 
 bl_wait_ready_jump:
         jmp bl_wait_ready
+
+bl_wait_store:
+        inc ready_timer
+        lda KBUF_LEN
+        bne bl_wait_store_busy
+        lda ready_timer
+        cmp #20
+        bcc bl_wait_store_busy
+        lda #0
+        sta progline_pending
+        sta busy
+        jsr queue_state_stored
+        lda #AG_IDLE
+        sta agent_state
+        jmp bl_kb
+
+bl_wait_store_busy:
+        jmp bl_kb
 
 bl_wait_ready:
 
@@ -537,13 +576,13 @@ bl_ready_found:
         jsr queue_state_stored
         lda #AG_IDLE
         sta agent_state
-        jmp bl_kb
+        beq bl_kb
 
 bl_ready_result:
         jsr prepare_result_chunks
         lda #AG_IDLE
         sta agent_state
-        jmp bl_kb
+        beq bl_kb
 
 bl_scan_next:
         dex                     // move to next line up (24→23→...→0)
@@ -615,6 +654,22 @@ reenter:
         jmp bloop               // empty → run agent loop
 reenter_keys:
         jmp $E5D4               // continue KERNAL key loop
+
+imain_hook:
+        pha
+        txa
+        pha
+        tya
+        pha
+
+        jsr service_outbound
+
+        pla
+        tay
+        pla
+        tax
+        pla
+        jmp (old_imain_lo)
 
 // ISTOP hook — keeps a small control loop alive while BASIC is running.
 // This lets the bridge receive "still running", status, screenshot, and
@@ -699,8 +754,8 @@ sr_report:
 sr_done:
         rts
 
-// service_outbound — build/send one queued frame byte via RS232.
-// Shared by the normal editor loop and the ISTOP hook.
+// service_outbound — build/send queued frame bytes via the RS232 ring.
+// Shared by the normal editor loop, the prompt hook, and the IRQ path.
 service_outbound:
         lda send_pos
         cmp send_total
@@ -736,26 +791,34 @@ so_chk_llm:
 
 so_chk_text:
         lda text_pending
-        beq so_send_check
+        beq so_chk_ack_deferred
         lda #0
         sta text_pending
         lda #FRAME_TEXT
         jsr build_rxbuf_frame
+        jmp so_send_check
+
+so_chk_ack_deferred:
+        lda ack_deferred
+        beq so_send_check
+        lda #0
+        sta ack_deferred
+        jsr build_ack_frame
 
 so_send_check:
         lda send_pos
         cmp send_total
         beq so_done
 
-        // Flush a short burst per pass so status/stop traffic can still
-        // get out while BASIC is executing and ISTOP is called sparsely.
+        // Flush enough bytes per pass that short control frames like
+        // ACK/STATUS finish within a single sparse callback.
         ldy #0
 so_send_loop:
         lda send_pos
         cmp send_total
-        beq so_send_done
-        cpy #8
-        beq so_send_done
+        beq so_done
+        cpy #16
+        beq so_done
 
         tax
         lda send_buf,x
@@ -774,7 +837,6 @@ so_send_loop:
         sta dot_dir
         jmp so_send_loop
 
-so_send_done:
 so_done:
         rts
 
@@ -798,15 +860,17 @@ bpo_chk_state:
         beq bpo_done
         lda #0
         sta state_pending
-        lda state_len
-        sta frame_len
-        lda #FRAME_STATUS
-        jsr build_rxbuf_frame
+        jsr build_state_frame
+        rts
+
 bpo_done:
         rts
 
 irq_service_io:
-        ldx #4
+        // Keep IRQ-side receive ahead of 2400 baud even while the main
+        // loop is busy in KERNAL/BASIC work. Four bytes per IRQ falls
+        // behind the wire rate and delays verified bridge frames.
+        ldx #8
 irq_rx_loop:
         jsr serial_read
         bcs irq_rx_done
@@ -820,30 +884,37 @@ irq_rx_loop:
         dex
         bne irq_rx_loop
 irq_rx_done:
-        lda send_pos
-        cmp send_total
-        bne irq_tx
-        jsr build_priority_outbound
+irq_done_io:
+        rts
 
-irq_tx:
-        ldy #0
-irq_tx_loop:
+// irq_flush_outbound — push already-built frame bytes into the RS232 TX ring.
+// Use this only when the agent is otherwise idle so it doesn't race the
+// normal KERNAL CHROUT path used during active prompt/tool turns.
+irq_flush_outbound:
         lda send_pos
         cmp send_total
-        beq irq_done_io
-        cpy #4
-        beq irq_done_io
+        beq ifo_done
+
+        ldy #0
+ifo_loop:
+        lda send_pos
+        cmp send_total
+        beq ifo_done
+        cpy #8
+        beq ifo_done
+
         tax
         lda send_buf,x
         jsr serial_write
+        bcs ifo_done
         inc send_pos
         iny
         lda #0
         sta busy_timer
         sta dot_dir
-        jmp irq_tx_loop
+        jmp ifo_loop
 
-irq_done_io:
+ifo_done:
         rts
 
 queue_state_ready:
@@ -876,13 +947,48 @@ queue_state_stop_requested:
         lda #14
         ldx #<state_stop_requested_text
         ldy #>state_stop_requested_text
-        jmp queue_state_text
 
 queue_state_text:
         sta state_len
-        jsr copy_state_text
+        stx state_src_lo
+        sty state_src_hi
         lda #1
         sta state_pending
+        rts
+
+build_state_frame:
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda #FRAME_STATUS
+        sta send_buf+1
+        lda state_len
+        sta send_buf+2
+        lda #FRAME_STATUS
+        eor send_buf+2
+        sta frame_chk
+        lda state_src_lo
+        sta $FB
+        lda state_src_hi
+        sta $FC
+        ldy #0
+bsf_loop:
+        cpy send_buf+2
+        beq bsf_done
+        lda ($FB),y
+        sta send_buf+3,y
+        eor frame_chk
+        sta frame_chk
+        iny
+        bne bsf_loop
+bsf_done:
+        lda frame_chk
+        sta send_buf+3,y
+        tya
+        clc
+        adc #4
+        sta send_total
+        lda #0
+        sta send_pos
         rts
 
 build_ack_frame:
@@ -912,20 +1018,6 @@ build_ack_frame:
         sta send_pos
         rts
 
-copy_state_text:
-        stx qst_src+1
-        sty qst_src+2
-        ldx #0
-qst_loop:
-        cpx state_len
-        beq qst_done
-qst_src: lda state_ready_text,x
-        sta AGENT_RXBUF,x
-        inx
-        bne qst_loop
-qst_done:
-        rts
-
 state_ready_text:
         .text "READY."
 state_running_text:
@@ -935,7 +1027,7 @@ state_busy_text:
 state_stored_text:
         .text "STORED"
 state_stop_requested_text:
-        .text "STOP REQUESTED"
+        .text "STOP REQ"
 
 // screen_has_ready_anywhere — check the visible screen for READY.
 // Returns carry set and X=line if found, carry clear otherwise.
@@ -1041,12 +1133,12 @@ prc_chunk_loop:
         lda ssr_total_hi
         bne prc_chunk_sub
         lda ssr_total_lo
-        cmp #120
+        cmp #62
         bcc prc_init_send
 prc_chunk_sub:
         sec
         lda ssr_total_lo
-        sbc #120
+        sbc #62
         sta ssr_total_lo
         lda ssr_total_hi
         sbc #0
@@ -1112,7 +1204,7 @@ brc_have_line:
         ldy ssr_text_len_tmp
 
 brc_copy:
-        cpy #120
+        cpy #62
         beq brc_finish
         lda result_col
         cmp ssr_line_len_tmp
@@ -1412,16 +1504,14 @@ frame_dispatch:
         beq fd_ack_done
         cmp #FRAME_TEXT
         bne fd_ack_check_runtime
-        lda basic_running
-        bne fd_ack_done
+        lda #1
+        sta ack_deferred
+        jmp fd_ack_done
 fd_ack_check_runtime:
         lda #1
         sta ack_pending
         jmp fd_ack_done
 
-fd_ack_queue:
-        lda #1
-        sta ack_pending
 fd_ack_done:
 
         // Treat an immediately repeated same frame as a retransmit.
@@ -1732,17 +1822,22 @@ text_pending: .byte 0   // 1 = forward TEXT to user via drip-send
 exec_pending: .byte 0   // 1 = verified EXEC payload waiting for EXECGO
 exec_len:      .byte 0  // saved EXEC payload length while waiting for EXECGO
 ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
-state_pending: .byte 0  // 1 = send FRAME_STATUS payload from AGENT_RXBUF
+state_pending: .byte 0  // 1 = send FRAME_STATUS payload from state_src_*
 state_len:    .byte 0   // payload length for FRAME_STATUS
+state_src_lo: .byte 0   // source pointer low byte for FRAME_STATUS text
+state_src_hi: .byte 0   // source pointer high byte for FRAME_STATUS text
 last_rx_valid: .byte 0  // 1 = last_rx_* contains a verified bridge frame fingerprint
 last_rx_sub:  .byte 0   // subtype of last verified bridge frame
 last_rx_len:  .byte 0   // payload length of last verified bridge frame
 last_rx_chk:  .byte 0   // XOR checksum fingerprint of last verified bridge frame
+ack_deferred: .byte 0   // 1 = send ACK after current TEXT processing is drained
 prompt_sent:  .byte 0   // 1 = prompt already sent
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
+old_imain_lo: .byte 0   // saved IMAIN vector low byte
+old_imain_hi: .byte 0   // saved IMAIN vector high byte
 old_istop_lo: .byte 0   // saved ISTOP vector low byte
 old_istop_hi: .byte 0   // saved ISTOP vector high byte
 anim_timer:   .byte 5   // frames between dot shifts
@@ -1837,7 +1932,7 @@ spr_dots:
 // System prompt — the C64's soul. Sent to bridge at startup.
 // Split into chunks for the 127-byte frame limit.
 // ---------------------------------------------------------
-.const CHUNK_MAX = 120  // max text per frame (leave room for 2-byte header)
+.const CHUNK_MAX = 62   // max text per frame (leave room for frame overhead)
 
 // Use PETSCII encoding so lowercase = $C1-$DA (not screen code $01-$1A).
 // This lets control chars like $0A (newline) pass through the conversion.
@@ -2058,12 +2153,19 @@ irq_raster:
         // Check if agent is busy (in a conversation cycle)
         lda busy
         bne irq_busy_anim
+        lda send_pos
+        cmp send_total
+        bne irq_flush_idle
         jmp irq_idle
 
 irq_service:
         jsr irq_service_io
         lda busy
         bne irq_busy_anim
+        jmp irq_idle
+
+irq_flush_idle:
+        jsr irq_flush_outbound
         jmp irq_idle
 
 irq_busy_anim:

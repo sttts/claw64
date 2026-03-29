@@ -5,13 +5,13 @@
 // Agent memory layout
 // Code grows up from $C000. The fixed buffers live in the remaining
 // space below $D000. Frame payloads are capped at 127 bytes, so the
-// receive buffer only needs 128 bytes. The transmit buffer needs enough
-// room for one full encoded frame (SYNC+TYPE+LEN+127-byte payload+CHK).
+// receive buffer only needs 128 bytes. Outbound chunks are kept smaller,
+// so the transmit buffer only needs to hold one encoded ~70-byte frame.
 .const AGENT_BASE      = $C000  // agent code starts here
-.const AGENT_RXBUF     = $CF00  // 128-byte receive / tool payload buffer
-.const AGENT_TXBUF     = $CF80  // 144-byte transmit / inject buffer
+.const AGENT_RXBUF     = $CF3A  // 128-byte receive / tool payload buffer
+.const AGENT_TXBUF     = $CFBA  // 70-byte transmit / inject buffer
 .const AGENT_RXBUF_LEN = 128
-.const AGENT_TXBUF_LEN = 144
+.const AGENT_TXBUF_LEN = 70
 
 // KERNAL jump table
 .const SETLFS  = $FFBA
@@ -98,6 +98,13 @@
 .const AGENT_INJECTING  = 1  // drip-feeding keystrokes
 .const AGENT_WAITING    = 2  // waiting for READY.
 .const AGENT_SCRAPING   = 3  // reading screen
+
+// STATUS payload ids
+.const STATE_READY          = 1
+.const STATE_RUNNING        = 2
+.const STATE_BUSY           = 3
+.const STATE_STORED         = 4
+.const STATE_STOP_REQUESTED = 5
 
 // Timing
 .const READY_TIMEOUT = 180   // 3 seconds at 60 Hz

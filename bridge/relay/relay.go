@@ -40,15 +40,12 @@ type Relay struct {
 	lastToolName   string
 	toolStartedAt  time.Time
 	basicRunning   bool
-	skipNextExecAck bool
 }
 
-const textChunkMax = 120
+const textChunkMax = 62
 const textAckTimeout = 8 * time.Second
 const toolAckTimeout = 12 * time.Second
-const execRunningTimeout = 10 * time.Second
 const c64FrameTimeout = 8 * time.Second
-const storeSettleDelay = 1500 * time.Millisecond
 
 var llmTools = []llm.Tool{
 	llm.BasicExecTool,
@@ -167,15 +164,6 @@ func (r *Relay) SetupProgress() {
 // basicExecArgs is the JSON structure the LLM passes to exec.
 type basicExecArgs struct {
 	Command string `json:"command"`
-}
-
-// isProgramLine reports whether the BASIC input starts with a line number.
-func isProgramLine(cmd string) bool {
-	cmd = strings.TrimLeft(cmd, " ")
-	if cmd == "" {
-		return false
-	}
-	return cmd[0] >= '0' && cmd[0] <= '9'
 }
 
 // HandleMessage relays a user message through LLM and C64.
@@ -330,7 +318,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			return nil
 		}
 
-		r.textOutQueue = []byte(serial.ToASCII(resp.Content))
+		r.textOutQueue = []byte(serial.ToC64Text(resp.Content))
 		return r.sendNextTextChunk(ctx)
 	}
 
@@ -344,9 +332,9 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 	r.lastToolName = tc.Function.Name
 
 	switch tc.Function.Name {
-		case "exec":
-			var args basicExecArgs
-			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+	case "exec":
+		var args basicExecArgs
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 			log.Printf("LLM → ???:   bad args: %v", err)
 			r.History.Append(userID, llm.Message{
 				Role: "tool", Content: fmt.Sprintf("ERROR: %v", err), ToolCallID: tc.ID,
@@ -362,20 +350,12 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 		if len(cmd) > 127 {
 			cmd = cmd[:127]
 		}
-			logStream("LLM → C64:  EXEC ")
-			if err := r.sendExecVerified(ctx, []byte(cmd)); err != nil {
-				return fmt.Errorf("send EXEC: %w", err)
-			}
-			if isProgramLine(cmd) {
-				time.Sleep(storeSettleDelay)
-				r.toolInFlight = nil
-				r.waitingTool = false
-				r.skipNextExecAck = true
-				r.appendToolResult(userID, "[C64 BASIC status]: STORED")
-				return r.callAndDispatch(ctx, userID)
-			}
+		logStream("LLM → C64:  EXEC ")
+		if err := r.sendExecVerified(ctx, []byte(cmd)); err != nil {
+			return fmt.Errorf("send EXEC: %w", err)
+		}
 
-		case "screen":
+	case "screen":
 			if r.basicRunning {
 				r.appendToolResult(userID, "ERROR: BASIC is RUNNING. Use stop first, then screen.")
 				return r.callAndDispatch(ctx, userID)
@@ -501,7 +481,7 @@ func (r *Relay) waitForTextDelivery(ctx context.Context, expected []byte) (bool,
 		case serial.FrameText:
 			fmt.Fprintln(os.Stderr)
 			r.textBuf = append(r.textBuf, f.Payload...)
-			return true, nil
+			continue
 		case serial.FrameSystem:
 			fmt.Fprintln(os.Stderr)
 			r.handleSystemFrame(f)
@@ -519,18 +499,6 @@ func (r *Relay) startToolWait() {
 }
 
 func (r *Relay) sendExecVerified(ctx context.Context, cmd []byte) error {
-	if r.skipNextExecAck {
-		r.skipNextExecAck = false
-		execFrame := serial.Frame{Type: serial.FrameExecNow, Payload: cmd}
-		if err := r.sendWithRetry(execFrame); err != nil {
-			return err
-		}
-		fmt.Fprintln(os.Stderr)
-		r.toolInFlight = append(r.toolInFlight[:0], cmd...)
-		r.startToolWait()
-		return nil
-	}
-
 	execFrame := serial.Frame{Type: serial.FrameExec, Payload: cmd}
 	if err := r.sendVerified(ctx, execFrame, "EXEC"); err != nil {
 		return err

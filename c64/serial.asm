@@ -108,13 +108,29 @@ sr_no_data:
 // handler bit-bangs the byte out the userport automatically.
 //
 // Input: A = byte to send
-// Clobbers: Y
+// Returns: carry clear on success, carry set if the buffer is full
+// Clobbers: X, Y
 // ---------------------------------------------------------
 serial_write:
-        ldy RODBE           // Y = current write position in transmit buffer
-        sta (ROBUF_LO),y   // store byte at transmit_buffer[Y]
+        pha
+        ldx RODBE           // X = current write position
+        txa
+        clc
+        adc #1
+        tay                 // Y = next write position after this byte
+        cpy RODBS           // next == reader means full
+        beq sw_full
+        ldy RODBE
+        pla
+        sta (ROBUF_LO),y    // store byte at transmit_buffer[Y]
         iny                 // increment write index (wraps 255→0)
         sty RODBE           // NMI sees RODBE != RODBS → starts transmitting
+        clc
+        rts
+
+sw_full:
+        pla
+        sec
         rts
 
 // ---------------------------------------------------------

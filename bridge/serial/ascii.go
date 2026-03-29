@@ -33,3 +33,36 @@ func ToASCII(s string) string {
 	}
 	return b.String()
 }
+
+// ToC64Text converts model reply text to a stricter transport-safe form
+// for the C64 text path. CHROUT on the KERNAL RS232 path does not preserve
+// arbitrary ASCII reliably, so keep replies uppercase and punctuation-light.
+func ToC64Text(s string) string {
+	s = strings.ToUpper(ToASCII(s))
+
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case strings.ContainsRune(" .,:;!?()'\"+-=*/", r):
+			b.WriteRune(r)
+		case r == '`':
+			b.WriteByte('\'')
+		case r == '[' || r == '{':
+			b.WriteByte('(')
+		case r == ']' || r == '}':
+			b.WriteByte(')')
+		case r == '\\':
+			b.WriteByte('/')
+		default:
+			b.WriteByte(' ')
+		}
+	}
+	return b.String()
+}
