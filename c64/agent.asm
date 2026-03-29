@@ -680,14 +680,12 @@ sr_tick_ok:
         lda running_reported
         bne sr_done
 
-        // ISTOP runs much less frequently than the editor loop, so a
-        // practical long-run threshold must be based on observed hook
-        // density, not on frame counts. Around 40 ISTOP passes is enough
-        // to mean "this command is still running" in VICE.
+        // Report RUNNING quickly once BASIC is clearly no longer an
+        // immediate command. The bridge should not synthesize this state.
         lda running_ticks_hi
         bne sr_report
         lda running_ticks_lo
-        cmp #40
+        cmp #1
         bcc sr_done
 sr_report:
         jsr queue_state_running
@@ -912,20 +910,6 @@ build_ack_frame:
         sta send_total
         lda #0
         sta send_pos
-        rts
-
-send_ack_now:
-        jsr build_ack_frame
-        ldx #0
-sao_loop:
-        cpx send_total
-        beq sao_done
-        lda send_buf,x
-        jsr serial_write
-        inx
-        bne sao_loop
-sao_done:
-        stx send_pos
         rts
 
 copy_state_text:
@@ -1426,9 +1410,13 @@ frame_dispatch:
         beq fd_ack_done
         cmp #FRAME_EXECNOW
         beq fd_ack_done
+        cmp #FRAME_TEXT
+        bne fd_ack_check_runtime
         lda basic_running
-        beq fd_ack_queue
-        jsr send_ack_now
+        bne fd_ack_done
+fd_ack_check_runtime:
+        lda #1
+        sta ack_pending
         jmp fd_ack_done
 
 fd_ack_queue:
@@ -1502,7 +1490,8 @@ fd_not_msg:
         rts
 
 fd_text_running:
-        jsr queue_state_running
+        lda #FRAME_TEXT
+        jsr build_rxbuf_frame
         rts
 
 fd_text_busy:
@@ -1856,31 +1845,29 @@ spr_dots:
 sys_prompt:
         .text "You are a Commodore 64 from 1982 chatting with humans."
         .byte $0A
-        .text "Stay within 1982 knowledge."
+        .text "Know only 1982."
         .byte $0A
         .text "IMPORTANT: Reply normally. Never PRINT to talk."
         .byte $0A
-        .text "Use exec for BASIC commands."
-        .byte $0A
         .text "Use exec to write or run BASIC."
         .byte $0A
-        .text "Use screen."
+        .text "Use screen"
         .byte $0A
-        .text "Use status for RUNNING or READY."
+        .text "Use status for RUNNING/READY."
         .byte $0A
-        .text "Use stop to break BASIC"
+        .text "Use stop to break"
         .byte $0A
-        .text "Tool results are screen output, not chat."
+        .text "Tool results are screen output."
         .byte $0A
-        .text "Long output may only show the tail."
+        .text "Long output may show only the tail."
         .byte $0A
-        .text "After a tool result, either use the next tool or reply normally."
+        .text "After a tool result, use a tool or reply."
         .byte $0A
-        .text "Show screenshots as quotes, or code if alignment matters."
+        .text "Show screenshots as quotes, or code for alignment."
         .byte $0A
-        .text "For greetings/questions, reply directly."
+        .text "For greetings, reply directly."
         .byte $0A
-        .text "If BASIC is RUNNING, do not exec."
+        .text "If BASIC is RUNNING, don't exec."
         .byte $0A
         .text "Use status, or stop before screen."
         .byte $0A

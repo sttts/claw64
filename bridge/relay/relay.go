@@ -207,6 +207,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
+			if len(r.textBuf) > 0 && len(r.textOutQueue) == 0 {
+				text := string(r.textBuf)
+				r.textBuf = nil
+				return text, nil
+			}
 
 		case serial.FrameResult:
 			fmt.Fprintln(os.Stderr) // newline after streamed payload
@@ -230,6 +235,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
+			if len(r.textBuf) > 0 && len(r.textOutQueue) == 0 {
+				text := string(r.textBuf)
+				r.textBuf = nil
+				return text, nil
+			}
 
 		case serial.FrameStatus:
 			fmt.Fprintln(os.Stderr)
@@ -245,6 +255,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
 			}
+			if len(r.textBuf) > 0 && len(r.textOutQueue) == 0 {
+				text := string(r.textBuf)
+				r.textBuf = nil
+				return text, nil
+			}
 
 		case serial.FrameError:
 			log.Printf("C64 → LLM:   ERROR (timeout)")
@@ -254,6 +269,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 			r.appendToolResult(userID, "ERROR: command timed out on C64")
 			if err := r.callAndDispatch(ctx, userID); err != nil {
 				return "", err
+			}
+			if len(r.textBuf) > 0 && len(r.textOutQueue) == 0 {
+				text := string(r.textBuf)
+				r.textBuf = nil
+				return text, nil
 			}
 
 		case serial.FrameText:
@@ -434,14 +454,63 @@ func (r *Relay) sendNextTextChunk(ctx context.Context) error {
 			chunk = chunk[:textChunkMax]
 		}
 		r.textOutQueue = r.textOutQueue[len(chunk):]
+		r.textInFlight = append(r.textInFlight[:0], chunk...)
 		logStream("LLM → C64:  TEXT ")
-		textFrame := serial.Frame{Type: serial.FrameText, Payload: chunk}
-		if err := r.sendWithRetry(textFrame); err != nil {
+		if err := r.sendTextChunk(ctx, chunk); err != nil {
 			fmt.Fprintln(os.Stderr)
 			return fmt.Errorf("send TEXT: %w", err)
 		}
+		r.textInFlight = r.textInFlight[:0]
 	}
 	return nil
+}
+
+func (r *Relay) sendTextChunk(ctx context.Context, chunk []byte) error {
+	frame := serial.Frame{Type: serial.FrameText, Payload: chunk}
+	expected := ackFingerprint(frame)
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := r.sendWithRetry(frame); err != nil {
+			return err
+		}
+
+		waitCtx, cancel := context.WithTimeout(ctx, textAckTimeout)
+		ok, err := r.waitForTextDelivery(waitCtx, expected)
+		cancel()
+		if err == nil && ok {
+			return nil
+		}
+		if err != nil {
+			log.Printf("     ! TEXT ack attempt %d failed: %v", attempt, err)
+			continue
+		}
+		log.Printf("     ! TEXT ack attempt %d failed: no confirmation", attempt)
+	}
+	return fmt.Errorf("TEXT delivery could not be verified after 3 attempts")
+}
+
+func (r *Relay) waitForTextDelivery(ctx context.Context, expected []byte) (bool, error) {
+	for {
+		f, err := r.recvFromC64(ctx, false)
+		if err != nil {
+			return false, err
+		}
+		switch f.Type {
+		case serial.FrameAck:
+			fmt.Fprintln(os.Stderr)
+			return string(f.Payload) == string(expected), nil
+		case serial.FrameText:
+			fmt.Fprintln(os.Stderr)
+			r.textBuf = append(r.textBuf, f.Payload...)
+			return true, nil
+		case serial.FrameSystem:
+			fmt.Fprintln(os.Stderr)
+			r.handleSystemFrame(f)
+		case serial.FrameHeartbeat:
+			continue
+		default:
+			return false, fmt.Errorf("unexpected frame while waiting for TEXT delivery: %s", serial.TypeName(f.Type))
+		}
+	}
 }
 
 func (r *Relay) startToolWait() {
@@ -523,6 +592,9 @@ func (r *Relay) waitForAck(ctx context.Context) (serial.Frame, error) {
 		case serial.FrameAck:
 			fmt.Fprintln(os.Stderr)
 			return f, nil
+		case serial.FrameText:
+			fmt.Fprintln(os.Stderr)
+			r.textBuf = append(r.textBuf, f.Payload...)
 		case serial.FrameSystem:
 			fmt.Fprintln(os.Stderr)
 			r.handleSystemFrame(f)
@@ -594,11 +666,6 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 			return res.frame, nil
 
 		case <-timeout:
-			if r.waitingTool && r.lastToolName == "exec" && !r.toolStartedAt.IsZero() &&
-				time.Since(r.toolStartedAt) >= execRunningTimeout {
-				log.Printf("     ! exec still running after %s; synthesizing RUNNING", execRunningTimeout)
-				return serial.Frame{Type: serial.FrameStatus, Payload: []byte("RUNNING")}, nil
-			}
 			if stallDumped {
 				continue
 			}
