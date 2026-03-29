@@ -200,15 +200,6 @@ cp_bas_wr:
         sta IRQ_HI
 
         // ---- Hook BASIC main loop so prompt-idle drains outbound ----
-        lda IMAIN_LO
-        sta old_imain_lo
-        lda IMAIN_HI
-        sta old_imain_hi
-        lda #<imain_hook
-        sta IMAIN_LO
-        lda #>imain_hook
-        sta IMAIN_HI
-
         // ---- Hook ISTOP so long-running BASIC keeps a control path ----
         // BASIC calls ISTOP frequently while a program is running.
         // We use that path to keep serial control alive for status,
@@ -501,7 +492,7 @@ bl_wait_store:
         jsr queue_state_stored
         lda #AG_IDLE
         sta agent_state
-        jmp bl_kb
+        jmp bloop
 
 bl_wait_store_busy:
         jmp bl_kb
@@ -515,7 +506,7 @@ bl_wait_ready:
         inc ready_timer         // count main loop iterations
         lda ready_timer
         cmp #60                 // have we waited ~1 second?
-        bcc bl_kb               // not yet → skip screen scanning
+        bcc bl_wait_not_ready   // not yet → skip screen scanning
 
         // ---- Scan screen memory for "READY." ----
         //
@@ -576,17 +567,20 @@ bl_ready_found:
         jsr queue_state_stored
         lda #AG_IDLE
         sta agent_state
-        beq bl_kb
+        jmp bloop
 
 bl_ready_result:
         jsr prepare_result_chunks
         lda #AG_IDLE
         sta agent_state
-        beq bl_kb
+        jmp bloop
 
 bl_scan_next:
         dex                     // move to next line up (24→23→...→0)
         bpl bl_scan             // if X >= 0, keep scanning (checks all 25 lines)
+
+bl_wait_not_ready:
+        jmp bl_kb
 
         // READY. not found on any line — check if we've timed out
         lda ready_timer
@@ -654,22 +648,6 @@ reenter:
         jmp bloop               // empty → run agent loop
 reenter_keys:
         jmp $E5D4               // continue KERNAL key loop
-
-imain_hook:
-        pha
-        txa
-        pha
-        tya
-        pha
-
-        jsr service_outbound
-
-        pla
-        tay
-        pla
-        tax
-        pla
-        jmp (old_imain_lo)
 
 // ISTOP hook — keeps a small control loop alive while BASIC is running.
 // This lets the bridge receive "still running", status, screenshot, and
@@ -754,8 +732,8 @@ sr_report:
 sr_done:
         rts
 
-// service_outbound — build/send queued frame bytes via the RS232 ring.
-// Shared by the normal editor loop, the prompt hook, and the IRQ path.
+// service_outbound — build/send queued frame bytes via the current RS232 path.
+// Shared by the normal editor loop and the running-program control path.
 service_outbound:
         lda send_pos
         cmp send_total
@@ -843,7 +821,14 @@ so_done:
 so_send_fail:
         pla
         jsr CLRCHN
-        rts
+        jsr serial_write
+        bcs so_done
+        inc send_pos
+        iny
+        lda #0
+        sta busy_timer
+        sta dot_dir
+        jmp so_send_loop
 
 build_priority_outbound:
 
@@ -885,36 +870,6 @@ irq_rx_loop:
         bne irq_rx_loop
 irq_rx_done:
 irq_done_io:
-        rts
-
-// irq_flush_outbound — push already-built frame bytes into the RS232 TX ring.
-// Use this only when the agent is otherwise idle so it doesn't race the
-// normal KERNAL CHROUT path used during active prompt/tool turns.
-irq_flush_outbound:
-        lda send_pos
-        cmp send_total
-        beq ifo_done
-
-        ldy #0
-ifo_loop:
-        lda send_pos
-        cmp send_total
-        beq ifo_done
-        cpy #8
-        beq ifo_done
-
-        tax
-        lda send_buf,x
-        jsr serial_write
-        bcs ifo_done
-        inc send_pos
-        iny
-        lda #0
-        sta busy_timer
-        sta dot_dir
-        jmp ifo_loop
-
-ifo_done:
         rts
 
 queue_state_ready:
@@ -1836,8 +1791,6 @@ scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= th
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
-old_imain_lo: .byte 0   // saved IMAIN vector low byte
-old_imain_hi: .byte 0   // saved IMAIN vector high byte
 old_istop_lo: .byte 0   // saved ISTOP vector low byte
 old_istop_hi: .byte 0   // saved ISTOP vector high byte
 anim_timer:   .byte 5   // frames between dot shifts
@@ -2153,19 +2106,12 @@ irq_raster:
         // Check if agent is busy (in a conversation cycle)
         lda busy
         bne irq_busy_anim
-        lda send_pos
-        cmp send_total
-        bne irq_flush_idle
         jmp irq_idle
 
 irq_service:
         jsr irq_service_io
         lda busy
         bne irq_busy_anim
-        jmp irq_idle
-
-irq_flush_idle:
-        jsr irq_flush_outbound
         jmp irq_idle
 
 irq_busy_anim:
