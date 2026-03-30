@@ -98,7 +98,7 @@ func (s *StdinChannel) Start(ctx context.Context, handler MessageHandler) error 
 			reply, err := handler(ctx, "local", text)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			} else {
+			} else if reply != "" {
 				fmt.Printf("\n%s %s\n", termstyle.C64Prompt("c64>"), reply)
 			}
 			fmt.Printf("%s ", termstyle.UserPrompt("you>"))
