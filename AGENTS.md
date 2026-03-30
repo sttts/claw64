@@ -64,6 +64,64 @@ Module: `github.com/sttts/claw64`
 - Bridge only: `make bridge` (requires Go)
 - Serial test: `make test-serial`
 
+## Debugging Workflow
+- Prefer `make run` for end-to-end debugging. It assembles, starts the bridge, and spawns VICE with RS232 and remote monitor enabled.
+- Prefer `make vice` plus `make bridge` in separate terminals when you need to restart only one side.
+- VICE remote monitor listens on `127.0.0.1:6510`. Use it whenever the C64 seems stuck, corrupted, or silent.
+- The bridge writes stall dumps to `debug/stall-YYYYMMDD-HHMMSS.log` when transport or tool execution stalls.
+- Always inspect the latest stall dump before guessing. The dump is the primary forensic artifact.
+
+### Usual loop
+- Reproduce with the smallest prompt that still fails.
+- Read the bridge log first: look for `ACK`, duplicate `STATUS`, `bad type`, `resync`, `framing mismatch`, `tool stall`, or `c64 silence stall`.
+- If the bridge stalled, open the newest `debug/stall-*.log`.
+- If the screen looks wrong, compare three things:
+  - visible VICE screen
+  - screen RAM in the dump
+  - transported `RESULT`/`USER` payload seen by the bridge
+- If behavior and transport disagree, prefer the dump and the raw frame log over visual impressions.
+
+### VICE monitor
+- VICE is started with `-remotemonitor -remotemonitoraddress 127.0.0.1:6510`.
+- The stall dumper already talks to that monitor automatically.
+- If you need to inspect manually, connect to the monitor and check:
+  - CPU registers
+  - current PC
+  - agent state variables
+  - RS232 indices and pointers
+  - RX/TX buffers
+  - screen RAM
+- Prefer symbol-guided inspection using `c64/loader.sym`.
+- After changing addresses or adding state, make sure the dump code still points at the right symbols.
+
+### What to inspect first
+- `agent_state`, parser state, `basic_running`, `text_pending`, `ack_pending`, and any in-flight send state.
+- `send_pos`, `send_total`, frame buffers, and whether a frame was built but not drained.
+- RX/TX buffer contents near the current parser indices.
+- Screen RAM around the current cursor and the final `READY.` prompt.
+- Whether assembled code still fits below the fixed buffers. Check the KickAssembler map every time code grows.
+
+### Reading stall dumps
+- The dump header tells you why it was captured and which pending chunk or tool was in flight.
+- `r` output from the monitor shows whether the CPU is spinning in agent code, KERNAL RS232, or BASIC.
+- Memory dumps around the agent symbols tell you whether the state machine advanced and whether outbound data was queued.
+- If the screen RAM is correct but the bridge saw garbage, suspect transport corruption, framing overlap, or chunk reassembly.
+- If screen RAM is wrong too, suspect C64-side logic, injection, parser, or memory overlap.
+
+### Typical failure patterns
+- `bad type ..., resync`: wire corruption or framing loss. Check concurrent bidirectional traffic and checksum handling.
+- `rsuser: framing mismatch`: VICE/KERNAL RS232 overlap problem. Suspect full-duplex contention during `RUNNING -> RESULT`.
+- `tool stall` with a correct screen: semantic completion did not make it onto the wire.
+- visible `READY.` but bridge still waiting: completion-state transition bug on the C64.
+- duplicate `STATUS STORED` or `STATUS RUNNING`: retry/duplicate suppression problem.
+- garbage at startup: temporary buffer or copy routine touched visible screen RAM or overlapped code.
+
+### Ground rules while debugging
+- Never trust just one layer. Check bridge log, VICE screen, and stall dump together.
+- Never change buffer addresses or add state without checking for code/buffer overlap in the assembled map.
+- Prefer fixing protocol ambiguity over adding bridge-side heuristics.
+- When transport is suspect, reduce concurrency first and reproduce with the smallest possible traffic pattern.
+
 ## Architecture Notes
 - C64 agent is a TSR at $C000, hooks KERNAL at $E5D1 and IRQ at $0314/$0315, invisible to user.
 - Serial protocol: SYNC(0xFE) + TYPE(1) + LENGTH(1) + PAYLOAD + CHK(XOR).
