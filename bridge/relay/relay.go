@@ -275,8 +275,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 		case serial.FrameText:
 			// TEXT forwarded by C64 for the user — accumulate until the
 			// C64 finishes this burst, then return it to the chat frontend.
+			// Drain any immediately trailing internal frames first so the
+			// next user turn does not start by consuming stale ACK/STATUS.
 			fmt.Fprintln(os.Stderr)
 			r.textBuf = append(r.textBuf, f.Payload...)
+			r.drainTrailingAfterUserText()
 			text := string(r.textBuf)
 			r.textBuf = nil
 			return text, nil
@@ -296,6 +299,31 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 
 		default:
 			log.Printf("C64 → ???:   unknown frame 0x%02X", f.Type)
+		}
+	}
+}
+
+func (r *Relay) drainTrailingAfterUserText() {
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+		f, err := r.recvFromC64(ctx, false)
+		cancel()
+		if err != nil {
+			return
+		}
+
+		switch f.Type {
+		case serial.FrameText:
+			fmt.Fprintln(os.Stderr)
+			r.textBuf = append(r.textBuf, f.Payload...)
+		case serial.FrameHeartbeat:
+			continue
+		case serial.FrameSystem:
+			fmt.Fprintln(os.Stderr)
+			r.handleSystemFrame(f)
+		default:
+			r.pendingFrames = append(r.pendingFrames, f)
+			return
 		}
 	}
 }
