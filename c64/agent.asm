@@ -810,7 +810,7 @@ so_chk_text:
         beq so_chk_ack_deferred
         lda #0
         sta text_pending
-        lda #FRAME_TEXT
+        lda #FRAME_USER
         jsr build_rxbuf_frame
         jmp so_send_check
 
@@ -1578,12 +1578,6 @@ frame_dispatch:
         beq fd_ack_done
         cmp #FRAME_EXECNOW
         beq fd_ack_done
-        cmp #FRAME_TEXT
-        bne fd_ack_check_runtime
-        lda #1
-        sta ack_deferred
-        jmp fd_ack_done
-fd_ack_check_runtime:
         lda #1
         sta ack_pending
         jmp fd_ack_done
@@ -1663,8 +1657,8 @@ fd_not_msg:
         rts
 
 fd_text_running:
-        lda #FRAME_TEXT
-        jsr build_rxbuf_frame
+        lda #1
+        sta text_pending
         rts
 
 fd_text_busy:

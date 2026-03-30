@@ -77,12 +77,13 @@
 .const FRAME_STOP   = $4B    // 'K' — request RUN/STOP for current BASIC program
 .const FRAME_STATUSQ = $51   // 'Q' — ask whether BASIC is RUNNING or READY
 .const FRAME_SCREEN = $50    // 'P' — request current text screen snapshot
-.const FRAME_TEXT   = $54    // 'T' — LLM's final answer, forward to user
+.const FRAME_TEXT   = $54    // 'T' — LLM's final answer into the C64 agent
 //
 // C64 -> Bridge:
 .const FRAME_ACK    = $41    // 'A' — exact payload echo for verified delivery
 .const FRAME_RESULT = $52    // 'R' — tool result: screen scrape
 .const FRAME_STATUS = $55    // 'U' — BASIC state / long-running status text
+.const FRAME_USER   = $59    // 'Y' — user-visible text emitted by the C64
 .const FRAME_LLM    = $4C    // 'L' — context message for the LLM
 .const FRAME_ERROR  = $58    // 'X' — tool call timed out
 .const FRAME_HBEAT  = $48    // 'H' — heartbeat

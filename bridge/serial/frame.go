@@ -38,6 +38,7 @@ const (
 	FrameAck       byte = 0x41 // 'A' — exact payload echo for verified delivery
 	FrameResult    byte = 0x52 // 'R' — tool result: screen scrape
 	FrameStatus    byte = 0x55 // 'U' — BASIC state / long-running status text
+	FrameUser      byte = 0x59 // 'Y' — user-visible text emitted by the C64
 	FrameLLM       byte = 0x4C // 'L' — context message for the LLM
 	FrameError     byte = 0x58 // 'X' — tool call timed out
 	FrameHeartbeat byte = 0x48 // 'H' — heartbeat
@@ -135,7 +136,7 @@ readType:
 	// sanity check: reject unrecognized frame types
 	if typ != FrameMsg && typ != FrameExec && typ != FrameExecGo && typ != FrameExecNow && typ != FrameStop &&
 		typ != FrameStatusReq && typ != FrameText && typ != FrameScreenshot &&
-		typ != FrameAck && typ != FrameResult && typ != FrameStatus &&
+		typ != FrameAck && typ != FrameResult && typ != FrameStatus && typ != FrameUser &&
 		typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat &&
 		typ != FrameSystem {
 		log.Printf("  bad type 0x%02X, resync", typ)
@@ -193,6 +194,8 @@ func TypeName(t byte) string {
 		return "STATUS"
 	case FrameText:
 		return "TEXT"
+	case FrameUser:
+		return "USER"
 	case FrameScreenshot:
 		return "SCREENSHOT"
 	case FrameAck:

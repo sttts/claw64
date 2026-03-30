@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sttts/claw64/bridge/llm"
@@ -42,6 +43,13 @@ type Relay struct {
 	toolStartedAt  time.Time
 	basicRunning   bool
 	pendingFrames  []serial.Frame
+	recvOnce       sync.Once
+	recvCh         chan recvResult
+}
+
+type recvResult struct {
+	frame serial.Frame
+	err   error
 }
 
 const textChunkMax = 62
@@ -148,7 +156,7 @@ func (r *Relay) SetupProgress() {
 				logStream("C64 → LLM:   RESULT ")
 			case serial.FrameStatus:
 				logStream("C64 → LLM:   STATUS ")
-			case serial.FrameText:
+			case serial.FrameUser:
 				logStream("C64 → USER:  ")
 			case serial.FrameSystem:
 				logStream("C64 → soul:  ")
@@ -272,7 +280,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string) (string, error) {
 				return text, nil
 			}
 
-		case serial.FrameText:
+		case serial.FrameUser:
 			// TEXT forwarded by C64 for the user — accumulate until the
 			// C64 finishes this burst, then return it to the chat frontend.
 			// Drain any immediately trailing internal frames first so the
@@ -313,7 +321,7 @@ func (r *Relay) drainTrailingAfterUserText() {
 		}
 
 		switch f.Type {
-		case serial.FrameText:
+		case serial.FrameUser:
 			fmt.Fprintln(os.Stderr)
 			r.textBuf = append(r.textBuf, f.Payload...)
 		case serial.FrameHeartbeat:
@@ -574,11 +582,8 @@ func ackFingerprint(frame serial.Frame) []byte {
 }
 
 func (r *Relay) waitForAck(ctx context.Context) (serial.Frame, error) {
-	waitCtx, cancel := context.WithTimeout(ctx, toolAckTimeout)
-	defer cancel()
-
 	for {
-		f, err := r.recvFromC64(waitCtx, false)
+		f, err := r.recvFromC64(ctx, false)
 		if err != nil {
 			return serial.Frame{}, err
 		}
@@ -586,7 +591,7 @@ func (r *Relay) waitForAck(ctx context.Context) (serial.Frame, error) {
 		case serial.FrameAck:
 			fmt.Fprintln(os.Stderr)
 			return f, nil
-		case serial.FrameText, serial.FrameSystem, serial.FrameStatus,
+		case serial.FrameUser, serial.FrameSystem, serial.FrameStatus,
 			serial.FrameResult, serial.FrameError, serial.FrameLLM:
 			r.pendingFrames = append(r.pendingFrames, f)
 			continue
@@ -619,7 +624,7 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, expected []byte, timeo
 		case serial.FrameAck:
 			fmt.Fprintln(os.Stderr)
 			return string(f.Payload) == string(expected), nil
-		case serial.FrameText:
+		case serial.FrameUser:
 			fmt.Fprintln(os.Stderr)
 			r.textBuf = append(r.textBuf, f.Payload...)
 		case serial.FrameSystem:
@@ -644,25 +649,30 @@ func (r *Relay) appendToolResult(userID, result string) {
 	})
 }
 
+func (r *Relay) ensureRecvLoop() {
+	r.recvOnce.Do(func() {
+		r.recvCh = make(chan recvResult, 1)
+		go func() {
+			for {
+				f, err := r.Link.Recv()
+				r.recvCh <- recvResult{frame: f, err: err}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	})
+}
+
 func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Frame, error) {
+	r.ensureRecvLoop()
+
 	if len(r.pendingFrames) > 0 {
 		f := r.pendingFrames[0]
 		r.pendingFrames = r.pendingFrames[1:]
 		return f, nil
 	}
-
-	resultCh := make(chan struct {
-		frame serial.Frame
-		err   error
-	}, 1)
 	stallDumped := false
-	go func() {
-		f, err := r.Link.Recv()
-		resultCh <- struct {
-			frame serial.Frame
-			err   error
-		}{frame: f, err: err}
-	}()
 
 	for {
 		if ctx.Err() != nil {
@@ -688,19 +698,12 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 		case <-ctx.Done():
 			return serial.Frame{}, ctx.Err()
 
-		case res := <-resultCh:
+		case res := <-r.recvCh:
 			if res.err != nil {
 				return serial.Frame{}, fmt.Errorf("recv: %w", res.err)
 			}
 			stallDumped = false
 			if res.frame.Type == serial.FrameHeartbeat {
-				go func() {
-					f, err := r.Link.Recv()
-					resultCh <- struct {
-						frame serial.Frame
-						err   error
-					}{frame: f, err: err}
-				}()
 				continue
 			}
 			return res.frame, nil
