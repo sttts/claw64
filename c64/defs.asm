@@ -80,7 +80,7 @@
 .const FRAME_TEXT   = $54    // 'T' — LLM's final answer into the C64 agent
 //
 // C64 -> Bridge:
-.const FRAME_ACK    = $41    // 'A' — exact payload echo for verified delivery
+.const FRAME_ACK    = $41    // 'A' — transport id echo for verified delivery
 .const FRAME_RESULT = $52    // 'R' — tool result: screen scrape
 .const FRAME_STATUS = $55    // 'U' — BASIC state / long-running status text
 .const FRAME_USER   = $59    // 'Y' — user-visible text emitted by the C64

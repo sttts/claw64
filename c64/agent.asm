@@ -1057,23 +1057,18 @@ build_ack_frame:
         sta send_buf+0
         lda #FRAME_ACK
         sta send_buf+1
-        lda #3
+        lda #1                  // payload length = 1 (just the transport id)
         sta send_buf+2
-        lda last_rx_sub
+        lda rx_last_id
         sta send_buf+3
-        lda last_rx_len
-        sta send_buf+4
-        lda last_rx_chk
-        sta send_buf+5
 
+        // checksum = type ^ length ^ id
         lda send_buf+1
         eor send_buf+2
         eor send_buf+3
-        eor send_buf+4
-        eor send_buf+5
-        sta send_buf+6
+        sta send_buf+4
 
-        lda #7
+        lda #5                  // total frame bytes: SYNC+TYPE+LEN+ID+CHK
         sta send_total
         lda #0
         sta send_pos
@@ -1569,54 +1564,51 @@ fr_bad: lda #0                  // reset parser state to HUNT
 //   the bridge forwards the LLM's answer to chat independently.
 // ---------------------------------------------------------
 frame_dispatch:
-        // Queue an ACK only for bridge frames that the bridge verifies.
-        // EXECGO and EXECNOW are intentionally fire-and-forget, so emitting
-        // an ACK for them leaks a stray empty ACK back into the normal
-        // receive loop and can block the real result frame behind it.
+        // All bridge→C64 frames are reliable and carry a 1-byte transport
+        // ID as the first payload byte. Extract it, shift payload left,
+        // and decrement frame_len so handlers see only the body.
+        lda frame_len
+        beq fd_no_id            // zero-length → no ID byte (shouldn't happen)
+        lda AGENT_RXBUF         // transport ID is payload[0]
+        sta fd_cur_id
+
+        // Shift payload left by 1: RXBUF[0]=RXBUF[1], RXBUF[1]=RXBUF[2], ...
+        dec frame_len           // body length = original - 1
+        ldx #0
+fd_shift:
+        cpx frame_len
+        beq fd_shift_done
+        lda AGENT_RXBUF+1,x
+        sta AGENT_RXBUF,x
+        inx
+        jmp fd_shift
+fd_shift_done:
+
+        // Duplicate suppression: if (id, type) matches last accepted, re-ACK only.
+        lda fd_cur_id
+        cmp rx_last_id
+        bne fd_accept
         lda frame_sub
-        cmp #FRAME_EXECGO
-        beq fd_ack_done
-        cmp #FRAME_EXECNOW
-        beq fd_ack_done
+        cmp rx_last_type
+        bne fd_accept
+
+        // Duplicate — re-ACK without replaying side effects.
         lda #1
         sta ack_pending
-        jmp fd_ack_done
-
-fd_ack_done:
-
-        // Treat an immediately repeated same frame as a retransmit.
-        // Only staged EXEC retries are suppressed here. Other frame
-        // types may legitimately repeat with the same payload.
-        // Compare subtype, length, and XOR checksum while EXEC is still
-        // pending so verified bridge retries stay idempotent.
-        lda frame_sub
-        cmp #FRAME_EXEC
-        bne fd_new_frame
-        lda exec_pending
-        beq fd_new_frame
-        lda last_rx_valid
-        beq fd_new_frame
-        lda frame_sub
-        cmp last_rx_sub
-        bne fd_new_frame
-        lda frame_len
-        cmp last_rx_len
-        bne fd_new_frame
-        lda frame_chk
-        cmp last_rx_chk
-        bne fd_new_frame
         rts
 
-fd_new_frame:
-        lda #1
-        sta last_rx_valid
+fd_accept:
+        // New reliable frame — store (id, type) and queue ACK.
+        lda fd_cur_id
+        sta rx_last_id
         lda frame_sub
-        sta last_rx_sub
-        lda frame_len
-        sta last_rx_len
-        lda frame_chk
-        sta last_rx_chk
+        sta rx_last_type
+        lda #1
+        sta ack_pending
+        jmp fd_dispatch
 
+fd_no_id:
+fd_dispatch:
         lda frame_sub           // load the frame subtype
 
         // ---- Check for MSG frame ($4D = 'M') ----
@@ -1924,10 +1916,9 @@ state_pending: .byte 0  // 1 = send FRAME_STATUS payload from state_src_*
 state_len:    .byte 0   // payload length for FRAME_STATUS
 state_src_lo: .byte 0   // source pointer low byte for FRAME_STATUS text
 state_src_hi: .byte 0   // source pointer high byte for FRAME_STATUS text
-last_rx_valid: .byte 0  // 1 = last_rx_* contains a verified bridge frame fingerprint
-last_rx_sub:  .byte 0   // subtype of last verified bridge frame
-last_rx_len:  .byte 0   // payload length of last verified bridge frame
-last_rx_chk:  .byte 0   // XOR checksum fingerprint of last verified bridge frame
+rx_last_id:   .byte 0   // transport id of last accepted reliable inbound frame
+rx_last_type: .byte 0   // frame type of last accepted reliable inbound frame
+fd_cur_id:    .byte 0   // transport id extracted from current frame being dispatched
 ack_deferred: .byte 0   // 1 = send ACK after current TEXT processing is drained
 prompt_sent:  .byte 0   // 1 = prompt already sent
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)

@@ -35,7 +35,7 @@ const (
 	FrameScreenshot byte = 0x50 // 'P' — request current text screen snapshot
 
 	// C64 → Bridge
-	FrameAck       byte = 0x41 // 'A' — exact payload echo for verified delivery
+	FrameAck       byte = 0x41 // 'A' — transport id echo for verified delivery
 	FrameResult    byte = 0x52 // 'R' — tool result: screen scrape
 	FrameStatus    byte = 0x55 // 'U' — BASIC state / long-running status text
 	FrameUser      byte = 0x59 // 'Y' — user-visible text emitted by the C64
@@ -215,4 +215,21 @@ func TypeName(t byte) string {
 	default:
 		return fmt.Sprintf("UNKNOWN(0x%02X)", t)
 	}
+}
+
+// PrependID returns a new payload with the transport ID prepended.
+func PrependID(id byte, payload []byte) []byte {
+	out := make([]byte, 1+len(payload))
+	out[0] = id
+	copy(out[1:], payload)
+	return out
+}
+
+// ExtractAckID extracts the 1-byte transport ID from an ACK payload.
+// Returns (id, true) on success, (0, false) if the payload is empty.
+func ExtractAckID(payload []byte) (byte, bool) {
+	if len(payload) < 1 {
+		return 0, false
+	}
+	return payload[0], true
 }
