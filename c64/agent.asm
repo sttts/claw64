@@ -37,9 +37,10 @@
 // to RAM underneath the KERNAL ROM at $E000-$FFFF).
 .const PROCPORT = $01
 
-// Temporary 256-byte buffer used during KERNAL ROM copy.
-// Located at $CF00, top of agent memory (below $D000 I/O).
-.const TMPBUF   = $CF00
+// Temporary 256-byte buffer used during ROM copy at install time.
+// This must never overlap the resident agent image. Reuse the first
+// screen page while installing; trashing it briefly is harmless.
+.const TMPBUF   = $0400
 
 // Buffer for building outgoing serial frames before burst-sending.
 // Located at $C900 (AGENT_TXBUF), above the receive buffer.
@@ -327,24 +328,19 @@ spr_cp0:lda spr_claw1,x
 
         // ---- Initialize agent state variables ----
         lda #0
-        sta parse_state
-        sta agent_state
-        sta inj_pos
-        sta inj_len
-        sta ready_timer
-        sta llm_pending
-        sta busy
-        sta state_pending
-        sta ack_deferred
-        sta state_len
-        sta state_src_lo
-        sta state_src_hi
-        sta running_ticks_lo
-        sta running_ticks_hi
-        sta running_reported
-        sta basic_running
-        sta stop_requested
-        sta progline_pending
+        ldx #$24                // parse_state .. busy
+init_core:
+        sta parse_state,x
+        dex
+        bpl init_core
+
+        ldx #$09                // anim_timer .. progline_pending
+init_tail:
+        sta anim_timer,x
+        dex
+        bpl init_tail
+        lda #5
+        sta anim_timer
 
         // border is not touched by the agent
 
@@ -392,6 +388,21 @@ bl_rx_loop:
 
 bl_rx_done:
         jsr CLRCHN
+
+        // Once we're back in the prompt-idle loop, make READY detection
+        // converge even if the KERNAL editor trampoline was not the path
+        // that returned us here.
+        lda basic_running
+        beq bl_idle_state_done
+        lda KBUF_LEN
+        bne bl_idle_state_done
+        jsr screen_has_ready_anywhere
+        bcc bl_idle_state_done
+        lda #0
+        sta basic_running
+        sta running_reported
+        sta stop_requested
+bl_idle_state_done:
         jsr service_outbound
 
 bl_inject:
@@ -645,6 +656,16 @@ reenter:
         sta $0292               // original $E5D1 instruction
         lda $C6                 // check keyboard buffer
         bne reenter_keys        // keys waiting → let KERNAL process
+        lda basic_running
+        beq reenter_idle
+        jsr screen_has_ready_anywhere
+        bcc reenter_idle
+        lda #0
+        sta basic_running
+        sta running_reported
+        sta stop_requested
+reenter_idle:
+        jsr service_outbound    // prompt-idle after KERNAL processed a line
         jmp bloop               // empty → run agent loop
 reenter_keys:
         jmp $E5D4               // continue KERNAL key loop
@@ -706,6 +727,17 @@ sr_not_stop:
         rts
 
 sr_waiting:
+        jsr screen_has_ready_anywhere
+        bcc sr_tick
+        lda #0
+        sta basic_running
+        sta running_reported
+        sta busy
+        lda #AG_IDLE
+        sta agent_state
+        rts
+
+sr_tick:
         inc running_ticks_lo
         bne sr_tick_ok
         inc running_ticks_hi
@@ -801,6 +833,14 @@ so_send_loop:
         tax
         lda send_buf,x
         pha
+        lda LDTND
+        bne so_have_files
+        lda LAT
+        cmp #RS232_DEV
+        bne so_have_files
+        lda #1
+        sta LDTND
+so_have_files:
         jsr CLRCHN
         ldx #RS232_DEV
         jsr CHKOUT
@@ -821,14 +861,7 @@ so_done:
 so_send_fail:
         pla
         jsr CLRCHN
-        jsr serial_write
-        bcs so_done
-        inc send_pos
-        iny
-        lda #0
-        sta busy_timer
-        sta dot_dir
-        jmp so_send_loop
+        rts
 
 build_priority_outbound:
 
@@ -869,6 +902,52 @@ irq_rx_loop:
         dex
         bne irq_rx_loop
 irq_rx_done:
+        lda agent_state
+        cmp #AG_WAITING
+        bne irq_tx_check
+        lda running_reported
+        bne irq_tx_check
+
+        // Long direct-mode commands do not always hit ISTOP often enough
+        // to report RUNNING. Let IRQ-side time advance that state so the
+        // bridge does not deadlock waiting for a semantic transition.
+        inc running_ticks_lo
+        bne irq_tick_ok
+        inc running_ticks_hi
+irq_tick_ok:
+        lda running_ticks_hi
+        bne irq_mark_running
+        lda running_ticks_lo
+        cmp #60
+        bcc irq_tx_check
+irq_mark_running:
+        jsr queue_state_running
+        lda #1
+        sta running_reported
+        sta basic_running
+        lda #AG_IDLE
+        sta agent_state
+        lda #0
+        sta busy
+
+irq_tx_check:
+        lda send_pos
+        cmp send_total
+        bne irq_tx_send
+        jsr build_priority_outbound
+        lda send_pos
+        cmp send_total
+        beq irq_done_io
+
+irq_tx_send:
+        tax
+        lda send_buf,x
+        jsr serial_write
+        bcs irq_done_io
+        inc send_pos
+        lda #0
+        sta busy_timer
+        sta dot_dir
 irq_done_io:
         rts
 
@@ -982,13 +1061,26 @@ state_busy_text:
 state_stored_text:
         .text "STORED"
 state_stop_requested_text:
-        .text "STOP REQ"
+        .text "STOP REQUESTED"
 
 // screen_has_ready_anywhere — check the visible screen for READY.
 // Returns carry set and X=line if found, carry clear otherwise.
 screen_has_ready_anywhere:
         ldx #24
 sha_scan:
+        lda basic_running
+        bne sha_check_scan
+        lda agent_state
+        cmp #AG_WAITING
+        bne sha_do
+sha_check_scan:
+        lda scan_start
+        cmp #$FF
+        beq sha_do
+        cpx scan_start
+        bcc sha_next
+        beq sha_next
+sha_do:
         jsr screen_ptr_from_x
         sta bl_rd+1
         sty bl_rd+2
@@ -1088,12 +1180,12 @@ prc_chunk_loop:
         lda ssr_total_hi
         bne prc_chunk_sub
         lda ssr_total_lo
-        cmp #62
+        cmp #32
         bcc prc_init_send
 prc_chunk_sub:
         sec
         lda ssr_total_lo
-        sbc #62
+        sbc #32
         sta ssr_total_lo
         lda ssr_total_hi
         sbc #0
@@ -1159,7 +1251,7 @@ brc_have_line:
         ldy ssr_text_len_tmp
 
 brc_copy:
-        cpy #62
+        cpy #32
         beq brc_finish
         lda result_col
         cmp ssr_line_len_tmp
@@ -1178,10 +1270,12 @@ brc_maybe_newline:
         jmp brc_copy
 
 brc_copy_char:
+        sty ssr_text_len_tmp
         ldx result_line
         jsr screen_ptr_from_x
         sta brc_rd+1
         sty brc_rd+2
+        ldy ssr_text_len_tmp
         ldx result_col
 brc_rd: lda $0400,x
         beq brc_space
@@ -1470,8 +1564,15 @@ fd_ack_check_runtime:
 fd_ack_done:
 
         // Treat an immediately repeated same frame as a retransmit.
-        // Compare subtype, length, and XOR checksum. This keeps
-        // bridge retries idempotent without storing a second payload copy.
+        // Only staged EXEC retries are suppressed here. Other frame
+        // types may legitimately repeat with the same payload.
+        // Compare subtype, length, and XOR checksum while EXEC is still
+        // pending so verified bridge retries stay idempotent.
+        lda frame_sub
+        cmp #FRAME_EXEC
+        bne fd_new_frame
+        lda exec_pending
+        beq fd_new_frame
         lda last_rx_valid
         beq fd_new_frame
         lda frame_sub
@@ -1547,6 +1648,18 @@ fd_not_text:
         // ---- Check for SCREENSHOT frame ($50 = 'P') ----
         cmp #FRAME_SCREEN       // is it a screen snapshot request?
         bne fd_not_screen       // no → check next type
+        lda basic_running
+        beq fd_screen_now
+        jsr screen_has_ready_anywhere
+        bcs fd_screen_ready
+        jmp fd_status_running
+
+fd_screen_ready:
+        lda #0
+        sta basic_running
+        sta running_reported
+
+fd_screen_now:
         lda #0
         sta busy_timer
         lda #0
@@ -1558,16 +1671,25 @@ fd_not_screen:
         // ---- Check for STATUS frame ($51 = 'Q') ----
         cmp #FRAME_STATUSQ
         bne fd_not_status
+        lda basic_running
+        beq fd_status_idle
+        jsr screen_has_ready_anywhere
+        bcs fd_status_now_ready
+        jmp fd_status_running
+fd_status_idle:
         jsr screen_has_ready_anywhere
         bcs fd_status_ready
-        lda basic_running
-        bne fd_status_running
         lda agent_state
         cmp #AG_WAITING
         beq fd_status_running
 fd_status_ready:
         jsr queue_state_ready
         rts
+fd_status_now_ready:
+        lda #0
+        sta basic_running
+        sta running_reported
+        jmp fd_status_ready
 fd_status_running:
         jsr queue_state_running
         rts
@@ -1891,29 +2013,23 @@ spr_dots:
 // This lets control chars like $0A (newline) pass through the conversion.
 .encoding "petscii_mixed"
 sys_prompt:
-        .text "You are a Commodore 64 from 1982 chatting with humans."
+        .text "You are a Commodore 64 from 1982."
         .byte $0A
         .text "Know only 1982."
         .byte $0A
-        .text "IMPORTANT: Reply normally. Never PRINT to talk."
+        .text "Reply normally. Never PRINT."
         .byte $0A
-        .text "Use exec to write or run BASIC."
-        .byte $0A
-        .text "Use screen"
+        .text "Use exec for BASIC."
         .byte $0A
         .text "Use status for RUNNING/READY."
         .byte $0A
-        .text "Use stop to break"
-        .byte $0A
-        .text "Tool results are screen output."
+        .text "Tool results are screen text."
         .byte $0A
         .text "Long output may show only the tail."
         .byte $0A
-        .text "After a tool result, use a tool or reply."
+        .text "After a tool, reply or use one tool."
         .byte $0A
-        .text "Show screenshots as quotes, or code for alignment."
-        .byte $0A
-        .text "For greetings, reply directly."
+        .text "Show screenshots as quotes or code."
         .byte $0A
         .text "If BASIC is RUNNING, don't exec."
         .byte $0A
@@ -1921,7 +2037,7 @@ sys_prompt:
         .byte $0A
         .text "Program lines return STORED. Then exec RUN."
         .byte $0A
-        .text "exec: max 127 chars; colons and numbered program lines are OK; no CHR$(147)."
+        .text "exec: max 127 chars; colons and numbered lines are OK; no CHR$(147)."
 sys_prompt_end:
 .encoding "screencode_mixed"  // restore default
 

@@ -22,6 +22,8 @@
 .const CHKOUT  = $FFC9
 .const CLRCHN  = $FFCC
 .const CHROUT  = $FFD2
+.const LDTND   = $98    // KERNAL logical-file count
+.const LAT     = $0259  // KERNAL logical-file table
 .const GETIN   = $FFE4
 
 // System locations
