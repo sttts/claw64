@@ -38,9 +38,9 @@
 .const PROCPORT = $01
 
 // Temporary 256-byte buffer used during ROM copy at install time.
-// This must never overlap the resident agent image. Reuse the first
-// screen page while installing; trashing it briefly is harmless.
-.const TMPBUF   = $0400
+// This must never overlap the resident agent image and must stay off
+// the visible text screen. Reuse the loader's hidden scratch area.
+.const TMPBUF   = $5000
 
 // Buffer for building outgoing serial frames before burst-sending.
 // Located at $C900 (AGENT_TXBUF), above the receive buffer.
@@ -328,11 +328,17 @@ spr_cp0:lda spr_claw1,x
 
         // ---- Initialize agent state variables ----
         lda #0
-        ldx #$24                // parse_state .. busy
+        ldx #(cur_page - parse_state)
 init_core:
         sta parse_state,x
         dex
         bpl init_core
+
+        ldx #(busy - llm_pending)
+init_flags:
+        sta llm_pending,x
+        dex
+        bpl init_flags
 
         ldx #$09                // anim_timer .. progline_pending
 init_tail:
@@ -902,15 +908,53 @@ irq_rx_loop:
         dex
         bne irq_rx_loop
 irq_rx_done:
+        lda basic_running
+        beq irq_wait_state
+
+        // A previously detached long-running command can finish while the
+        // agent is already back in IDLE. When READY. is visible again and
+        // no keyboard input is pending, convert that finished run into the
+        // normal final RESULT frame here.
+        lda KBUF_LEN
+        bne irq_wait_state
+        jsr screen_has_ready_anywhere
+        bcc irq_wait_state
+        lda #0
+        sta basic_running
+        sta running_reported
+        sta stop_requested
+        sta busy
+        lda #AG_IDLE
+        sta agent_state
+        jsr prepare_result_chunks
+        jmp irq_tx_check
+
+irq_wait_state:
         lda agent_state
         cmp #AG_WAITING
         bne irq_tx_check
-        lda running_reported
-        bne irq_tx_check
+
+        // If the prompt is already back on screen, finish the command
+        // here as well. Long direct EXEC commands can return to READY
+        // without ever taking the normal prompt-idle handoff path.
+        jsr screen_has_ready_anywhere
+        bcc irq_wait_running
+        lda #0
+        sta basic_running
+        sta running_reported
+        sta stop_requested
+        sta busy
+        lda #AG_IDLE
+        sta agent_state
+        jsr prepare_result_chunks
+        jmp irq_tx_check
 
         // Long direct-mode commands do not always hit ISTOP often enough
         // to report RUNNING. Let IRQ-side time advance that state so the
         // bridge does not deadlock waiting for a semantic transition.
+irq_wait_running:
+        lda running_reported
+        bne irq_tx_check
         inc running_ticks_lo
         bne irq_tick_ok
         inc running_ticks_hi
@@ -931,23 +975,6 @@ irq_mark_running:
         sta busy
 
 irq_tx_check:
-        lda send_pos
-        cmp send_total
-        bne irq_tx_send
-        jsr build_priority_outbound
-        lda send_pos
-        cmp send_total
-        beq irq_done_io
-
-irq_tx_send:
-        tax
-        lda send_buf,x
-        jsr serial_write
-        bcs irq_done_io
-        inc send_pos
-        lda #0
-        sta busy_timer
-        sta dot_dir
 irq_done_io:
         rts
 
@@ -2013,11 +2040,11 @@ spr_dots:
 // This lets control chars like $0A (newline) pass through the conversion.
 .encoding "petscii_mixed"
 sys_prompt:
-        .text "You are a Commodore 64 from 1982."
+        .text "You are a Commodore 64."
         .byte $0A
         .text "Know only 1982."
         .byte $0A
-        .text "Reply normally. Never PRINT."
+        .text "Reply normally. Never PRINT"
         .byte $0A
         .text "Use exec for BASIC."
         .byte $0A
@@ -2025,19 +2052,15 @@ sys_prompt:
         .byte $0A
         .text "Tool results are screen text."
         .byte $0A
-        .text "Long output may show only the tail."
+        .text "Long output may show tail"
         .byte $0A
-        .text "After a tool, reply or use one tool."
-        .byte $0A
-        .text "Show screenshots as quotes or code."
-        .byte $0A
-        .text "If BASIC is RUNNING, don't exec."
+        .text "If BASIC is RUNNING, don't exec"
         .byte $0A
         .text "Use status, or stop before screen."
         .byte $0A
         .text "Program lines return STORED. Then exec RUN."
         .byte $0A
-        .text "exec: max 127 chars; colons and numbered lines are OK; no CHR$(147)."
+        .text "exec: max 127 chars; numbered lines OK; no CHR$(147)."
 sys_prompt_end:
 .encoding "screencode_mixed"  // restore default
 

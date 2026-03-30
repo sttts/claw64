@@ -450,43 +450,18 @@ func (r *Relay) sendTextChunk(ctx context.Context, chunk []byte) error {
 		}
 
 		waitCtx, cancel := context.WithTimeout(ctx, timeout)
-		ok, err := r.waitForTextDelivery(waitCtx, expected)
+		ack, err := r.waitForAck(waitCtx)
 		cancel()
-		if err == nil && ok {
+		if err == nil && string(ack.Payload) == string(expected) {
 			return nil
 		}
 		if err != nil {
 			log.Printf("     ! TEXT ack attempt %d failed: %v", attempt, err)
 			continue
 		}
-		log.Printf("     ! TEXT ack attempt %d failed: no confirmation", attempt)
+		log.Printf("     ! TEXT ack attempt %d mismatch: got %v want %v", attempt, ack.Payload, expected)
 	}
 	return fmt.Errorf("TEXT delivery could not be verified after %d attempt(s)", attempts)
-}
-
-func (r *Relay) waitForTextDelivery(ctx context.Context, expected []byte) (bool, error) {
-	for {
-		f, err := r.recvFromC64(ctx, false)
-		if err != nil {
-			return false, err
-		}
-		switch f.Type {
-		case serial.FrameAck:
-			fmt.Fprintln(os.Stderr)
-			return string(f.Payload) == string(expected), nil
-		case serial.FrameText:
-			fmt.Fprintln(os.Stderr)
-			r.textBuf = append(r.textBuf, f.Payload...)
-			continue
-		case serial.FrameSystem:
-			fmt.Fprintln(os.Stderr)
-			r.handleSystemFrame(f)
-		case serial.FrameHeartbeat:
-			continue
-		default:
-			return false, fmt.Errorf("unexpected frame while waiting for TEXT delivery: %s", serial.TypeName(f.Type))
-		}
-	}
 }
 
 func (r *Relay) startToolWait() {
@@ -583,12 +558,10 @@ func (r *Relay) waitForAck(ctx context.Context) (serial.Frame, error) {
 		case serial.FrameAck:
 			fmt.Fprintln(os.Stderr)
 			return f, nil
-		case serial.FrameText:
-			fmt.Fprintln(os.Stderr)
-			r.textBuf = append(r.textBuf, f.Payload...)
-		case serial.FrameSystem:
-			fmt.Fprintln(os.Stderr)
-			r.handleSystemFrame(f)
+		case serial.FrameText, serial.FrameSystem, serial.FrameStatus,
+			serial.FrameResult, serial.FrameError, serial.FrameLLM:
+			r.pendingFrames = append(r.pendingFrames, f)
+			continue
 		case serial.FrameHeartbeat:
 			continue
 		default:
