@@ -28,7 +28,7 @@ const (
 	FrameMsg        byte = 0x4D // 'M' — user's chat message
 	FrameExec       byte = 0x45 // 'E' — tool call: BASIC command to execute
 	FrameExecGo     byte = 0x47 // 'G' — bridge confirmed EXEC may run
-	FrameExecNow    byte = 0x4A // 'J' — execute payload immediately, no ACK/EXECGO
+	FrameExecNow    byte = 0x4A // 'J' — execute payload immediately (carries transport ID)
 	FrameStop       byte = 0x4B // 'K' — request RUN/STOP for current BASIC program
 	FrameStatusReq  byte = 0x51 // 'Q' — ask whether BASIC is running or READY
 	FrameText       byte = 0x54 // 'T' — LLM's final answer, forward to user
@@ -232,4 +232,22 @@ func ExtractAckID(payload []byte) (byte, bool) {
 		return 0, false
 	}
 	return payload[0], true
+}
+
+// IsReliableC64 returns true for C64→bridge frame types that carry a transport ID.
+func IsReliableC64(t byte) bool {
+	switch t {
+	case FrameUser, FrameStatus, FrameResult, FrameError, FrameLLM, FrameSystem:
+		return true
+	}
+	return false
+}
+
+// StripID extracts the transport ID from a reliable C64→bridge frame payload
+// and returns (id, body, true). Returns (0, payload, false) if empty.
+func StripID(payload []byte) (byte, []byte, bool) {
+	if len(payload) < 1 {
+		return 0, payload, false
+	}
+	return payload[0], payload[1:], true
 }

@@ -224,15 +224,12 @@ cp_bas_wr:
         // These are in the cassette buffer area (safe to use).
 
         // Copy sprite data to cassette buffer area
-        // Frame 1 (claws open) → $0340, frame 2 (claws closed) → $03C0
-        // Dots → $0380
+        // Lobster → $0340, dots → $0380
         ldx #62
 spr_cp0:lda spr_claw1,x
         sta $0340,x
         lda spr_dots,x
         sta $0380,x
-        lda spr_claw2,x
-        sta $03C0,x
         dex
         bpl spr_cp0
 
@@ -347,6 +344,8 @@ init_tail:
         bpl init_tail
         lda #5
         sta anim_timer
+        lda #1
+        sta tx_next_id
 
         // border is not touched by the agent
 
@@ -442,7 +441,7 @@ bl_fill:
         cpx inj_len
         beq bl_fill_done        // all chars stuffed
 
-        lda AGENT_RXBUF,x
+        lda AGENT_RXBUF+1,x
         cmp #$61
         bcc bl_nofold
         cmp #$7B
@@ -779,7 +778,50 @@ service_outbound:
         jmp so_send_check
 
 so_build_next:
-        jsr build_priority_outbound
+        // Send ACKs when the wire is clear (send_pos == send_total).
+        // send_ack_now bypasses send_buf so it's safe during retransmit wait.
+        lda ack_pending
+        beq so_chk_ack_deferred2
+        lda #0
+        sta ack_pending
+        jsr send_ack_now
+so_chk_ack_deferred2:
+        lda ack_deferred
+        beq so_chk_ack_wait
+        lda #0
+        sta ack_deferred
+        jsr send_ack_now
+
+so_chk_ack_wait:
+        // If waiting for ACK of a reliable outbound frame, check timeout.
+        lda tx_ack_wait
+        beq so_ack_clear
+
+        // Increment timer and check for retransmit timeout (~3s at 60Hz).
+        inc tx_ack_timer
+        lda tx_ack_timer
+        cmp #250                // ~4 seconds at 60Hz before retransmit
+        bcc so_send_check       // still waiting — don't build next frame
+
+        // Timeout — check retry budget (3 retries max).
+        lda tx_retries
+        cmp #3
+        bcs so_ack_give_up
+
+        // Retransmit: reset send_pos to resend the frame in send_buf.
+        inc tx_retries
+        lda #0
+        sta send_pos
+        sta tx_ack_timer
+        jmp so_send_check
+
+so_ack_give_up:
+        lda #0
+        sta tx_ack_wait         // give up, proceed to next frame
+
+so_ack_clear:
+        // ACK received or no wait — build next reliable frame.
+        jsr build_reliable_outbound
         lda send_pos
         cmp send_total
         bne so_send_check
@@ -788,12 +830,14 @@ so_chk_prompt:
         lda prompt_pending
         beq so_chk_result
         jsr build_next_prompt_chunk
+        jsr inject_tx_id
         jmp so_send_check
 
 so_chk_result:
         lda result_pending
         beq so_chk_llm
         jsr build_next_result_chunk
+        jsr inject_tx_id
         jmp so_send_check
 
 so_chk_llm:
@@ -803,6 +847,7 @@ so_chk_llm:
         sta llm_pending
         lda #FRAME_LLM
         jsr build_rxbuf_frame
+        jsr inject_tx_id
         jmp so_send_check
 
 so_chk_text:
@@ -812,14 +857,10 @@ so_chk_text:
         sta text_pending
         lda #FRAME_USER
         jsr build_rxbuf_frame
+        jsr inject_tx_id
         jmp so_send_check
 
 so_chk_ack_deferred:
-        lda ack_deferred
-        beq so_send_check
-        lda #0
-        sta ack_deferred
-        jsr build_ack_frame
 
 so_send_check:
         lda send_pos
@@ -869,25 +910,17 @@ so_send_fail:
         jsr CLRCHN
         rts
 
-build_priority_outbound:
-
-        // ACKs first so verified delivery stays prompt.
-        lda ack_pending
-        beq bpo_chk_state
-        lda #0
-        sta ack_pending
-        jsr build_ack_frame
-        rts
-
-bpo_chk_state:
+build_reliable_outbound:
+        // STATUS frames have priority among reliable outbound frames.
         lda state_pending
-        beq bpo_done
+        beq bro_done
         lda #0
         sta state_pending
         jsr build_state_frame
+        jsr inject_tx_id
         rts
 
-bpo_done:
+bro_done:
         rts
 
 irq_service_io:
@@ -1052,26 +1085,78 @@ bsf_done:
         sta send_pos
         rts
 
-build_ack_frame:
+// send_ack_now — send a 5-byte ACK frame immediately via CHROUT.
+// Does not use send_buf, so it's safe even during retransmit wait.
+send_ack_now:
+        ldx #RS232_DEV
+        jsr CHKOUT
         lda #SYNC_BYTE
-        sta send_buf+0
+        jsr CHROUT
         lda #FRAME_ACK
-        sta send_buf+1
-        lda #1                  // payload length = 1 (just the transport id)
-        sta send_buf+2
+        jsr CHROUT
+        lda #1
+        jsr CHROUT
         lda rx_last_id
-        sta send_buf+3
+        jsr CHROUT
 
         // checksum = type ^ length ^ id
-        lda send_buf+1
-        eor send_buf+2
-        eor send_buf+3
-        sta send_buf+4
+        lda #FRAME_ACK
+        eor #1
+        eor rx_last_id
+        jsr CHROUT
+        jsr CLRCHN
+        rts
 
-        lda #5                  // total frame bytes: SYNC+TYPE+LEN+ID+CHK
-        sta send_total
+// inject_tx_id — prepend a 1-byte transport ID to the frame in send_buf.
+// Called after a reliable C64→bridge frame builder has filled send_buf.
+// Shifts payload right by 1, inserts tx_next_id at send_buf+3,
+// increments LEN and send_total, fixes the checksum, advances tx_next_id.
+inject_tx_id:
+        // shift payload+checksum right by 1 byte (from end to start)
+        ldx send_buf+2          // X = old payload length
+iti_shift:
+        lda send_buf+3,x       // includes checksum byte at [3+len]
+        sta send_buf+4,x
+        dex
+        bpl iti_shift
+
+        // insert transport ID at send_buf+3
+        lda tx_next_id
+        sta send_buf+3
+
+        // fix checksum: new = old ^ old_len ^ new_len ^ id
+        lda send_buf+2          // old LEN
+        eor frame_chk           // remove old LEN
+        tax                     // save partial in X
+        inc send_buf+2          // new LEN = old + 1
+        txa
+        eor send_buf+2          // XOR new LEN
+        eor send_buf+3          // XOR the ID byte
+        sta frame_chk
+
+        // rewrite checksum byte at new position
+        ldx send_buf+2          // new payload length
+        lda frame_chk
+        sta send_buf+3,x
+
+        // increment send_total
+        inc send_total
+
+        // set up retransmit wait: save the id and start waiting
+        lda tx_next_id
+        sta tx_ack_id
+        lda #1
+        sta tx_ack_wait
         lda #0
-        sta send_pos
+        sta tx_ack_timer
+        sta tx_retries
+
+        // advance tx_next_id, skip 0
+        inc tx_next_id
+        bne iti_done
+        lda #1
+        sta tx_next_id
+iti_done:
         rts
 
 state_ready_text:
@@ -1433,11 +1518,13 @@ send_error:
         lda #0
         sta send_buf+2
         lda #FRAME_ERROR        // checksum = TYPE ^ 0 = TYPE
+        sta frame_chk
         sta send_buf+3
         lda #4
         sta send_total
         lda #0
-        sta send_pos            // trigger drip-send
+        sta send_pos
+        jsr inject_tx_id
         rts
 
 // ---------------------------------------------------------
@@ -1544,45 +1631,39 @@ fr_bad: lda #0                  // reset parser state to HUNT
 // ---------------------------------------------------------
 // Frame dispatch — handle a fully parsed and validated frame
 //
-// Handles three incoming frame types from the bridge:
-//   EXEC ($45): bridge tells C64 to run a BASIC command
-//   MSG  ($4D): user's chat message — bridge handles LLM call
-//   TEXT ($54): LLM's final text answer — bridge forwards to chat
+// ACK frames (bridge acknowledging C64→bridge reliable frames)
+// are handled first and do not carry a transport ID.
 //
-// On EXEC frame:
-//   1. Sets up injection state (copies length, resets position)
-//   2. Sends an immediate echo RESULT frame back to bridge
-//      (confirms receipt by echoing the command text back)
-//   3. Transitions agent to AG_INJECTING state
-//
-// On MSG frame:
-//   Flash border yellow as visual feedback. No action needed —
-//   the bridge handles calling the LLM directly.
-//
-// On TEXT frame:
-//   Flash border green as visual feedback. No action needed —
-//   the bridge forwards the LLM's answer to chat independently.
+// All other bridge→C64 frames are reliable: payload[0] is a
+// 1-byte transport ID. The ID is extracted, frame_len decremented,
+// and body starts at AGENT_RXBUF+1. Duplicate (id, type) pairs
+// are re-ACKed without replaying side effects.
 // ---------------------------------------------------------
 frame_dispatch:
-        // All bridge→C64 frames are reliable and carry a 1-byte transport
-        // ID as the first payload byte. Extract it, shift payload left,
-        // and decrement frame_len so handlers see only the body.
+        // ACK frames from the bridge are unreliable — no transport ID.
+        // Handle them before the reliable-frame ID extraction path.
+        lda frame_sub
+        cmp #FRAME_ACK
+        bne fd_reliable
+        lda frame_len
+        beq fd_ack_done
+        lda AGENT_RXBUF         // ACK payload = id being acknowledged
+        cmp tx_ack_id           // does it match our pending outbound id?
+        bne fd_ack_done
+        lda #0
+        sta tx_ack_wait         // ACK received — stop waiting
+fd_ack_done:
+        rts
+
+fd_reliable:
+        // All other bridge→C64 frames are reliable and carry a 1-byte
+        // transport ID as the first payload byte. Extract it and
+        // decrement frame_len. Body starts at AGENT_RXBUF+1.
         lda frame_len
         beq fd_no_id            // zero-length → no ID byte (shouldn't happen)
         lda AGENT_RXBUF         // transport ID is payload[0]
         sta fd_cur_id
-
-        // Shift payload left by 1: RXBUF[0]=RXBUF[1], RXBUF[1]=RXBUF[2], ...
         dec frame_len           // body length = original - 1
-        ldx #0
-fd_shift:
-        cpx frame_len
-        beq fd_shift_done
-        lda AGENT_RXBUF+1,x
-        sta AGENT_RXBUF,x
-        inx
-        jmp fd_shift
-fd_shift_done:
 
         // Duplicate suppression: if (id, type) matches last accepted, re-ACK only.
         lda fd_cur_id
@@ -1752,8 +1833,7 @@ fd_not_execnow:
         cmp #AG_WAITING
         beq fd_exec_busy
 
-        // Keep the verified command in AGENT_RXBUF, then send an exact
-        // payload echo back to the bridge before allowing injection.
+        // Keep the verified command in AGENT_RXBUF and wait for EXECGO.
         lda frame_len
         sta exec_len
         jsr detect_program_line
@@ -1778,7 +1858,7 @@ fd_exec_start:
 
         ldx exec_len
         lda #$0D                // RETURN key
-        sta AGENT_RXBUF,x       // append after last command char
+        sta AGENT_RXBUF+1,x     // append after last command char (body starts at +1)
         inx
         stx inj_len             // injection length = command + RETURN
         lda #0
@@ -1798,7 +1878,7 @@ detect_program_line:
 dpl_skip_spaces:
         cpx frame_len
         beq dpl_no
-        lda AGENT_RXBUF,x
+        lda AGENT_RXBUF+1,x
         cmp #' '
         bne dpl_check_digit
         inx
@@ -1819,9 +1899,10 @@ dpl_no:
         rts
 
 // ---------------------------------------------------------
-// build_rxbuf_frame — build a frame in send_buf from AGENT_RXBUF
+// build_rxbuf_frame — build a frame in send_buf from AGENT_RXBUF+1
 //
-// Input: A = frame type, frame_len = payload length
+// Input: A = frame type, frame_len = payload length (body, not including ID)
+// Body starts at AGENT_RXBUF+1 (ID is at AGENT_RXBUF+0).
 // Uses:  send_buf, send_pos, send_total, frame_chk
 // ---------------------------------------------------------
 build_rxbuf_frame:
@@ -1836,7 +1917,7 @@ build_rxbuf_frame:
         ldx #0
 brf_cp: cpx frame_len
         beq brf_done
-        lda AGENT_RXBUF,x
+        lda AGENT_RXBUF+1,x
         sta send_buf+3,x
         eor frame_chk
         sta frame_chk
@@ -1919,6 +2000,11 @@ state_src_hi: .byte 0   // source pointer high byte for FRAME_STATUS text
 rx_last_id:   .byte 0   // transport id of last accepted reliable inbound frame
 rx_last_type: .byte 0   // frame type of last accepted reliable inbound frame
 fd_cur_id:    .byte 0   // transport id extracted from current frame being dispatched
+tx_next_id:   .byte 1   // outbound transport id counter, starts at 1
+tx_ack_wait:  .byte 0   // 1 = waiting for ACK of current outbound frame
+tx_ack_id:    .byte 0   // transport id of the frame we're waiting ACK for
+tx_ack_timer: .byte 0   // frames since last send (for retransmit timeout)
+tx_retries:   .byte 0   // retry count for current outbound frame
 ack_deferred: .byte 0   // 1 = send ACK after current TEXT processing is drained
 prompt_sent:  .byte 0   // 1 = prompt already sent
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
@@ -1940,7 +2026,6 @@ progline_pending: .byte 0 // 1 = current EXEC starts with a BASIC line number
 
 // color cycle for busy lobster: red → orange → yellow → white
 busy_colors:  .byte 2, 8, 7, 1
-claw_timer:   .byte 30  // frames between claw animation toggles
 
 // Lobster sprite data — 24x21 pixels, 63 bytes
 // Lobster frame 1 — claws open
@@ -1953,30 +2038,6 @@ spr_claw1:
         .byte %11011100, %00111011, %00000000  // row 5:  claws + head
         .byte %01101110, %01110110, %00000000  // row 6:  arms
         .byte %00110111, %11101100, %00000000  // row 7:  shoulders
-        .byte %00011111, %11111000, %00000000  // row 8:  body top
-        .byte %00001111, %11110000, %00000000  // row 9:  body
-        .byte %00011011, %11011000, %00000000  // row 10: eyes
-        .byte %00011111, %11111000, %00000000  // row 11: body
-        .byte %00001111, %11110000, %00000000  // row 12: body
-        .byte %00011111, %11111000, %00000000  // row 13: body wide
-        .byte %00001111, %11110000, %00000000  // row 14: body
-        .byte %00010111, %11101000, %00000000  // row 15: legs
-        .byte %00100011, %11000100, %00000000  // row 16: legs outer
-        .byte %00000111, %11100000, %00000000  // row 17: tail
-        .byte %00001111, %11110000, %00000000  // row 18: tail fan
-        .byte %00011010, %01011000, %00000000  // row 19: tail fins
-        .byte %00110000, %00001100, %00000000  // row 20: tail tips
-
-// Lobster frame 2 — claws closed (pinching)
-spr_claw2:
-        .byte %00100000, %00000100, %00000000  // row 0:  antennae
-        .byte %00010000, %00001000, %00000000  // row 1:  antennae
-        .byte %00110000, %00001100, %00000000  // row 2:  claw tips (closer)
-        .byte %01111000, %00011110, %00000000  // row 3:  claws closing
-        .byte %01011000, %00011010, %00000000  // row 4:  claws grip
-        .byte %01111100, %00111110, %00000000  // row 5:  claws + head
-        .byte %00111110, %01111100, %00000000  // row 6:  arms (closer)
-        .byte %00011111, %11111000, %00000000  // row 7:  shoulders
         .byte %00011111, %11111000, %00000000  // row 8:  body top
         .byte %00001111, %11110000, %00000000  // row 9:  body
         .byte %00011011, %11011000, %00000000  // row 10: eyes
@@ -2297,16 +2358,6 @@ irq_right:
 irq_set:
         sta $D002
 irq_done:
-        // ---- Lobster claw animation (always runs) ----
-        // Toggle sprite pointer between frame 1 ($0D) and frame 2 ($0F)
-        // every ~30 frames for a pinching animation.
-        dec claw_timer
-        bne irq_exit
-        lda #30
-        sta claw_timer
-        lda $07F8
-        eor #$02                // toggle $0D ↔ $0F
-        sta $07F8
 irq_exit:
         jmp (old_irq_lo)
 
