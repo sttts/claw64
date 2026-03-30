@@ -514,6 +514,17 @@ Examples:
 - `TEXT`: `<id><llm text chunk>`
 - `STOP`: `<id>`
 
+`LENGTH` includes the id byte.
+
+In other words, the wire still means:
+
+```text
+TYPE LENGTH PAYLOAD
+```
+
+and for reliable bridge -> C64 frames the first byte of `PAYLOAD` is the
+transport id.
+
 `ACK` payload becomes:
 
 ```text
@@ -521,6 +532,12 @@ Examples:
 ```
 
 Not payload echo.
+
+`ACK` is intentionally unreliable:
+
+- no id of its own
+- no ACK-of-ACK
+- no retry state for ACK itself
 
 ## Reliable Frames In Phase 1
 
@@ -563,6 +580,15 @@ The C64 duplicate rule should be:
 
 This is the smallest useful duplicate suppression rule.
 
+Initial values:
+
+- sender id counters should start at `1`
+- `0` is reserved for "no id / unset"
+- C64 `rx_last_id` should initialize to `0`
+- C64 `rx_last_type` should initialize to `0`
+
+That avoids a first-frame ambiguity on startup.
+
 ## Bridge State To Add
 
 Add only this state for bridge -> C64 transport:
@@ -582,6 +608,16 @@ Bridge sender rule:
 Do not allow multiple in-flight reliable bridge -> C64 frames in Phase 1.
 
 That keeps both code and reasoning small.
+
+Retry policy in Phase 1:
+
+- retry count: `3`
+- normal retry delays: `500ms`, `1s`, `2s`
+- retransmit must reuse the same `id`
+- after the retry budget is exhausted, fail the current turn
+
+Long-running contexts may use a longer overall caller timeout, but not a larger
+retry budget.
 
 ## Run-Completion Serialization
 
@@ -629,6 +665,26 @@ Once completion is over:
 - flush queued `TEXT` in order
 
 This is acceptable because it is protocol scheduling, not semantic decision-making.
+
+## STOP Priority
+
+`STOP` is special and should have transport priority over ordinary queued bridge
+-> C64 traffic.
+
+Rules:
+
+- `STOP` may preempt queued but unsent non-`STOP` bridge -> C64 frames
+- `STOP` must not interrupt a frame already being written on the wire
+- once the current frame write completes, `STOP` becomes the next reliable
+  frame sent
+
+This keeps `STOP` responsive without requiring impossible mid-frame wire
+preemption.
+
+After a `STOP` request is queued:
+
+- pending non-essential bridge -> C64 `TEXT` should remain deferred
+- completion should be driven by the C64's resulting `STATUS` / `RESULT` / `ERROR`
 
 ## Implementation Order
 
