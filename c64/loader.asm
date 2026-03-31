@@ -56,6 +56,19 @@ ldr_cp: lda (LDR_SRC_LO),y
         lda #>soul_data
         sta $FC
 
+        // Copy sprite data to cassette buffer area
+        // Frame 1 (claws open) → $0340, frame 2 (claws closed) → $03C0
+        // Dots → $0380
+        ldx #62
+spr_cp: lda spr_claw1,x
+        sta $0340,x
+        lda spr_dots,x
+        sta $0380,x
+        lda spr_claw2,x
+        sta $03C0,x
+        dex
+        bpl spr_cp
+
         // Jump to agent install at $C000
         jmp AGENT_BASE
 
@@ -304,7 +317,7 @@ agent_data:
 }
 agent_end:
 
-// System prompt text — copied to $A000 at boot.
+// System prompt text — copied to SOUL_BASE at boot.
 .encoding "petscii_mixed"
 soul_data:
         #import "soul_data.asm"
@@ -317,6 +330,79 @@ soul_data:
 soul_end:
 .encoding "screencode_mixed"
 .print "Soul length: " + (soul_end - soul_data) + " (PROMPT_LEN = " + PROMPT_LEN + ")"
+
+// Lobster sprite data — 24x21 pixels, 63 bytes each
+// Lobster frame 1 — claws open
+spr_claw1:
+        .byte %00100000, %00000100, %00000000  // row 0:  antennae
+        .byte %00010000, %00001000, %00000000  // row 1:  antennae
+        .byte %01010000, %00001010, %00000000  // row 2:  claw tips
+        .byte %11011000, %00011011, %00000000  // row 3:  claws open
+        .byte %10011000, %00011001, %00000000  // row 4:  claws grip
+        .byte %11011100, %00111011, %00000000  // row 5:  claws + head
+        .byte %01101110, %01110110, %00000000  // row 6:  arms
+        .byte %00110111, %11101100, %00000000  // row 7:  shoulders
+        .byte %00011111, %11111000, %00000000  // row 8:  body top
+        .byte %00001111, %11110000, %00000000  // row 9:  body
+        .byte %00011011, %11011000, %00000000  // row 10: eyes
+        .byte %00011111, %11111000, %00000000  // row 11: body
+        .byte %00001111, %11110000, %00000000  // row 12: body
+        .byte %00011111, %11111000, %00000000  // row 13: body wide
+        .byte %00001111, %11110000, %00000000  // row 14: body
+        .byte %00010111, %11101000, %00000000  // row 15: legs
+        .byte %00100011, %11000100, %00000000  // row 16: legs outer
+        .byte %00000111, %11100000, %00000000  // row 17: tail
+        .byte %00001111, %11110000, %00000000  // row 18: tail fan
+        .byte %00011010, %01011000, %00000000  // row 19: tail fins
+        .byte %00110000, %00001100, %00000000  // row 20: tail tips
+
+// Lobster frame 2 — claws closed (pinching)
+spr_claw2:
+        .byte %00100000, %00000100, %00000000  // row 0:  antennae
+        .byte %00010000, %00001000, %00000000  // row 1:  antennae
+        .byte %00110000, %00001100, %00000000  // row 2:  claw tips (closer)
+        .byte %01111000, %00011110, %00000000  // row 3:  claws closing
+        .byte %01011000, %00011010, %00000000  // row 4:  claws grip
+        .byte %01111100, %00111110, %00000000  // row 5:  claws + head
+        .byte %00111110, %01111100, %00000000  // row 6:  arms (closer)
+        .byte %00011111, %11111000, %00000000  // row 7:  shoulders
+        .byte %00011111, %11111000, %00000000  // row 8:  body top
+        .byte %00001111, %11110000, %00000000  // row 9:  body
+        .byte %00011011, %11011000, %00000000  // row 10: eyes
+        .byte %00011111, %11111000, %00000000  // row 11: body
+        .byte %00001111, %11110000, %00000000  // row 12: body
+        .byte %00011111, %11111000, %00000000  // row 13: body wide
+        .byte %00001111, %11110000, %00000000  // row 14: body
+        .byte %00010111, %11101000, %00000000  // row 15: legs
+        .byte %00100011, %11000100, %00000000  // row 16: legs outer
+        .byte %00000111, %11100000, %00000000  // row 17: tail
+        .byte %00001111, %11110000, %00000000  // row 18: tail fan
+        .byte %00011010, %01011000, %00000000  // row 19: tail fins
+        .byte %00110000, %00001100, %00000000  // row 20: tail tips
+
+// Dots sprite data — three small dots in a row
+spr_dots:
+        .byte %00000000, %00000000, %00000000  // row 0
+        .byte %00000000, %00000000, %00000000  // row 1
+        .byte %00000000, %00000000, %00000000  // row 2
+        .byte %00000000, %00000000, %00000000  // row 3
+        .byte %00000000, %00000000, %00000000  // row 4
+        .byte %00000000, %00000000, %00000000  // row 5
+        .byte %00000000, %00000000, %00000000  // row 6
+        .byte %00000000, %00000000, %00000000  // row 7
+        .byte %00000000, %00000000, %00000000  // row 8
+        .byte %11000000, %00110000, %00001100  // row 9: three dots
+        .byte %11000000, %00110000, %00001100  // row 10: three dots
+        .byte %00000000, %00000000, %00000000  // row 11
+        .byte %00000000, %00000000, %00000000  // row 12
+        .byte %00000000, %00000000, %00000000  // row 13
+        .byte %00000000, %00000000, %00000000  // row 14
+        .byte %00000000, %00000000, %00000000  // row 15
+        .byte %00000000, %00000000, %00000000  // row 16
+        .byte %00000000, %00000000, %00000000  // row 17
+        .byte %00000000, %00000000, %00000000  // row 18
+        .byte %00000000, %00000000, %00000000  // row 19
+        .byte %00000000, %00000000, %00000000  // row 20
 
 startup_logo_bitmap:
         .import binary "assets/startup-logo-lobster-bitmap.bin"
