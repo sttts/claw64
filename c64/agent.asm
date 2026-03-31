@@ -369,18 +369,16 @@ init_tail:
 //   4. Let KERNAL process any pending keystrokes, then loop
 // ---------------------------------------------------------
 bloop:
+        // ---- Step 0: Service outbound FIRST ----
+        // Build/send queued frames before draining serial. This ensures
+        // text_pending USER frames are built from RXBUF before new
+        // incoming frames overwrite it.
+        jsr service_outbound
+
         // ---- Step 1: Drain pending serial bytes ----
-        //
-        // Keep RS232 selected as the current input while polling.
-        // The KERNAL RS232 receive path appears not to stay live after
-        // OPEN alone; selecting the device before polling makes VICE
-        // actually fill the receive ring for bridge→C64 traffic.
         ldx #RS232_DEV
         jsr CHKIN
 
-        // Keep draining until the KERNAL RS232 receive ring is empty.
-        // Capping this to a small fixed batch still allows backlog to
-        // build up across iterations and eventually drop bytes.
 bl_rx_loop:
         jsr serial_read
         bcs bl_rx_done          // no more data pending
@@ -939,9 +937,14 @@ bro_done:
         rts
 
 irq_service_io:
+        // Don't parse while RXBUF holds TEXT body for USER frame build.
+        // Without this, a fast second TEXT chunk from the bridge would
+        // overwrite RXBUF before service_outbound builds the USER frame.
+        lda text_pending
+        bne irq_rx_done
+
         // Keep IRQ-side receive ahead of 2400 baud even while the main
-        // loop is busy in KERNAL/BASIC work. Four bytes per IRQ falls
-        // behind the wire rate and delays verified bridge frames.
+        // loop is busy in KERNAL/BASIC work.
         ldx #8
 irq_rx_loop:
         jsr serial_read
