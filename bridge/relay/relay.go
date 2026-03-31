@@ -262,24 +262,12 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			continue
 		}
 
-		// Post-unwrap semantic log — shows clean payload after id strip.
-		switch f.Type {
-		case serial.FrameUser:
-			log.Printf("     ← dispatch USER len=%d text=%q", len(f.Payload), truncate(string(f.Payload), 60))
-		case serial.FrameStatus:
-			log.Printf("     ← dispatch STATUS text=%q", string(f.Payload))
-		case serial.FrameLLM:
-			log.Printf("     ← dispatch LLM len=%d text=%q", len(f.Payload), truncate(string(f.Payload), 60))
-		case serial.FrameResult:
-			if len(f.Payload) >= 2 {
-				log.Printf("     ← dispatch RESULT chunk=%d/%d len=%d", f.Payload[0]+1, f.Payload[1], len(f.Payload)-2)
-			}
-		case serial.FrameSystem:
-			if len(f.Payload) >= 2 {
-				log.Printf("     ← dispatch SYSTEM chunk=%d/%d len=%d", f.Payload[0]+1, f.Payload[1], len(f.Payload)-2)
-			}
-		case serial.FrameError:
-			log.Printf("     ← dispatch ERROR")
+		// Post-unwrap semantic log — clean payload after id strip.
+		// SYSTEM is logged by handleSystemFrame. LLM/STATUS/RESULT
+		// are logged by their handlers. Only USER needs explicit log
+		// since it goes directly to the chat frontend.
+		if f.Type == serial.FrameUser {
+			log.Printf("     ← USER len=%d text=%q", len(f.Payload), truncate(string(f.Payload), 60))
 		}
 
 		switch f.Type {
