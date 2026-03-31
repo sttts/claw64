@@ -1,8 +1,8 @@
 #importonce
 // Claw64 — System prompt constants
 // ==================================
-// The text is in soul_data.asm (included by loader.asm only).
-// prompt_len_lo/hi and prompt_chunks are patched into agent
-// RAM by the loader at boot. No hardcoded lengths.
+// Text is in loader.asm. These are compile-time constants only.
 
 .const CHUNK_MAX = 60   // max text per SYSTEM frame (room for id + chunk header)
+.const PROMPT_LEN = 1307
+.const PROMPT_CHUNKS = (PROMPT_LEN + CHUNK_MAX - 1) / CHUNK_MAX

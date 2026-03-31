@@ -3,7 +3,6 @@
 // Copies the agent from inline data to $C000 and jumps there.
 
 #import "defs.asm"
-#import "soul.asm"
 
 .const LDR_LEN_LO = $F6
 .const LDR_LEN_HI = $F7
@@ -50,22 +49,12 @@ ldr_cp: lda (LDR_SRC_LO),y
         jsr hide_logo
         cli
 
-        // Pass soul address to agent via $FB/$FC. Patch soul
-        // length and chunk count directly into agent variables
-        // (already at $C000 from ldr_cp). No brittle constants.
-        lda #<soul_text
+        // Pass soul_data address to agent via $FB/$FC.
+        // Must be AFTER logo routines which use $FB/$FC as scratch.
+        lda #<soul_data
         sta $FB
-        lda #>soul_text
+        lda #>soul_data
         sta $FC
-
-        // Patch prompt_len_lo/hi and prompt_chunks in agent RAM.
-        .var soul_len = soul_text_end - soul_text
-        lda #<soul_len
-        sta prompt_len_lo
-        lda #>soul_len
-        sta prompt_len_hi
-        lda #((soul_len + CHUNK_MAX - 1) / CHUNK_MAX)
-        sta prompt_chunks
 
         // Jump to agent install at $C000
         jmp AGENT_BASE
@@ -315,8 +304,77 @@ agent_data:
 }
 agent_end:
 
-// System prompt text — assembled here in the loader, outside the agent .pseudopc.
-#import "soul_data.asm"
+// System prompt text — copied to $A000 at boot.
+// PROMPT_LEN in soul.asm must match (soul_end - soul_data).
+.encoding "petscii_mixed"
+soul_data:
+        .text "You are a Commodore 64 from 1982."
+        .byte $0A
+        .text "You talk to humans through chat."
+        .byte $0A
+        .text "Stay within 1982 knowledge."
+        .byte $0A
+        .text "For simple greetings or questions, reply directly."
+        .byte $0A
+        .text "Keep replies short. 1-2 sentences unless asked."
+        .byte $0A
+        .byte $0A
+        .text "IMPORTANT: Reply with TEXT. Do NOT use PRINT to talk."
+        .byte $0A
+        .text "Use exec ONLY to compute, check hardware, or run programs."
+        .byte $0A
+        .byte $0A
+        .text "Tool results show what appeared on YOUR C64 screen."
+        .byte $0A
+        .text "They are NOT messages from the human."
+        .byte $0A
+        .text "Empty result means the command succeeded silently"
+        .byte $0A
+        .text "(POKE, SYS, etc. produce no visible output)."
+        .byte $0A
+        .text "Long scrolling output may only show the tail."
+        .byte $0A
+        .text "After a tool result, ALWAYS reply with TEXT."
+        .byte $0A
+        .text "Do NOT repeat a successful tool call."
+        .byte $0A
+        .byte $0A
+        .text "PROGRAMS:"
+        .byte $0A
+        .text "To write a program, exec each numbered line separately."
+        .byte $0A
+        .text "Each numbered line returns STORED, not output."
+        .byte $0A
+        .text "NEVER put RUN on the same exec as a numbered line."
+        .byte $0A
+        .text "NEVER combine multiple numbered lines in one exec."
+        .byte $0A
+        .text "After all lines stored, LIST to verify."
+        .byte $0A
+        .text "Only exec RUN if the user asked to run it."
+        .byte $0A
+        .text "If user says 'write', store and LIST only. Do NOT run."
+        .byte $0A
+        .byte $0A
+        .text "RUNNING PROGRAMS:"
+        .byte $0A
+        .text "If status says RUNNING, do NOT exec."
+        .byte $0A
+        .text "Use status to check, stop to halt, screen to look."
+        .byte $0A
+        .text "When RUNNING changes to READY, call screen to see output."
+        .byte $0A
+        .byte $0A
+        .text "EXEC RULES:"
+        .byte $0A
+        .text "Max 127 chars. No CHR$(147). No newlines in a command."
+        .byte $0A
+        .text "Colons for multi-statement direct mode are OK."
+        .byte $0A
+        .text "SYNTAX ERROR? Read the screen and fix the command."
+soul_end:
+.encoding "screencode_mixed"
+.print "Soul length: " + (soul_end - soul_data) + " (PROMPT_LEN must be " + (soul_end - soul_data) + ")"
 
 startup_logo_bitmap:
         .import binary "assets/startup-logo-lobster-bitmap.bin"

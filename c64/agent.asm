@@ -332,11 +332,7 @@ spr_cp0:lda spr_claw1,x
         lda #>SOUL_BASE
         sta $FE
         ldy #0
-        ldx prompt_len_hi
-        lda prompt_len_lo
-        beq soul_cp_noinc
-        inx                     // partial page needs one more
-soul_cp_noinc:
+        ldx #((PROMPT_LEN + 255) / 256)
 soul_cp:
         lda ($FB),y
         sta ($FD),y
@@ -2101,11 +2097,6 @@ basic_running: .byte 0  // 1 = BASIC program still running after detach
 stop_requested: .byte 0 // 1 = ask ISTOP to trigger RUN/STOP
 progline_pending: .byte 0 // 1 = current EXEC starts with a BASIC line number
 
-// Loader-patched values — OUTSIDE init ranges so they survive zeroing.
-prompt_len_lo: .byte 0  // soul length low byte (patched by loader)
-prompt_len_hi: .byte 0  // soul length high byte (patched by loader)
-prompt_chunks: .byte 0  // ceil(len/CHUNK_MAX) (patched by loader)
-
 // color cycle for busy lobster: red → orange → yellow → white
 busy_colors:  .byte 2, 8, 7, 1
 
@@ -2198,10 +2189,10 @@ ssp_addr:
 
         // calculate chunk text length
         sec
-        lda prompt_len_lo
+        lda #<PROMPT_LEN
         sbc ssp_off_lo
         sta ssp_remain_lo
-        lda prompt_len_hi
+        lda #>PROMPT_LEN
         sbc ssp_off_hi
         sta ssp_remain_hi
         lda ssp_remain_hi
@@ -2233,7 +2224,7 @@ ssp_len_set:
         // payload header
         lda ssp_chunk
         sta send_buf+3          // chunk index
-        lda prompt_chunks
+        lda #PROMPT_CHUNKS
         sta send_buf+4          // total chunks
 
         // copy text with PETSCII→ASCII conversion
@@ -2302,7 +2293,7 @@ ssp_chk_done:
         // advance to next chunk
         inc ssp_chunk
         lda ssp_chunk
-        cmp prompt_chunks
+        cmp #PROMPT_CHUNKS
         bne ssp_not_last
         lda #0
         sta prompt_pending      // all chunks queued
