@@ -332,7 +332,11 @@ spr_cp0:lda spr_claw1,x
         lda #>SOUL_BASE
         sta $FE
         ldy #0
-        ldx #((PROMPT_LEN + 255) / 256)
+        ldx prompt_len_hi
+        lda prompt_len_lo
+        beq soul_cp_noinc
+        inx                     // partial page needs one more
+soul_cp_noinc:
 soul_cp:
         lda ($FB),y
         sta ($FD),y
@@ -2080,6 +2084,9 @@ tx_ack_id:    .byte 0   // transport id of the frame we're waiting ACK for
 tx_ack_timer: .byte 0   // frames since last send (for retransmit timeout)
 tx_retries:   .byte 0   // retry count for current outbound frame
 prompt_sent:  .byte 0   // 1 = prompt already sent
+prompt_len_lo: .byte 0  // soul length low byte (patched by loader)
+prompt_len_hi: .byte 0  // soul length high byte (patched by loader)
+prompt_chunks: .byte 0  // ceil(len/CHUNK_MAX) (patched by loader)
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
@@ -2189,10 +2196,10 @@ ssp_addr:
 
         // calculate chunk text length
         sec
-        lda #<PROMPT_LEN
+        lda prompt_len_lo
         sbc ssp_off_lo
         sta ssp_remain_lo
-        lda #>PROMPT_LEN
+        lda prompt_len_hi
         sbc ssp_off_hi
         sta ssp_remain_hi
         lda ssp_remain_hi
@@ -2224,7 +2231,7 @@ ssp_len_set:
         // payload header
         lda ssp_chunk
         sta send_buf+3          // chunk index
-        lda #PROMPT_CHUNKS
+        lda prompt_chunks
         sta send_buf+4          // total chunks
 
         // copy text with PETSCII→ASCII conversion
@@ -2293,7 +2300,7 @@ ssp_chk_done:
         // advance to next chunk
         inc ssp_chunk
         lda ssp_chunk
-        cmp #PROMPT_CHUNKS
+        cmp prompt_chunks
         bne ssp_not_last
         lda #0
         sta prompt_pending      // all chunks queued

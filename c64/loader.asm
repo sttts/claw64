@@ -3,6 +3,7 @@
 // Copies the agent from inline data to $C000 and jumps there.
 
 #import "defs.asm"
+#import "soul.asm"
 
 .const LDR_LEN_LO = $F6
 .const LDR_LEN_HI = $F7
@@ -49,12 +50,22 @@ ldr_cp: lda (LDR_SRC_LO),y
         jsr hide_logo
         cli
 
-        // Pass soul_text address to agent via $FB/$FC.
-        // Must be AFTER logo routines which use $FB/$FC as scratch.
+        // Pass soul address to agent via $FB/$FC. Patch soul
+        // length and chunk count directly into agent variables
+        // (already at $C000 from ldr_cp). No brittle constants.
         lda #<soul_text
         sta $FB
         lda #>soul_text
         sta $FC
+
+        // Patch prompt_len_lo/hi and prompt_chunks in agent RAM.
+        .var soul_len = soul_text_end - soul_text
+        lda #<soul_len
+        sta prompt_len_lo
+        lda #>soul_len
+        sta prompt_len_hi
+        lda #((soul_len + CHUNK_MAX - 1) / CHUNK_MAX)
+        sta prompt_chunks
 
         // Jump to agent install at $C000
         jmp AGENT_BASE
@@ -304,9 +315,8 @@ agent_data:
 }
 agent_end:
 
-// System prompt text is in soul.asm (assembled inside the agent .pseudopc block).
-// soul_text / soul_text_end / PROMPT_LEN are all defined there.
-.print "Soul length: " + PROMPT_LEN
+// System prompt text — assembled here in the loader, outside the agent .pseudopc.
+#import "soul_data.asm"
 
 startup_logo_bitmap:
         .import binary "assets/startup-logo-lobster-bitmap.bin"
