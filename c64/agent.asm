@@ -122,9 +122,10 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         lda cur_page
         bne cp                  // loop until page wraps $FF→$00
 
-        // KERNAL done ($E0-$FF). Now copy BASIC ($A0-$CF).
-        // Skip $D0-$DF (I/O) — KERNAL is already in RAM so NMI is safe.
-        lda #$A0
+        // KERNAL done ($E0-$FF). Now copy BASIC ($A5-$CF).
+        // Skip $A0-$A4: those pages hold the system prompt copied by
+        // the loader to SOUL_BASE ($A000). Skip $D0-$DF (I/O).
+        lda #$A5
         sta cur_page
 cp_bas: lda cur_page
         sta cp_bas_rd+2         // patch read address high byte
