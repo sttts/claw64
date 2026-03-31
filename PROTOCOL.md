@@ -173,10 +173,27 @@ Not payload echo.
 
 Rules:
 
-- receiver sends `ACK(id)` when a reliable frame is accepted
+- receiver sends `ACK(id)` only when the reliable frame has been accepted far
+  enough that the sender may continue
 - bad checksum: drop silently, no ACK
 - duplicate `id`: do not re-run side effects, just re-ACK
 - unknown future `id`: receiver may still accept it if semantics allow; strict in-order across all ids is not required
+
+`ACK` must not mean merely "I parsed the frame". It must mean:
+
+- the frame is validated
+- its side effects are committed into receiver-owned state
+- the next dependent frame may now arrive safely
+
+`ACK` also does not mean "the ultimate user-visible outcome is finished".
+Example:
+
+- `EXEC RUN` may be ACKed once the command is safely adopted by the C64
+- `STATUS RUNNING` / `RESULT ... READY.` still report later semantic progress
+
+For `TEXT`, this means ACK must not be sent until the C64 has absorbed the
+chunk into durable outbound/user state so the next TEXT chunk cannot clobber
+the first one.
 
 This is intentionally smaller than a general ordered-replay protocol. The goal
 is not perfect transport theory. The goal is a tiny reliable control channel
@@ -209,7 +226,7 @@ Reliable sender behavior:
 
 Receiver behavior:
 
-- first valid new `id`: apply once, ACK once
+- first valid new `id`: apply once, ACK once the sender may safely continue
 - duplicate valid `id`: re-ACK, do not repeat side effects
 - corrupt frame: ignore
 
@@ -280,6 +297,7 @@ Examples:
 
 - do not send `EXECGO` before `EXEC` is ACKed
 - do not send next `TEXT` chunk before current reliable `TEXT` chunk is ACKed
+  and that ACK must mean the previous chunk is safe against clobber
 
 ## Frame Classes
 

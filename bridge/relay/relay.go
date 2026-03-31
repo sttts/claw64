@@ -150,6 +150,9 @@ func logStream(format string, args ...any) {
 func (r *Relay) SetupProgress() {
 	r.Link.OnSendByte = func(typeName string, payload []byte, idx int) {
 		if idx == -1 {
+			if typeName == "ACK" {
+				return
+			}
 			fmt.Fprint(os.Stderr, termstyle.Dim("\n"))
 			return
 		}
@@ -166,6 +169,21 @@ func (r *Relay) SetupProgress() {
 	r.Link.OnRecvByte = func(frameType byte, idx int, b byte) {
 		isReliable := serial.IsReliableC64(frameType)
 
+		if frameType == serial.FrameSystem {
+			if idx == 0 {
+				logStream("C64 → soul:  ")
+			}
+			if idx < 3 {
+				return
+			}
+			if b == '\n' {
+				fmt.Fprint(os.Stderr, termstyle.Dim(`\n`))
+			} else {
+				fmt.Fprint(os.Stderr, termstyle.Dim(string(b)))
+			}
+			return
+		}
+
 		if idx == 0 {
 			switch frameType {
 			case serial.FrameLLM:
@@ -176,8 +194,6 @@ func (r *Relay) SetupProgress() {
 				logStream("C64 → LLM:   STATUS ")
 			case serial.FrameUser:
 				logStream("C64 → USER:  ")
-			case serial.FrameSystem:
-				logStream("C64 → soul:  ")
 			case serial.FrameAck:
 				// ACK payload is 1-byte id — print as number, not text.
 				logStream("C64 → bridge: ACK id=%d", b)
@@ -909,4 +925,3 @@ func (r *Relay) dumpC64SilenceStall() {
 	}
 	log.Printf("     ! c64 silence stall; wrote debug dump to %s", filename)
 }
-

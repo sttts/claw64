@@ -308,9 +308,15 @@ All bridge→C64 and C64→bridge frames (except ACK and HEARTBEAT) carry a
 and increment modulo 256, skipping 0 on wraparound. IDs are scoped per
 direction — each side maintains its own counter.
 
-**ACK by ID**: when a reliable frame is accepted, the receiver sends
-`ACK <id>` (1-byte payload). ACK frames are unreliable — no ID of their
-own, no ACK-of-ACK, no retry.
+**ACK by ID**: when a reliable frame has been accepted far enough that the
+sender may continue, the receiver sends `ACK <id>` (1-byte payload). ACK
+frames are unreliable — no ID of their own, no ACK-of-ACK, no retry.
+
+`ACK` does **not** mean the ultimate long-running work is finished. For
+example, `EXEC("RUN")` may be ACKed once the command has been safely adopted
+by the C64, even though BASIC is still running. But `ACK` **does** mean the
+receiver has committed enough state that the next dependent frame may arrive
+safely.
 
 **Duplicate suppression**: each side remembers the last accepted (id, type)
 pair. If the same pair arrives again, re-ACK without replaying side effects.
@@ -366,8 +372,9 @@ All payloads are plain text. No JSON, no quoting, no escaping.
 
 Frame payload is limited to 120 bytes for text-oriented frames. SYSTEM and
 RESULT use an in-band chunk header: `[chunk_index, total_chunks, text...]`.
-TEXT is chunked as repeated 120-byte frames, and the bridge waits for
-verified delivery plus the forwarded TEXT frame before sending the next one.
+TEXT is chunked as repeated 120-byte frames. The bridge must not send the
+next TEXT chunk until the current chunk has been ACKed. That ACK means the
+C64 has processed the chunk far enough that the next chunk may safely arrive.
 
 Used by: TEXT, SYSTEM, RESULT.
 

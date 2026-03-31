@@ -5,14 +5,15 @@
 // Agent memory layout
 // Code grows up from $C000. The fixed buffers live in the remaining
 // space below $D000. Frame payloads are capped at 127 bytes, so the
-// receive buffer only needs 128 bytes. Outbound chunks are kept smaller,
-// so the transmit buffer only needs to hold one encoded ~70-byte frame.
+// receive buffer needs 128 bytes. The transmit buffer must hold one
+// fully encoded reliable outbound frame, including a 120-byte SYSTEM
+// chunk plus framing overhead.
 .const AGENT_BASE      = $C000  // agent code starts here
 .const SOUL_BASE       = $9800  // system prompt at top of BASIC RAM (protected by MEMSIZ)
-.const AGENT_RXBUF     = $CF3A  // 128-byte receive / tool payload buffer
-.const AGENT_TXBUF     = $CFBA  // 70-byte transmit / inject buffer
+.const AGENT_RXBUF     = $CEE0  // 128-byte receive / tool payload buffer
+.const AGENT_TXBUF     = $CF60  // transmit / inject buffer
 .const AGENT_RXBUF_LEN = 128
-.const AGENT_TXBUF_LEN = 70
+.const AGENT_TXBUF_LEN = $A0
 
 // KERNAL jump table
 .const SETLFS  = $FFBA
