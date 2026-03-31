@@ -779,18 +779,21 @@ service_outbound:
 
 so_build_next:
         // Send ACKs when the wire is clear (send_pos == send_total).
-        // send_ack_now bypasses send_buf so it's safe during retransmit wait.
+        // Return after sending so the main loop drains serial first,
+        // creating a gap between ACK and the next reliable frame.
         lda ack_pending
         beq so_chk_ack_deferred2
         lda #0
         sta ack_pending
         jsr send_ack_now
+        rts                     // return — let main loop drain before next frame
 so_chk_ack_deferred2:
         lda ack_deferred
         beq so_chk_ack_wait
         lda #0
         sta ack_deferred
         jsr send_ack_now
+        rts
 
 so_chk_ack_wait:
         // If waiting for ACK of a reliable outbound frame, check timeout.
