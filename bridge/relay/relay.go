@@ -50,6 +50,7 @@ type Relay struct {
 	pendingAcks     []byte // queued ACK IDs to send during next quiet window
 	pendingFrames   []queuedFrame
 	lateAckIDs      map[byte]struct{}
+	lastAckSentAt   time.Time
 	recvOnce        sync.Once
 	recvCh          chan recvResult
 }
@@ -732,25 +733,34 @@ func (r *Relay) acceptC64Frame(f *serial.Frame, ackNow bool) bool {
 // Called in recvFromC64 before the select (quiet window) and before
 // bridge→C64 sends to prevent ACK deadlocks.
 func (r *Relay) flushPendingAcks() {
+	sent := false
 	for _, id := range r.pendingAcks {
 		log.Printf("     → C64: ACK id=%d", id)
 		ack := serial.Frame{Type: serial.FrameAck, Payload: []byte{id}}
 		if err := r.Link.Send(ack); err != nil {
 			logErrorf("     ! failed to send ACK(%d) to C64: %v", id, err)
 		}
+		sent = true
 	}
 	r.pendingAcks = r.pendingAcks[:0]
+	if sent {
+		r.lastAckSentAt = time.Now()
+	}
 }
 
 // settlePendingAcks flushes queued bridge ACKs before sending a new
 // bridge→C64 frame and gives the C64 a short window to consume them.
 func (r *Relay) settlePendingAcks() {
-	if len(r.pendingAcks) == 0 {
+	if len(r.pendingAcks) > 0 {
+		time.Sleep(10 * time.Millisecond)
+		r.flushPendingAcks()
+	}
+	if r.lastAckSentAt.IsZero() {
 		return
 	}
-	time.Sleep(10 * time.Millisecond)
-	r.flushPendingAcks()
-	time.Sleep(150 * time.Millisecond)
+	if remain := 150*time.Millisecond - time.Since(r.lastAckSentAt); remain > 0 {
+		time.Sleep(remain)
+	}
 }
 
 // unwrapC64Frame strips the transport ID from a reliable C64→bridge frame,

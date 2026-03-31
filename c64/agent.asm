@@ -823,6 +823,36 @@ so_build_next:
         lda #1
         sta ack_pending
 
+        // EXEC is also semantic-boundary ACKed. Only ACK the inbound EXEC
+        // after the resulting outbound STATUS/RESULT/ERROR traffic has
+        // fully drained and the bridge has ACKed it, so the next bridge
+        // frame cannot arrive while this semantic completion is still
+        // transport-live.
+so_chk_exec_ack:
+        lda exec_ack_pending
+        beq so_chk_ack_wait
+        lda prompt_pending
+        ora result_pending
+        ora llm_pending
+        ora text_pending
+        ora state_pending
+        bne so_chk_ack_wait
+        lda send_pos
+        cmp send_total
+        bne so_chk_ack_wait
+        lda ack_pos
+        cmp ack_total
+        bne so_chk_ack_wait
+        lda tx_ack_wait
+        bne so_chk_ack_wait
+        lda RODBE
+        cmp RODBS
+        bne so_chk_ack_wait
+        lda #0
+        sta exec_ack_pending
+        lda #1
+        sta ack_pending
+
 so_chk_ack_wait:
         // If waiting for ACK of a reliable outbound frame, check timeout.
         // Timer is incremented by the IRQ handler at 60Hz.
@@ -1993,12 +2023,6 @@ cef_done:
         rts
 
 commit_exec_ack_if_pending:
-        lda exec_ack_pending
-        beq ceap_done
-        lda #0
-        sta exec_ack_pending
-        lda #1
-        sta ack_pending
 ceap_done:
         rts
 
