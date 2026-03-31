@@ -130,6 +130,13 @@ func (r *Relay) handleResultFrame(f serial.Frame) (string, bool) {
 	return result, true
 }
 
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
 // logStream prints a log-style prefix without a trailing newline.
 // Characters can be appended to the same line afterwards.
 func logStream(format string, args ...any) {
@@ -253,6 +260,26 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 		// and suppress duplicate semantic processing.
 		if r.unwrapC64Frame(&f) {
 			continue
+		}
+
+		// Post-unwrap semantic log — shows clean payload after id strip.
+		switch f.Type {
+		case serial.FrameUser:
+			log.Printf("     ← dispatch USER len=%d text=%q", len(f.Payload), truncate(string(f.Payload), 60))
+		case serial.FrameStatus:
+			log.Printf("     ← dispatch STATUS text=%q", string(f.Payload))
+		case serial.FrameLLM:
+			log.Printf("     ← dispatch LLM len=%d text=%q", len(f.Payload), truncate(string(f.Payload), 60))
+		case serial.FrameResult:
+			if len(f.Payload) >= 2 {
+				log.Printf("     ← dispatch RESULT chunk=%d/%d len=%d", f.Payload[0]+1, f.Payload[1], len(f.Payload)-2)
+			}
+		case serial.FrameSystem:
+			if len(f.Payload) >= 2 {
+				log.Printf("     ← dispatch SYSTEM chunk=%d/%d len=%d", f.Payload[0]+1, f.Payload[1], len(f.Payload)-2)
+			}
+		case serial.FrameError:
+			log.Printf("     ← dispatch ERROR")
 		}
 
 		switch f.Type {
