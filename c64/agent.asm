@@ -845,6 +845,8 @@ so_chk_llm:
         beq so_chk_text
         lda #0
         sta llm_pending
+        lda llm_len
+        sta frame_len           // restore saved MSG body length
         lda #FRAME_LLM
         jsr build_rxbuf_frame
         jsr inject_tx_id
@@ -855,6 +857,8 @@ so_chk_text:
         beq so_chk_ack_deferred
         lda #0
         sta text_pending
+        lda text_len
+        sta frame_len           // restore saved TEXT body length
         lda #FRAME_USER
         jsr build_rxbuf_frame
         jsr inject_tx_id
@@ -1703,6 +1707,8 @@ fd_dispatch:
         sta prompt_sent
         sta prompt_pending
 fd_msg_no_prompt:
+        lda frame_len
+        sta llm_len             // save MSG body length for later LLM frame
         lda #1
         sta busy
         sta llm_pending
@@ -1723,6 +1729,8 @@ fd_not_msg:
         lda agent_state
         cmp #AG_WAITING
         beq fd_text_busy
+        lda frame_len
+        sta text_len            // save TEXT body length for USER frame
         lda #0
         sta busy                // conversation done — stop border animation
         lda #1
@@ -1730,6 +1738,8 @@ fd_not_msg:
         rts
 
 fd_text_running:
+        lda frame_len
+        sta text_len
         lda #1
         sta text_pending
         rts
@@ -1987,9 +1997,11 @@ cur_page:     .byte $A0 // current page during ROM copy, init to $A0
 // Screen codes for "READY." (used by self-modifying scan loop)
 ready_codes:  .byte $12, $05, $01, $04, $19, $2E
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
+llm_len:      .byte 0   // saved MSG body length for the LLM frame
 prompt_pending: .byte 0 // 1 = system prompt chunks still need sending
 result_pending: .byte 0 // 1 = RESULT chunks still need sending
 text_pending: .byte 0   // 1 = forward TEXT to user via drip-send
+text_len:     .byte 0   // saved TEXT body length for the USER frame
 exec_pending: .byte 0   // 1 = verified EXEC payload waiting for EXECGO
 exec_len:      .byte 0  // saved EXEC payload length while waiting for EXECGO
 ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
