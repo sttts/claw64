@@ -45,6 +45,17 @@ ldr_cp: lda (LDR_SRC_LO),y
         dex
         bne ldr_cp
 
+        // Copy system prompt to $A000 (BASIC ROM shadow).
+        // Must happen before agent install switches to $01=$35.
+        ldx #0
+soul_ldr:
+        lda soul_data,x
+        sta SOUL_BASE,x
+        lda soul_data+256,x
+        sta SOUL_BASE+256,x
+        inx
+        bne soul_ldr
+
         jsr wait_logo
         jsr hide_logo
         cli
@@ -296,6 +307,35 @@ agent_data:
         #import "agent.asm"
 }
 agent_end:
+
+// System prompt text — copied to $A000 at boot.
+// PROMPT_LEN in soul.asm must match (soul_end - soul_data).
+.encoding "petscii_mixed"
+soul_data:
+        .text "You are a Commodore 64."
+        .byte $0A
+        .text "Know only 1982."
+        .byte $0A
+        .text "Reply normally. Never PRINT"
+        .byte $0A
+        .text "Use exec for BASIC."
+        .byte $0A
+        .text "Use status for RUNNING/READY."
+        .byte $0A
+        .text "Tool results are screen text."
+        .byte $0A
+        .text "Long output may show tail"
+        .byte $0A
+        .text "If BASIC is RUNNING, don't exec"
+        .byte $0A
+        .text "Use status, or stop before screen."
+        .byte $0A
+        .text "Program lines return STORED. Then exec RUN."
+        .byte $0A
+        .text "exec: max 127 chars; numbered lines OK; no CHR$(147)."
+soul_end:
+.encoding "screencode_mixed"
+.print "Soul length: " + (soul_end - soul_data) + " (PROMPT_LEN must be " + (soul_end - soul_data) + ")"
 
 startup_logo_bitmap:
         .import binary "assets/startup-logo-lobster-bitmap.bin"

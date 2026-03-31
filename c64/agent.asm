@@ -323,6 +323,8 @@ spr_cp0:lda spr_claw1,x
         lda #%00110101
         sta PROCPORT
 
+        // System prompt was copied to SOUL_BASE ($A000) by the loader.
+
         // ---- Initialize agent state variables ----
         lda #0
         ldx #(cur_page - parse_state)
@@ -2106,43 +2108,8 @@ spr_dots:
         .byte %00000000, %00000000, %00000000  // row 19
         .byte %00000000, %00000000, %00000000  // row 20
 
-// ---------------------------------------------------------
-// System prompt — the C64's soul. Sent to bridge at startup.
-// Split into chunks for the 127-byte frame limit.
-// ---------------------------------------------------------
-.const CHUNK_MAX = 62   // max text per frame (leave room for frame overhead)
-
-// Use PETSCII encoding so lowercase = $C1-$DA (not screen code $01-$1A).
-// This lets control chars like $0A (newline) pass through the conversion.
-.encoding "petscii_mixed"
-sys_prompt:
-        .text "You are a Commodore 64."
-        .byte $0A
-        .text "Know only 1982."
-        .byte $0A
-        .text "Reply normally. Never PRINT"
-        .byte $0A
-        .text "Use exec for BASIC."
-        .byte $0A
-        .text "Use status for RUNNING/READY."
-        .byte $0A
-        .text "Tool results are screen text."
-        .byte $0A
-        .text "Long output may show tail"
-        .byte $0A
-        .text "If BASIC is RUNNING, don't exec"
-        .byte $0A
-        .text "Use status, or stop before screen."
-        .byte $0A
-        .text "Program lines return STORED. Then exec RUN."
-        .byte $0A
-        .text "exec: max 127 chars; numbered lines OK; no CHR$(147)."
-sys_prompt_end:
-.encoding "screencode_mixed"  // restore default
-
-// Number of chunks needed (compile-time constant)
-.const PROMPT_LEN = sys_prompt_end - sys_prompt
-.const PROMPT_CHUNKS = (PROMPT_LEN + CHUNK_MAX - 1) / CHUNK_MAX
+// System prompt constants — text is in loader.asm, copied to SOUL_BASE at boot.
+#import "soul.asm"
 
 // ---------------------------------------------------------
 // build_next_prompt_chunk — build one SYSTEM frame in send_buf
@@ -2172,10 +2139,10 @@ ssp_mul:
         bne ssp_mul
 ssp_addr:
         clc
-        lda #<sys_prompt
+        lda #<SOUL_BASE
         adc ssp_off_lo
         sta ssp_src_lo
-        lda #>sys_prompt
+        lda #>SOUL_BASE
         adc ssp_off_hi
         sta ssp_src_hi
 

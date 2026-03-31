@@ -8,6 +8,7 @@
 // receive buffer only needs 128 bytes. Outbound chunks are kept smaller,
 // so the transmit buffer only needs to hold one encoded ~70-byte frame.
 .const AGENT_BASE      = $C000  // agent code starts here
+.const SOUL_BASE       = $A000  // system prompt in BASIC ROM shadow RAM
 .const AGENT_RXBUF     = $CF3A  // 128-byte receive / tool payload buffer
 .const AGENT_TXBUF     = $CFBA  // 70-byte transmit / inject buffer
 .const AGENT_RXBUF_LEN = 128
