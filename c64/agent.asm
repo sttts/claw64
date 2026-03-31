@@ -778,32 +778,13 @@ service_outbound:
         jmp so_send_check
 
 so_build_next:
-        // ACKs go through the paced send_buf path to avoid tight CHROUT
-        // bursts that magnify TX jitter under RX NMI load.
-        // During retransmit wait, send_buf holds the reliable frame —
-        // defer ACK until the wait resolves.
+        // Build ACK into ack_buf (separate from send_buf) so it can
+        // be sent even during retransmit wait.
         lda ack_pending
-        beq so_chk_ack_deferred2
-        lda tx_ack_wait
-        bne so_defer_ack
-        lda #0
-        sta ack_pending
-        jsr build_ack_frame
-        rts                     // return — let main loop drain before next frame
-so_defer_ack:
-        lda #1
-        sta ack_deferred
-        lda #0
-        sta ack_pending
-so_chk_ack_deferred2:
-        lda ack_deferred
         beq so_chk_ack_wait
-        lda tx_ack_wait
-        bne so_chk_ack_wait     // still waiting — keep deferred
         lda #0
-        sta ack_deferred
+        sta ack_pending
         jsr build_ack_frame
-        rts
 
 so_chk_ack_wait:
         // If waiting for ACK of a reliable outbound frame, check timeout.
@@ -876,12 +857,24 @@ so_chk_text:
         jmp so_send_check
 
 so_send_check:
+        // Drain ack_buf first (separate buffer, safe during retransmit wait).
+        lda ack_pos
+        cmp ack_total
+        beq so_send_main
+        tax
+        lda ack_buf,x
+        jsr so_chrout
+        bcs so_done
+        inc ack_pos
+        jmp so_send_check
+
+so_send_main:
         lda send_pos
         cmp send_total
         beq so_done
 
-        // Flush enough bytes per pass that short control frames like
-        // ACK/STATUS finish within a single sparse callback.
+        // Flush enough bytes per pass that short control frames
+        // finish within a single sparse callback.
         ldy #0
 so_send_loop:
         lda send_pos
@@ -889,38 +882,45 @@ so_send_loop:
         beq so_done
         cpy #16
         beq so_done
-
         tax
         lda send_buf,x
-        pha
-        lda LDTND
-        bne so_have_files
-        lda LAT
-        cmp #RS232_DEV
-        bne so_have_files
-        lda #1
-        sta LDTND
-so_have_files:
-        jsr CLRCHN
-        ldx #RS232_DEV
-        jsr CHKOUT
-        bcs so_send_fail
-        pla
-        jsr CHROUT
-        jsr CLRCHN
+        jsr so_chrout
+        bcs so_done
         inc send_pos
         iny
-        lda #0
-        sta busy_timer
-        sta dot_dir
         jmp so_send_loop
 
 so_done:
         rts
 
-so_send_fail:
+// so_chrout — send one byte via RS232 CHROUT with LDTND fix.
+// Input: A = byte to send. Returns: carry set on failure.
+so_chrout:
+        pha
+        lda LDTND
+        bne so_chr_ok
+        lda LAT
+        cmp #RS232_DEV
+        bne so_chr_ok
+        lda #1
+        sta LDTND
+so_chr_ok:
+        jsr CLRCHN
+        ldx #RS232_DEV
+        jsr CHKOUT
+        bcs so_chr_fail
+        pla
+        jsr CHROUT
+        jsr CLRCHN
+        lda #0
+        sta busy_timer
+        sta dot_dir
+        clc
+        rts
+so_chr_fail:
         pla
         jsr CLRCHN
+        sec
         rts
 
 build_reliable_outbound:
@@ -1102,29 +1102,29 @@ bsf_done:
         sta send_pos
         rts
 
-// build_ack_frame — build a 5-byte ACK frame in send_buf for paced send.
-// ACK is sent through the normal service_outbound drip path to avoid
-// tight CHROUT bursts that magnify TX timing jitter under RX NMI load.
+// build_ack_frame — build a 5-byte ACK frame in ack_buf for paced send.
+// Uses a dedicated buffer so ACKs can be sent even when send_buf holds
+// a reliable frame waiting for retransmit.
 build_ack_frame:
         lda #SYNC_BYTE
-        sta send_buf+0
+        sta ack_buf+0
         lda #FRAME_ACK
-        sta send_buf+1
+        sta ack_buf+1
         lda #1
-        sta send_buf+2
+        sta ack_buf+2
         lda rx_last_id
-        sta send_buf+3
+        sta ack_buf+3
 
         // checksum = type ^ length ^ id
-        lda send_buf+1
-        eor send_buf+2
-        eor send_buf+3
-        sta send_buf+4
+        lda ack_buf+1
+        eor ack_buf+2
+        eor ack_buf+3
+        sta ack_buf+4
 
         lda #5
-        sta send_total
+        sta ack_total
         lda #0
-        sta send_pos
+        sta ack_pos
         rts
 
 // inject_tx_id — prepend a 1-byte transport ID to the frame in send_buf.
@@ -2021,6 +2021,9 @@ text_len:     .byte 0   // saved TEXT body length for the USER frame
 exec_pending: .byte 0   // 1 = verified EXEC payload waiting for EXECGO
 exec_len:      .byte 0  // saved EXEC payload length while waiting for EXECGO
 ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
+ack_pos:      .byte 0   // current position in ack_buf during paced send
+ack_total:    .byte 0   // total bytes in ack_buf (0 or 5)
+ack_buf:      .fill 5, 0 // dedicated 5-byte buffer for ACK frames
 state_pending: .byte 0  // 1 = send FRAME_STATUS payload from state_src_*
 state_len:    .byte 0   // payload length for FRAME_STATUS
 state_src_lo: .byte 0   // source pointer low byte for FRAME_STATUS text
@@ -2033,7 +2036,6 @@ tx_ack_wait:  .byte 0   // 1 = waiting for ACK of current outbound frame
 tx_ack_id:    .byte 0   // transport id of the frame we're waiting ACK for
 tx_ack_timer: .byte 0   // frames since last send (for retransmit timeout)
 tx_retries:   .byte 0   // retry count for current outbound frame
-ack_deferred: .byte 0   // 1 = send ACK after current TEXT processing is drained
 prompt_sent:  .byte 0   // 1 = prompt already sent
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
