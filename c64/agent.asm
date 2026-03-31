@@ -17,6 +17,7 @@
 //   4. Scrape screen, send RESULT frame back to bridge
 
 #import "defs.asm"
+#import "soul.asm"
 
 // Set the program counter to $C000 — all code assembles starting here.
 // This is above BASIC RAM ($0800-$9FFF) so the agent doesn't interfere
@@ -122,10 +123,9 @@ cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         lda cur_page
         bne cp                  // loop until page wraps $FF→$00
 
-        // KERNAL done ($E0-$FF). Now copy BASIC ($A5-$CF).
-        // Skip $A0-$A4: those pages hold the system prompt copied by
-        // the loader to SOUL_BASE ($A000). Skip $D0-$DF (I/O).
-        lda #$A5
+        // KERNAL done ($E0-$FF). Now copy BASIC ($A0-$CF).
+        // Skip $D0-$DF (I/O) — KERNAL is already in RAM so NMI is safe.
+        lda #$A0
         sta cur_page
 cp_bas: lda cur_page
         sta cp_bas_rd+2         // patch read address high byte
@@ -324,7 +324,25 @@ spr_cp0:lda spr_claw1,x
         lda #%00110101
         sta PROCPORT
 
-        // System prompt was copied to SOUL_BASE ($A000) by the loader.
+        // ---- Copy system prompt to SOUL_BASE ($A000) ----
+        // Source address was passed by the loader in $FB/$FC.
+        // Must happen AFTER the BASIC ROM copy (which overwrites $A000).
+        // $01=$35 so writes to $A000 go to RAM under BASIC ROM.
+        lda #<SOUL_BASE
+        sta $FD
+        lda #>SOUL_BASE
+        sta $FE
+        ldy #0
+        ldx #((PROMPT_LEN + 255) / 256) // pages to copy (rounded up)
+soul_cp:
+        lda ($FB),y
+        sta ($FD),y
+        iny
+        bne soul_cp
+        inc $FC
+        inc $FE
+        dex
+        bne soul_cp
 
         // ---- Initialize agent state variables ----
         lda #0

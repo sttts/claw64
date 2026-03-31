@@ -45,17 +45,12 @@ ldr_cp: lda (LDR_SRC_LO),y
         dex
         bne ldr_cp
 
-        // Copy system prompt to $A000 (BASIC ROM shadow).
-        // Must happen before agent install switches to $01=$35.
-        // Copy 5 pages (1280 bytes) to cover prompts up to ~1.2K.
-        ldx #0
-soul_ldr:
-        .for (var i = 0; i < 5; i++) {
-        lda soul_data+(i*256),x
-        sta SOUL_BASE+(i*256),x
-        }
-        inx
-        bne soul_ldr
+        // Pass soul_data address to agent via $FB/$FC.
+        // Agent copies it to SOUL_BASE after ROM copy is done.
+        lda #<soul_data
+        sta $FB
+        lda #>soul_data
+        sta $FC
 
         jsr wait_logo
         jsr hide_logo
