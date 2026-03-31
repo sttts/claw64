@@ -292,32 +292,61 @@ Binary frame protocol over RS232 at 2400 baud.
   by VICE RS232.)
 - **TYPE** (1 byte): Frame type, printable ASCII (avoids PETSCII
   control char issues with KERNAL CHROUT).
-- **LENGTH** (1 byte): Payload length, 0-255.
-- **PAYLOAD** (0-255 bytes): Plain text, no escaping.
-- **CHK** (1 byte): XOR of TYPE, LENGTH, and all PAYLOAD bytes.
+- **LENGTH** (1 byte): Payload length, 0-255. Includes the transport ID
+  byte for reliable frames.
+- **PAYLOAD** (0-255 bytes): For reliable frames, the first byte is a
+  1-byte transport ID. The remaining bytes are the frame body.
+- **CHK** (1 byte): XOR of TYPE, LENGTH, and all PAYLOAD bytes
+  (including the transport ID).
 
-Total overhead: 4 bytes per frame.
+Total overhead: 4 bytes per frame (+ 1 byte transport ID for reliable frames).
+
+#### Reliable transport
+
+All bridge→C64 and C64→bridge frames (except ACK and HEARTBEAT) carry a
+1-byte transport ID as the first payload byte. IDs start at 1 (0 = unset)
+and increment modulo 256, skipping 0 on wraparound. IDs are scoped per
+direction — each side maintains its own counter.
+
+**ACK by ID**: when a reliable frame is accepted, the receiver sends
+`ACK <id>` (1-byte payload). ACK frames are unreliable — no ID of their
+own, no ACK-of-ACK, no retry.
+
+**Duplicate suppression**: each side remembers the last accepted (id, type)
+pair. If the same pair arrives again, re-ACK without replaying side effects.
+
+**Retransmission**: if no ACK is received within a timeout, the sender
+retransmits the same frame with the same ID. Retry budget: 3 attempts.
+Bridge retries at 500ms, 1s, 2s intervals. C64 retries at ~4s intervals.
+
+**Completion drain**: while BASIC is in RUNNING state, the bridge holds
+TEXT frames until RESULT or STATUS READY arrives. This avoids bidirectional
+overlap during the sensitive completion window.
 
 #### Frame types
 
 ```
-Bridge -> C64:
+Bridge -> C64 (reliable, carry transport ID):
   'M' (0x4D)  MSG         User's chat message text
   'E' (0x45)  EXEC        Tool call: BASIC command to execute
   'G' (0x47)  EXECGO      Verified EXEC may now run
+  'J' (0x4A)  EXECNOW     Execute payload immediately
   'K' (0x4B)  STOP        Request RUN/STOP on the current BASIC program
   'P' (0x50)  SCREENSHOT  Request current visible text screen
   'Q' (0x51)  STATUS      Ask whether BASIC is RUNNING or READY
   'T' (0x54)  TEXT        LLM's final text response (forward to user)
 
-C64 -> Bridge:
-  'A' (0x41)  ACK         Verified delivery echo for bridge->C64 frames
+C64 -> Bridge (reliable, carry transport ID):
   'R' (0x52)  RESULT      Tool result: EXEC output or screenshot text
   'U' (0x55)  STATUS      BASIC state text, e.g. RUNNING or READY.
+  'Y' (0x59)  USER        User-visible text emitted by the C64
   'L' (0x4C)  LLM_MSG     Message to append to LLM conversation
   'X' (0x58)  ERROR       Tool call timed out or failed
   'S' (0x53)  SYSTEM      System prompt chunk (sent on first MSG)
-  'H' (0x48)  HEARTBEAT   Agent is alive (reserved)
+
+C64 -> Bridge (unreliable, no transport ID):
+  'A' (0x41)  ACK         Transport ID echo for verified delivery
+  'H' (0x48)  HEARTBEAT   Agent is alive (fire-and-forget)
 ```
 
 #### System prompt (the C64's soul)
@@ -353,8 +382,8 @@ Used by: TEXT, SYSTEM, RESULT.
   through the C64. TEXT responses go LLM→bridge→C64→bridge→user.
 - All frame payloads are displayed char-by-char as bytes arrive on or
   leave the wire. Never buffer and print a complete message at once.
-- Bridge→C64 command frames use explicit ACK verification. `EXEC` is
-  verified before the empty `EXECGO` trigger is sent.
+- All reliable frames use ID-based ACK verification. `EXEC` is
+  verified before `EXECGO` is sent. Both carry transport IDs.
 - Tool calls are strictly sequential. The bridge executes at most one tool
   call from a single model response, appends that tool result to history,
   and only then asks the model for the next step.
@@ -367,8 +396,11 @@ Used by: TEXT, SYSTEM, RESULT.
   remain valid, but a second `exec` is rejected with `STATUS "BUSY"`.
 
 - Bad checksum: frame dropped silently, parser resets to SYNC hunt.
-- The bridge retries EXEC frames on timeout (3 attempts, 500ms/1s/2s).
-- 5 consecutive timeouts = lost connection.
+- Reliable frames are retransmitted on ACK timeout. Bridge: 3 attempts
+  at 500ms/1s/2s. C64: 3 attempts at ~4s intervals.
+- Duplicate frames are re-ACKed without replaying side effects.
+- Bridge defers ACKs to C64 until the wire is quiet (after frame decode)
+  to reduce bidirectional RS232 overlap corruption.
 
 #### Protocol flow
 
