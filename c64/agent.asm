@@ -221,10 +221,9 @@ cp_bas_wr:
         //
         // Sprite data pointers: last bytes of screen RAM ($07F8-$07FF)
         // Each pointer × 64 = address of 63-byte sprite data.
-        // We put sprite data at $0340 (ptr $0D) and $0380 (ptr $0E).
-        // These are in the cassette buffer area (safe to use).
-
-        // Sprite data is copied to $0340/$0380/$03C0 by the loader.
+        // Loader copies sprite data to cassette buffer area:
+        //   $0340 (ptr $0D) = claw open, $03C0 (ptr $0F) = claw closed,
+        //   $0380 (ptr $0E) = dots.
 
         // Set sprite pointers
         lda #$0D                // $0340 / 64 = $0D (claw frame 1)
@@ -2127,6 +2126,7 @@ progline_pending: .byte 0 // 1 = current EXEC starts with a BASIC line number
 
 // color cycle for busy lobster: red → orange → yellow → white
 busy_colors:  .byte 2, 8, 7, 1
+claw_timer:   .byte 30  // frames between claw animation toggles
 
 // System prompt constants — text is in loader.asm, copied to SOUL_BASE at boot.
 #import "soul.asm"
@@ -2375,6 +2375,24 @@ irq_right:
 irq_set:
         sta $D002
 irq_done:
+        // ---- Lobster claw animation (only when busy) ----
+        // Toggle sprite pointer between frame 1 ($0D) and frame 2 ($0F)
+        // every ~30 frames for a pinching animation.
+        lda busy
+        beq irq_claw_idle
+        dec claw_timer
+        bne irq_exit
+        lda #30
+        sta claw_timer
+        lda $07F8
+        eor #$02                // toggle $0D ↔ $0F
+        sta $07F8
+        jmp (old_irq_lo)
+
+        // Not busy — reset to claws-open frame
+irq_claw_idle:
+        lda #$0D
+        sta $07F8
 irq_exit:
         jmp (old_irq_lo)
 
