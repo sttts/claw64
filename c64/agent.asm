@@ -807,6 +807,24 @@ service_outbound:
         jmp so_send_check
 
 so_build_next:
+        // TEXT is special: its ACK is deferred until the corresponding
+        // USER frame has fully drained through the KERNAL RS232 TX ring.
+        // ACK must mean the bridge may continue sending dependent frames.
+        lda deferred_ack
+        beq so_chk_ack_wait
+        lda text_pending
+        bne so_chk_ack_wait
+        lda send_pos
+        cmp send_total
+        bne so_chk_ack_wait
+        lda RODBE
+        cmp RODBS
+        bne so_chk_ack_wait
+        lda #0
+        sta deferred_ack
+        lda #1
+        sta ack_pending
+
 so_chk_ack_wait:
         // If waiting for ACK of a reliable outbound frame, check timeout.
         // Timer is incremented by the IRQ handler at 60Hz.
@@ -1737,6 +1755,13 @@ fd_reliable:
         bne fd_accept
 
         // Duplicate — re-ACK without replaying side effects.
+        lda frame_sub
+        cmp #FRAME_TEXT
+        bne fd_dup_ack
+        lda deferred_ack
+        beq fd_dup_ack
+        rts
+fd_dup_ack:
         lda #1
         sta ack_pending
         rts
@@ -1747,6 +1772,8 @@ fd_accept:
         sta rx_last_id
         lda frame_sub
         sta rx_last_type
+        cmp #FRAME_TEXT
+        beq fd_dispatch
         lda #1
         sta ack_pending
         jmp fd_dispatch
@@ -1788,17 +1815,25 @@ fd_not_msg:
         lda agent_state
         cmp #AG_WAITING
         beq fd_text_busy
+        lda #0
+        sta tx_ack_wait         // TEXT proves the bridge already received our prior LLM frame
         lda frame_len
         sta text_len            // save TEXT body length for USER frame
         lda #0
         sta busy                // conversation done — stop border animation
         lda #1
+        sta deferred_ack        // ACK only after the USER frame is safely handed off
+        lda #1
         sta text_pending        // forward text to user via drip-send
         rts
 
 fd_text_running:
+        lda #0
+        sta tx_ack_wait
         lda frame_len
         sta text_len
+        lda #1
+        sta deferred_ack
         lda #1
         sta text_pending
         rts
@@ -2064,6 +2099,7 @@ text_len:     .byte 0   // saved TEXT body length for the USER frame
 exec_pending: .byte 0   // 1 = verified EXEC payload waiting for EXECGO
 exec_len:      .byte 0  // saved EXEC payload length while waiting for EXECGO
 ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
+deferred_ack: .byte 0   // 1 = current inbound TEXT is not safe to ACK yet
 ack_pos:      .byte 0   // current position in ack_buf during paced send
 ack_total:    .byte 0   // total bytes in ack_buf (0 or 5)
 ack_buf:      .fill 5, 0 // dedicated 5-byte buffer for ACK frames

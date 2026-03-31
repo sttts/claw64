@@ -39,8 +39,6 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 	}
 	fmt.Fprintln(f)
 
-	syms, _ := loadMonitorSymbols(symPath)
-
 	conn, err := net.DialTimeout("tcp", monitorAddr, 2*time.Second)
 	if err != nil {
 		return filename, fmt.Errorf("connect monitor: %w", err)
@@ -53,17 +51,8 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 		"m 00f7 00fa",
 		"m 0400 07ff",
 		"m cf00 cfff",
+		"m cbcc cc05",
 		"m c000 cfff",
-	}
-	if start, end, ok := symbolRange(syms,
-		"parse_state", "frame_sub", "frame_len", "frame_chk", "rx_index",
-		"agent_state", "inj_pos", "inj_len", "ready_timer", "send_pos",
-		"send_total", "llm_pending", "prompt_pending", "result_pending",
-		"text_pending", "prompt_sent", "scan_start", "busy", "old_irq_lo",
-		"old_irq_hi", "anim_timer", "dot_dir", "busy_timer", "color_timer",
-		"claw_timer",
-	); ok {
-		commands = append(commands, fmt.Sprintf("m %04x %04x", start, end))
 	}
 
 	for _, cmd := range commands {

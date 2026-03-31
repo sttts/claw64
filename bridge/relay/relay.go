@@ -48,7 +48,8 @@ type Relay struct {
 	rxLastID        byte   // last accepted C64→bridge transport ID
 	rxLastType      byte   // frame type of last accepted C64→bridge frame
 	pendingAcks     []byte // queued ACK IDs to send during next quiet window
-	pendingFrames   []serial.Frame
+	pendingFrames   []queuedFrame
+	lateAckIDs      map[byte]struct{}
 	recvOnce        sync.Once
 	recvCh          chan recvResult
 }
@@ -58,11 +59,20 @@ type recvResult struct {
 	err   error
 }
 
+type queuedFrame struct {
+	frame    serial.Frame
+	accepted bool
+}
+
 const textChunkMax = 62
 // ackTimeout is the universal timeout for any reliable frame ACK.
 // With ID-based delivery, ACKs always arrive promptly regardless of
 // whether BASIC is running — the C64 ACKs at transport level.
 const ackTimeout = 3 * time.Second
+
+// textAckTimeout allows one inbound TEXT chunk, the resulting USER frame,
+// and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
+const textAckTimeout = 7 * time.Second
 
 // c64FrameTimeout is how long the bridge waits for any C64 frame
 // before triggering a stall dump.
@@ -149,10 +159,13 @@ func logStream(format string, args ...any) {
 // that prints payload bytes char-by-char as they are sent.
 func (r *Relay) SetupProgress() {
 	r.Link.OnSendByte = func(typeName string, payload []byte, idx int) {
+		if typeName == "ACK" {
+			return
+		}
+		if sendLogSkipsTransportID(typeName) && idx == 0 {
+			return
+		}
 		if idx == -1 {
-			if typeName == "ACK" {
-				return
-			}
 			fmt.Fprint(os.Stderr, termstyle.Dim("\n"))
 			return
 		}
@@ -163,12 +176,11 @@ func (r *Relay) SetupProgress() {
 		}
 	}
 
-	// receive callback: print header on first byte, then stream chars.
-	// Skip transport ID (first byte of reliable C64→bridge frames) and
-	// chunk headers so only semantic content streams to the terminal.
+	// Receive-side streaming is limited to SYSTEM chunks. Other semantic
+	// frames are logged only after full decode/unwrap so the logs reflect
+	// accepted frames rather than raw payload bytes seen before checksum
+	// validation and duplicate suppression.
 	r.Link.OnRecvByte = func(frameType byte, idx int, b byte) {
-		isReliable := serial.IsReliableC64(frameType)
-
 		if frameType == serial.FrameSystem {
 			if idx == 0 {
 				logStream("C64 → soul:  ")
@@ -183,43 +195,15 @@ func (r *Relay) SetupProgress() {
 			}
 			return
 		}
+	}
+}
 
-		if idx == 0 {
-			switch frameType {
-			case serial.FrameLLM:
-				logStream("C64 → LLM:   ")
-			case serial.FrameResult:
-				logStream("C64 → LLM:   RESULT ")
-			case serial.FrameStatus:
-				logStream("C64 → LLM:   STATUS ")
-			case serial.FrameUser:
-				logStream("C64 → USER:  ")
-			case serial.FrameAck:
-				// ACK payload is 1-byte id — print as number, not text.
-				logStream("C64 → bridge: ACK id=%d", b)
-				return
-			default:
-				logStream("C64 → ???:   %s ", serial.TypeName(frameType))
-			}
-		}
-
-		// Skip bytes that are transport/chunk overhead, not semantic text.
-		skip := 0
-		if isReliable {
-			skip = 1 // transport ID at position 0
-		}
-		if frameType == serial.FrameSystem || frameType == serial.FrameResult {
-			skip += 2 // chunk_index + total_chunks
-		}
-		if idx < skip {
-			return
-		}
-
-		if b == '\n' {
-			fmt.Fprint(os.Stderr, termstyle.Dim(`\n`))
-		} else {
-			fmt.Fprint(os.Stderr, termstyle.Dim(string(b)))
-		}
+func sendLogSkipsTransportID(typeName string) bool {
+	switch typeName {
+	case "MSG", "EXEC", "EXECGO", "EXECNOW", "STOP", "STATUS", "TEXT", "SCREENSHOT":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -263,7 +247,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			recvCancel = cancel
 		}
 
-		f, err := r.recvFromC64(recvCtx, len(r.textOutQueue) > 0)
+		f, accepted, err := r.recvFromC64(recvCtx, len(r.textOutQueue) > 0)
 		recvCancel()
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) && deliveredUserText {
@@ -274,14 +258,18 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 
 		// Strip transport ID from reliable C64→bridge frames, queue ACK,
 		// and suppress duplicate semantic processing.
-		if r.unwrapC64Frame(&f) {
-			continue
+		if !accepted {
+			if r.unwrapC64Frame(&f) {
+				continue
+			}
 		}
 
 		// Post-unwrap semantic log — clean payload after id strip.
-		// SYSTEM is logged by handleSystemFrame. LLM/STATUS/RESULT
-		// are logged by their handlers. Only USER needs explicit log
-		// since it goes directly to the chat frontend.
+		// SYSTEM is streamed during receive; the other frame types are
+		// logged only after full decode/unwrap.
+		if f.Type == serial.FrameLLM {
+			log.Printf("C64 → LLM:   %s", string(f.Payload))
+		}
 		if f.Type == serial.FrameUser {
 			log.Printf("     ← USER len=%d text=%q", len(f.Payload), truncate(string(f.Payload), 60))
 		}
@@ -375,6 +363,9 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 
 		case serial.FrameAck:
 			fmt.Fprintln(os.Stderr)
+			if ackID, ok := serial.ExtractAckID(f.Payload); ok && r.consumeLateAck(ackID) {
+				continue
+			}
 			log.Printf("C64 → bridge: unexpected ACK frame")
 			continue
 
@@ -390,15 +381,17 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 func (r *Relay) drainTrailingAfterUserText() {
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-		f, err := r.recvFromC64(ctx, false)
+		f, accepted, err := r.recvFromC64(ctx, false)
 		cancel()
 		if err != nil {
 			return
 		}
 
 		// Unwrap reliable C64→bridge frames (strip ID, queue ACK, dedup).
-		if r.unwrapC64Frame(&f) {
-			continue
+		if !accepted {
+			if r.unwrapC64Frame(&f) {
+				continue
+			}
 		}
 
 		switch f.Type {
@@ -411,7 +404,7 @@ func (r *Relay) drainTrailingAfterUserText() {
 			fmt.Fprintln(os.Stderr)
 			r.handleSystemFrame(f)
 		default:
-			r.pendingFrames = append(r.pendingFrames, f)
+			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f})
 			return
 		}
 	}
@@ -546,7 +539,6 @@ func (r *Relay) sendNextTextChunk(ctx context.Context) error {
 		}
 		r.textOutQueue = r.textOutQueue[len(chunk):]
 		r.textInFlight = append(r.textInFlight[:0], chunk...)
-		logStream("LLM → C64:  TEXT ")
 		if err := r.sendTextChunk(ctx, chunk); err != nil {
 			fmt.Fprintln(os.Stderr)
 			return fmt.Errorf("send TEXT: %w", err)
@@ -562,12 +554,15 @@ func (r *Relay) sendTextChunk(ctx context.Context, chunk []byte) error {
 	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
 
 	for attempt := 0; attempt < len(retryDelays); attempt++ {
+		r.settlePendingAcks()
+		logStream("LLM → C64:  TEXT ")
+
 		if err := r.Link.Send(frame); err != nil {
 			return err
 		}
 
-		waitCtx, cancel := context.WithTimeout(ctx, ackTimeout)
-		_, err := r.waitForAckID(waitCtx, id)
+		waitCtx, cancel := context.WithTimeout(ctx, textAckTimeout)
+		_, err := r.waitForAckID(waitCtx, id, true)
 		cancel()
 		if err == nil {
 			return nil
@@ -609,11 +604,13 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
 
 	for attempt := 0; attempt < len(retryDelays); attempt++ {
+		r.settlePendingAcks()
+
 		if err := r.Link.Send(frame); err != nil {
 			return err
 		}
 
-		_, err := r.waitForAckID(ctx, id)
+		_, err := r.waitForAckID(ctx, id, false)
 		if err == nil {
 			return nil
 		}
@@ -631,6 +628,8 @@ func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, 
 	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
 
 	for attempt := 0; attempt < len(retryDelays); attempt++ {
+		r.settlePendingAcks()
+
 		if err := r.Link.Send(frame); err != nil {
 			return err
 		}
@@ -673,6 +672,56 @@ func (r *Relay) queueAckToC64(id byte) {
 	r.pendingAcks = append(r.pendingAcks, id)
 }
 
+func (r *Relay) rememberLateAck(id byte) {
+	if r.lateAckIDs == nil {
+		r.lateAckIDs = make(map[byte]struct{})
+	}
+	r.lateAckIDs[id] = struct{}{}
+}
+
+func (r *Relay) consumeLateAck(id byte) bool {
+	if _, ok := r.lateAckIDs[id]; !ok {
+		return false
+	}
+	delete(r.lateAckIDs, id)
+	return true
+}
+
+func (r *Relay) ackReliableFrameNow(f serial.Frame) {
+	if !serial.IsReliableC64(f.Type) {
+		return
+	}
+	id, _, ok := serial.StripID(f.Payload)
+	if !ok {
+		return
+	}
+	r.queueAckToC64(id)
+	r.flushPendingAcks()
+}
+
+func (r *Relay) acceptC64Frame(f *serial.Frame, ackNow bool) bool {
+	if !serial.IsReliableC64(f.Type) {
+		return false
+	}
+	id, body, ok := serial.StripID(f.Payload)
+	if !ok {
+		log.Printf("     ← %s: empty payload, cannot strip id", serial.TypeName(f.Type))
+		return false
+	}
+	if ackNow {
+		r.queueAckToC64(id)
+		r.flushPendingAcks()
+	}
+	f.Payload = body
+	if id == r.rxLastID && f.Type == r.rxLastType {
+		log.Printf("     ← dedup %s id=%d (same as last)", serial.TypeName(f.Type), id)
+		return true
+	}
+	r.rxLastID = id
+	r.rxLastType = f.Type
+	return false
+}
+
 // flushPendingAcks sends all queued ACK frames to the C64.
 // Called in recvFromC64 before the select (quiet window) and before
 // bridge→C64 sends to prevent ACK deadlocks.
@@ -687,31 +736,26 @@ func (r *Relay) flushPendingAcks() {
 	r.pendingAcks = r.pendingAcks[:0]
 }
 
+// settlePendingAcks flushes queued bridge ACKs before sending a new
+// bridge→C64 frame and gives the C64 a short window to consume them.
+func (r *Relay) settlePendingAcks() {
+	if len(r.pendingAcks) == 0 {
+		return
+	}
+	time.Sleep(10 * time.Millisecond)
+	r.flushPendingAcks()
+	time.Sleep(150 * time.Millisecond)
+}
+
 // unwrapC64Frame strips the transport ID from a reliable C64→bridge frame,
 // queues ACK, and returns (frame with stripped payload, isDuplicate).
 func (r *Relay) unwrapC64Frame(f *serial.Frame) bool {
-	if !serial.IsReliableC64(f.Type) {
-		return false
-	}
-	id, body, ok := serial.StripID(f.Payload)
-	if !ok {
-		log.Printf("     ← %s: empty payload, cannot strip id", serial.TypeName(f.Type))
-		return false
-	}
-	f.Payload = body
-	r.queueAckToC64(id)
-	if id == r.rxLastID && f.Type == r.rxLastType {
-		log.Printf("     ← dedup %s id=%d (same as last)", serial.TypeName(f.Type), id)
-		return true
-	}
-	r.rxLastID = id
-	r.rxLastType = f.Type
-	return false
+	return r.acceptC64Frame(f, true)
 }
 
-func (r *Relay) waitForAckID(ctx context.Context, id byte) (serial.Frame, error) {
+func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) (serial.Frame, error) {
 	for {
-		f, err := r.recvFromC64(ctx, false)
+		f, err := r.recvFromSocketOnly(ctx, waitingTextAck)
 		if err != nil {
 			return serial.Frame{}, err
 		}
@@ -726,8 +770,10 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte) (serial.Frame, error)
 			continue
 		case serial.FrameUser, serial.FrameSystem, serial.FrameStatus,
 			serial.FrameResult, serial.FrameError, serial.FrameLLM:
-			// Queue raw — event loop unwraps when dequeued.
-			r.pendingFrames = append(r.pendingFrames, f)
+			if r.acceptC64Frame(&f, true) {
+				continue
+			}
+			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
 			continue
 		case serial.FrameHeartbeat:
 			continue
@@ -742,7 +788,7 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 	defer cancel()
 
 	for {
-		f, err := r.recvFromC64(waitCtx, false)
+		f, err := r.recvFromSocketOnly(waitCtx, false)
 		if err != nil {
 			return false, err
 		}
@@ -754,17 +800,25 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			if ok && ackID == id {
 				return true, nil
 			}
+			if ok && r.consumeLateAck(ackID) {
+				continue
+			}
 			log.Printf("     ! ACK id mismatch: got %d want %d", ackID, id)
 			continue
 		case serial.FrameUser, serial.FrameSystem:
-			// Queue raw — event loop unwraps when dequeued.
+			if r.acceptC64Frame(&f, true) {
+				continue
+			}
 			fmt.Fprintln(os.Stderr)
-			r.pendingFrames = append(r.pendingFrames, f)
+			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
 		case serial.FrameHeartbeat:
 			continue
 		case serial.FrameStatus, serial.FrameResult, serial.FrameError, serial.FrameLLM:
-			// Queue raw — event loop unwraps when dequeued.
-			r.pendingFrames = append(r.pendingFrames, f)
+			if r.acceptC64Frame(&f, true) {
+				continue
+			}
+			r.rememberLateAck(id)
+			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
 			return true, nil
 		default:
 			return false, fmt.Errorf("unexpected frame while waiting for ACK: %s", serial.TypeName(f.Type))
@@ -795,14 +849,8 @@ func (r *Relay) ensureRecvLoop() {
 	})
 }
 
-func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Frame, error) {
+func (r *Relay) recvFromSocketOnly(ctx context.Context, waitingTextAck bool) (serial.Frame, error) {
 	r.ensureRecvLoop()
-
-	if len(r.pendingFrames) > 0 {
-		f := r.pendingFrames[0]
-		r.pendingFrames = r.pendingFrames[1:]
-		return f, nil
-	}
 	stallDumped := false
 
 	for {
@@ -819,14 +867,12 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 			timeout = time.After(c64FrameTimeout)
 		}
 
-		// Flush queued ACKs after a brief quiet window. The C64's
-		// KERNAL TX ring may still be draining the last byte's stop
-		// bit. Wait 10ms to let it finish before injecting RX traffic
-		// that would cause NMI jitter on the TX path.
-		if len(r.pendingAcks) > 0 {
-			time.Sleep(10 * time.Millisecond)
+		if !waitingTextAck {
+			if len(r.pendingAcks) > 0 {
+				time.Sleep(10 * time.Millisecond)
+			}
+			r.flushPendingAcks()
 		}
-		r.flushPendingAcks()
 
 		select {
 		case <-ctx.Done():
@@ -841,6 +887,79 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 				continue
 			}
 			return res.frame, nil
+
+		case <-timeout:
+			if stallDumped {
+				continue
+			}
+			if waitingTextAck {
+				r.dumpTextAckStall()
+				stallDumped = true
+				continue
+			}
+			if r.waitingTool {
+				r.dumpToolAckStall()
+				stallDumped = true
+				continue
+			}
+			r.dumpC64SilenceStall()
+			stallDumped = true
+		}
+	}
+}
+
+func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Frame, bool, error) {
+	r.ensureRecvLoop()
+
+	if len(r.pendingFrames) > 0 {
+		q := r.pendingFrames[0]
+		r.pendingFrames = r.pendingFrames[1:]
+		return q.frame, q.accepted, nil
+	}
+	stallDumped := false
+
+	for {
+		if ctx.Err() != nil {
+			return serial.Frame{}, false, ctx.Err()
+		}
+
+		var timeout <-chan time.Time
+		if waitingTextAck || r.waitingTool {
+			timeout = time.After(ackTimeout)
+		} else if r.basicRunning {
+			timeout = nil
+		} else {
+			timeout = time.After(c64FrameTimeout)
+		}
+
+		// While waiting for a bridge→C64 TEXT ACK, do not inject queued
+		// bridge ACKs back into the C64. At that point the C64 is expected
+		// to emit USER and then its own ACK; extra inbound bytes would
+		// reintroduce RX-side jitter during the sensitive TX window.
+		if !waitingTextAck {
+			// Flush queued ACKs after a brief quiet window. The C64's
+			// KERNAL TX ring may still be draining the last byte's stop
+			// bit. Wait 10ms to let it finish before injecting RX traffic
+			// that would cause NMI jitter on the TX path.
+			if len(r.pendingAcks) > 0 {
+				time.Sleep(10 * time.Millisecond)
+			}
+			r.flushPendingAcks()
+		}
+
+		select {
+		case <-ctx.Done():
+			return serial.Frame{}, false, ctx.Err()
+
+		case res := <-r.recvCh:
+			if res.err != nil {
+				return serial.Frame{}, false, fmt.Errorf("recv: %w", res.err)
+			}
+			stallDumped = false
+			if res.frame.Type == serial.FrameHeartbeat {
+				continue
+			}
+			return res.frame, false, nil
 
 		case <-timeout:
 			if stallDumped {
