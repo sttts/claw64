@@ -345,13 +345,15 @@ soul_data:
         .byte $0A
         .text "Each numbered line returns STORED, not output."
         .byte $0A
-        .text "After all lines are stored, exec RUN as a separate call."
-        .byte $0A
         .text "NEVER put RUN on the same exec as a numbered line."
         .byte $0A
         .text "NEVER combine multiple numbered lines in one exec."
         .byte $0A
-        .text "Use LIST to verify the program before running."
+        .text "After all lines stored, LIST to verify."
+        .byte $0A
+        .text "Only exec RUN if the user asked to run it."
+        .byte $0A
+        .text "If user says 'write', store and LIST only. Do NOT run."
         .byte $0A
         .byte $0A
         .text "RUNNING PROGRAMS:"
@@ -359,6 +361,8 @@ soul_data:
         .text "If status says RUNNING, do NOT exec."
         .byte $0A
         .text "Use status to check, stop to halt, screen to look."
+        .byte $0A
+        .text "When RUNNING changes to READY, call screen to see output."
         .byte $0A
         .byte $0A
         .text "EXEC RULES:"
