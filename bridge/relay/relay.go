@@ -59,11 +59,13 @@ type recvResult struct {
 }
 
 const textChunkMax = 62
-const textAckTimeout = 15 * time.Second
-const textAckWhileRunningTimeout = 2 * time.Minute
-const toolAckTimeout = 12 * time.Second
-const toolAckWhileRunningTimeout = 2 * time.Minute
-const execAckTimeout = 2 * time.Minute
+// ackTimeout is the universal timeout for any reliable frame ACK.
+// With ID-based delivery, ACKs always arrive promptly regardless of
+// whether BASIC is running — the C64 ACKs at transport level.
+const ackTimeout = 3 * time.Second
+
+// c64FrameTimeout is how long the bridge waits for any C64 frame
+// before triggering a stall dump.
 const c64FrameTimeout = 8 * time.Second
 
 var llmTools = []llm.Tool{
@@ -512,30 +514,24 @@ func (r *Relay) sendTextChunk(ctx context.Context, chunk []byte) error {
 	id := r.allocID()
 	frame := serial.Frame{Type: serial.FrameText, Payload: serial.PrependID(id, chunk)}
 	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
-	attempts := len(retryDelays)
-	timeout := textAckTimeout
-	if r.basicRunning {
-		attempts = 1
-		timeout = textAckWhileRunningTimeout
-	}
 
-	for attempt := 0; attempt < attempts; attempt++ {
+	for attempt := 0; attempt < len(retryDelays); attempt++ {
 		if err := r.Link.Send(frame); err != nil {
 			return err
 		}
 
-		waitCtx, cancel := context.WithTimeout(ctx, timeout)
+		waitCtx, cancel := context.WithTimeout(ctx, ackTimeout)
 		_, err := r.waitForAckID(waitCtx, id)
 		cancel()
 		if err == nil {
 			return nil
 		}
 		log.Printf("     ! TEXT ack attempt %d failed: %v", attempt+1, err)
-		if attempt+1 < attempts {
+		if attempt+1 < len(retryDelays) {
 			time.Sleep(retryDelays[attempt])
 		}
 	}
-	return fmt.Errorf("TEXT delivery could not be verified after %d attempt(s)", attempts)
+	return fmt.Errorf("TEXT delivery could not be verified after %d attempt(s)", len(retryDelays))
 }
 
 func (r *Relay) startToolWait() {
@@ -587,22 +583,16 @@ func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, 
 	id := r.allocID()
 	frame.Payload = serial.PrependID(id, frame.Payload)
 	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
-	attempts := len(retryDelays)
-	timeout := r.currentToolAckTimeout(name)
-	if r.basicRunning {
-		attempts = 1
-		timeout = toolAckWhileRunningTimeout
-	}
 
-	for attempt := 0; attempt < attempts; attempt++ {
+	for attempt := 0; attempt < len(retryDelays); attempt++ {
 		if err := r.Link.Send(frame); err != nil {
 			return err
 		}
 
-		ok, err := r.waitForAckOrSemantic(ctx, id, timeout)
+		ok, err := r.waitForAckOrSemantic(ctx, id, ackTimeout)
 		if err != nil {
 			log.Printf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
-			if attempt+1 < attempts {
+			if attempt+1 < len(retryDelays) {
 				time.Sleep(retryDelays[attempt])
 			}
 			continue
@@ -611,11 +601,11 @@ func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, 
 			return nil
 		}
 		log.Printf("     ! %s ack attempt %d failed: no confirmation", name, attempt+1)
-		if attempt+1 < attempts {
+		if attempt+1 < len(retryDelays) {
 			time.Sleep(retryDelays[attempt])
 		}
 	}
-	return fmt.Errorf("%s delivery could not be verified after %d attempt(s)", name, attempts)
+	return fmt.Errorf("%s delivery could not be verified after %d attempt(s)", name, len(retryDelays))
 }
 
 // allocID returns the next transport ID and advances the counter.
@@ -699,13 +689,6 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte) (serial.Frame, error)
 			return serial.Frame{}, fmt.Errorf("unexpected frame while waiting for ACK: %s", serial.TypeName(f.Type))
 		}
 	}
-}
-
-func (r *Relay) currentToolAckTimeout(name string) time.Duration {
-	if name == "EXEC" || r.lastToolName == "exec" {
-		return execAckTimeout
-	}
-	return toolAckTimeout
 }
 
 func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.Duration) (bool, error) {
@@ -792,14 +775,8 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 		}
 
 		var timeout <-chan time.Time
-		if waitingTextAck {
-			timeout = time.After(textAckTimeout)
-		} else if r.waitingTool {
-			if r.basicRunning {
-				timeout = time.After(toolAckWhileRunningTimeout)
-			} else {
-				timeout = time.After(r.currentToolAckTimeout(r.lastToolName))
-			}
+		if waitingTextAck || r.waitingTool {
+			timeout = time.After(ackTimeout)
 		} else if r.basicRunning {
 			timeout = nil
 		} else {
