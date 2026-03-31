@@ -235,10 +235,10 @@ func ExtractAckID(payload []byte) (byte, bool) {
 }
 
 // IsReliableC64 returns true for C64→bridge frame types that carry a transport ID.
-// SYSTEM and HEARTBEAT are fire-and-forget (no ID, no ACK, no retry).
+// HEARTBEAT is the only fire-and-forget C64→bridge frame.
 func IsReliableC64(t byte) bool {
 	switch t {
-	case FrameUser, FrameStatus, FrameResult, FrameError, FrameLLM:
+	case FrameUser, FrameStatus, FrameResult, FrameError, FrameLLM, FrameSystem:
 		return true
 	}
 	return false
