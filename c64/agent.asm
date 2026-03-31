@@ -804,14 +804,6 @@ service_outbound:
         jmp so_send_check
 
 so_build_next:
-        // Build ACK into ack_buf (separate from send_buf) so it can
-        // be sent even during retransmit wait.
-        lda ack_pending
-        beq so_chk_ack_wait
-        lda #0
-        sta ack_pending
-        jsr build_ack_frame
-
 so_chk_ack_wait:
         // If waiting for ACK of a reliable outbound frame, check timeout.
         // Timer is incremented by the IRQ handler at 60Hz.
@@ -883,7 +875,20 @@ so_chk_text:
         jmp so_send_check
 
 so_send_check:
-        // Drain ack_buf first (separate buffer, safe during retransmit wait).
+        // Build ACK into ack_buf immediately when pending.
+        // Must happen here (not in so_build_next) so ACKs are built
+        // even when send_buf is busy draining a reliable frame.
+        lda ack_pending
+        beq so_drain_ack
+        lda ack_pos
+        cmp ack_total
+        bne so_drain_ack         // ack_buf still draining previous ACK
+        lda #0
+        sta ack_pending
+        jsr build_ack_frame
+
+so_drain_ack:
+        // Drain ack_buf (separate buffer, safe during retransmit wait).
         lda ack_pos
         cmp ack_total
         beq so_send_main
