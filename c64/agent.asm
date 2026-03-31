@@ -2084,9 +2084,6 @@ tx_ack_id:    .byte 0   // transport id of the frame we're waiting ACK for
 tx_ack_timer: .byte 0   // frames since last send (for retransmit timeout)
 tx_retries:   .byte 0   // retry count for current outbound frame
 prompt_sent:  .byte 0   // 1 = prompt already sent
-prompt_len_lo: .byte 0  // soul length low byte (patched by loader)
-prompt_len_hi: .byte 0  // soul length high byte (patched by loader)
-prompt_chunks: .byte 0  // ceil(len/CHUNK_MAX) (patched by loader)
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
@@ -2103,6 +2100,11 @@ running_reported: .byte 0 // 1 once "RUNNING" was already reported
 basic_running: .byte 0  // 1 = BASIC program still running after detach
 stop_requested: .byte 0 // 1 = ask ISTOP to trigger RUN/STOP
 progline_pending: .byte 0 // 1 = current EXEC starts with a BASIC line number
+
+// Loader-patched values — OUTSIDE init ranges so they survive zeroing.
+prompt_len_lo: .byte 0  // soul length low byte (patched by loader)
+prompt_len_hi: .byte 0  // soul length high byte (patched by loader)
+prompt_chunks: .byte 0  // ceil(len/CHUNK_MAX) (patched by loader)
 
 // color cycle for busy lobster: red → orange → yellow → white
 busy_colors:  .byte 2, 8, 7, 1
