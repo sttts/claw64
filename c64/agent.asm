@@ -807,13 +807,11 @@ so_chk_ack_deferred2:
 
 so_chk_ack_wait:
         // If waiting for ACK of a reliable outbound frame, check timeout.
+        // Timer is incremented by the IRQ handler at 60Hz.
         lda tx_ack_wait
         beq so_ack_clear
-
-        // Increment timer and check for retransmit timeout (~3s at 60Hz).
-        inc tx_ack_timer
         lda tx_ack_timer
-        cmp #250                // ~4 seconds at 60Hz before retransmit
+        cmp #240                // 4 seconds at 60Hz before retransmit
         bcc so_send_check       // still waiting — don't build next frame
 
         // Timeout — check retry budget (3 retries max).
@@ -1023,6 +1021,10 @@ irq_mark_running:
         sta busy
 
 irq_tx_check:
+        // Advance retransmit timer at 60Hz (not main loop speed).
+        lda tx_ack_wait
+        beq irq_done_io
+        inc tx_ack_timer
 irq_done_io:
         rts
 
