@@ -351,10 +351,13 @@ C64 -> Bridge (unreliable, no transport ID):
 
 #### System prompt (the C64's soul)
 
-The system prompt lives on the C64 — it IS the agent. On the first user
-message, the C64 sends it to the bridge as multiple SYSTEM frames before
-the LLM_MSG (max 120 bytes text per frame, drip-sent one byte per main
-loop iteration). Each frame's payload: `[chunk_index, total_chunks, text...]`.
+The system prompt lives on the C64 — it IS the agent. The text is stored
+in the loader PRG and copied to `$A000` (BASIC ROM shadow RAM) at boot.
+This area is safe with BASIC programs loaded (`$0800-$9FFF`) and survives
+reattach. On the first user message, the C64 sends it to the bridge as
+multiple reliable SYSTEM frames before the LLM_MSG (max 60 bytes text per
+frame, with transport ID and chunk header). Each frame's payload:
+`[id, chunk_index, total_chunks, text...]`.
 The bridge assembles the chunks and uses the result as the LLM system prompt.
 
 All payloads are plain text. No JSON, no quoting, no escaping.

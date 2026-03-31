@@ -18,7 +18,8 @@ c64/
   defs.asm                   — Constants, zero-page allocations, memory map
   agent.asm                  — Main: IRQ hook, state machine, entry point,
                                frame parser, keystroke injection, screen scrape,
-                               system prompt, PETSCII→ASCII conversion
+                               PETSCII→ASCII conversion
+  soul.asm                   — System prompt constants (CHUNK_MAX, PROMPT_LEN)
   serial.asm                 — KERNAL RS232 init, byte read/write
   loader.asm                 — BASIC stub + copy routine + logo display
   assets/                    — Logo bitmap data (Koala format)
@@ -134,7 +135,7 @@ Module: `github.com/sttts/claw64`
 - RS232 at 2400 baud via C64 userport. VICE maps to TCP localhost:25232.
 - Bridge sends bytes with paced writes to satisfy VICE/KERNAL RS232 timing.
 - KERNAL patches: $E5D1 (agent reentry), $E8EA (scroll tracking for scan_start).
-- System prompt (the C64's soul) stored in agent.asm, sent as SYSTEM frames on first MSG.
+- System prompt (the C64's soul) stored in loader.asm, copied to $A000 (BASIC ROM shadow) at boot, sent as reliable SYSTEM frames on first MSG.
 - TEXT responses flow LLM→bridge→C64→bridge→user (no bridge shortcuts).
 - Tool calls are sequential. Execute at most one tool call per model response,
   then feed its result back into history before asking the model again.
@@ -145,7 +146,7 @@ Module: `github.com/sttts/claw64`
 - After changing C64 code or buffer addresses, check the KickAssembler memory map and symbol output before committing.
 - Chat channels: Slack, WhatsApp, Signal, stdin.
 - LLM backends: Anthropic API, OpenAI-compatible, Ollama.
-- Bridge invariant: the bridge is a pure router. The only soul/system prompt lives in `c64/agent.asm`.
+- Bridge invariant: the bridge is a pure router. The only soul/system prompt lives in `c64/loader.asm` (text) and `c64/soul.asm` (constants).
 - The bridge must not define, preload, append, rewrite, or "help" with prompt logic.
 - The bridge must not contain fallback personality, tool-usage instructions, output-style instructions, or safety/behavior rules.
 - If behavior needs to change, change the C64 soul, not the bridge.
