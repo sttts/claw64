@@ -778,21 +778,31 @@ service_outbound:
         jmp so_send_check
 
 so_build_next:
-        // Send ACKs when the wire is clear (send_pos == send_total).
-        // Return after sending so the main loop drains serial first,
-        // creating a gap between ACK and the next reliable frame.
+        // ACKs go through the paced send_buf path to avoid tight CHROUT
+        // bursts that magnify TX jitter under RX NMI load.
+        // During retransmit wait, send_buf holds the reliable frame —
+        // defer ACK until the wait resolves.
         lda ack_pending
         beq so_chk_ack_deferred2
+        lda tx_ack_wait
+        bne so_defer_ack
         lda #0
         sta ack_pending
-        jsr send_ack_now
+        jsr build_ack_frame
         rts                     // return — let main loop drain before next frame
+so_defer_ack:
+        lda #1
+        sta ack_deferred
+        lda #0
+        sta ack_pending
 so_chk_ack_deferred2:
         lda ack_deferred
         beq so_chk_ack_wait
+        lda tx_ack_wait
+        bne so_chk_ack_wait     // still waiting — keep deferred
         lda #0
         sta ack_deferred
-        jsr send_ack_now
+        jsr build_ack_frame
         rts
 
 so_chk_ack_wait:
@@ -857,7 +867,7 @@ so_chk_llm:
 
 so_chk_text:
         lda text_pending
-        beq so_chk_ack_deferred
+        beq so_send_check
         lda #0
         sta text_pending
         lda text_len
@@ -866,8 +876,6 @@ so_chk_text:
         jsr build_rxbuf_frame
         jsr inject_tx_id
         jmp so_send_check
-
-so_chk_ack_deferred:
 
 so_send_check:
         lda send_pos
@@ -1092,26 +1100,29 @@ bsf_done:
         sta send_pos
         rts
 
-// send_ack_now — send a 5-byte ACK frame immediately via CHROUT.
-// Does not use send_buf, so it's safe even during retransmit wait.
-send_ack_now:
-        ldx #RS232_DEV
-        jsr CHKOUT
+// build_ack_frame — build a 5-byte ACK frame in send_buf for paced send.
+// ACK is sent through the normal service_outbound drip path to avoid
+// tight CHROUT bursts that magnify TX timing jitter under RX NMI load.
+build_ack_frame:
         lda #SYNC_BYTE
-        jsr CHROUT
+        sta send_buf+0
         lda #FRAME_ACK
-        jsr CHROUT
+        sta send_buf+1
         lda #1
-        jsr CHROUT
+        sta send_buf+2
         lda rx_last_id
-        jsr CHROUT
+        sta send_buf+3
 
         // checksum = type ^ length ^ id
-        lda #FRAME_ACK
-        eor #1
-        eor rx_last_id
-        jsr CHROUT
-        jsr CLRCHN
+        lda send_buf+1
+        eor send_buf+2
+        eor send_buf+3
+        sta send_buf+4
+
+        lda #5
+        sta send_total
+        lda #0
+        sta send_pos
         rts
 
 // inject_tx_id — prepend a 1-byte transport ID to the frame in send_buf.

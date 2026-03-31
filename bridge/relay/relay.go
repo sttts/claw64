@@ -783,8 +783,13 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 			timeout = time.After(c64FrameTimeout)
 		}
 
-		// Flush queued ACKs before waiting — the C64 just finished
-		// sending a frame, so the wire is momentarily quiet.
+		// Flush queued ACKs after a brief quiet window. The C64's
+		// KERNAL TX ring may still be draining the last byte's stop
+		// bit. Wait 10ms to let it finish before injecting RX traffic
+		// that would cause NMI jitter on the TX path.
+		if len(r.pendingAcks) > 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
 		r.flushPendingAcks()
 
 		select {
