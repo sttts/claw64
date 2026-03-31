@@ -678,9 +678,7 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte) (serial.Frame, error)
 			continue
 		case serial.FrameUser, serial.FrameSystem, serial.FrameStatus,
 			serial.FrameResult, serial.FrameError, serial.FrameLLM:
-			if r.unwrapC64Frame(&f) {
-				continue
-			}
+			// Queue raw — event loop unwraps when dequeued.
 			r.pendingFrames = append(r.pendingFrames, f)
 			continue
 		case serial.FrameHeartbeat:
@@ -710,24 +708,14 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			}
 			log.Printf("     ! ACK id mismatch: got %d want %d", ackID, id)
 			continue
-		case serial.FrameUser:
+		case serial.FrameUser, serial.FrameSystem:
+			// Queue raw — event loop unwraps when dequeued.
 			fmt.Fprintln(os.Stderr)
-			if r.unwrapC64Frame(&f) {
-				continue
-			}
-			r.textBuf = append(r.textBuf, f.Payload...)
-		case serial.FrameSystem:
-			fmt.Fprintln(os.Stderr)
-			if r.unwrapC64Frame(&f) {
-				continue
-			}
-			r.handleSystemFrame(f)
+			r.pendingFrames = append(r.pendingFrames, f)
 		case serial.FrameHeartbeat:
 			continue
 		case serial.FrameStatus, serial.FrameResult, serial.FrameError, serial.FrameLLM:
-			if r.unwrapC64Frame(&f) {
-				continue
-			}
+			// Queue raw — event loop unwraps when dequeued.
 			r.pendingFrames = append(r.pendingFrames, f)
 			return true, nil
 		default:
