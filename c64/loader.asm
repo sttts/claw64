@@ -45,16 +45,16 @@ ldr_cp: lda (LDR_SRC_LO),y
         dex
         bne ldr_cp
 
+        jsr wait_logo
+        jsr hide_logo
+        cli
+
         // Pass soul_data address to agent via $FB/$FC.
-        // Agent copies it to SOUL_BASE after ROM copy is done.
+        // Must be AFTER logo routines which use $FB/$FC as scratch.
         lda #<soul_data
         sta $FB
         lda #>soul_data
         sta $FC
-
-        jsr wait_logo
-        jsr hide_logo
-        cli
 
         // Jump to agent install at $C000
         jmp AGENT_BASE
