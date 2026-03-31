@@ -830,7 +830,6 @@ so_chk_prompt:
         lda prompt_pending
         beq so_chk_result
         jsr build_next_prompt_chunk
-        jsr inject_tx_id
         jmp so_send_check
 
 so_chk_result:

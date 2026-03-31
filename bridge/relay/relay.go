@@ -520,7 +520,6 @@ func (r *Relay) sendTextChunk(ctx context.Context, chunk []byte) error {
 	}
 
 	for attempt := 0; attempt < attempts; attempt++ {
-		r.flushPendingAcks()
 		if err := r.Link.Send(frame); err != nil {
 			return err
 		}
@@ -568,7 +567,6 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
 
 	for attempt := 0; attempt < len(retryDelays); attempt++ {
-		r.flushPendingAcks()
 		if err := r.Link.Send(frame); err != nil {
 			return err
 		}
@@ -597,7 +595,6 @@ func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, 
 	}
 
 	for attempt := 0; attempt < attempts; attempt++ {
-		r.flushPendingAcks()
 		if err := r.Link.Send(frame); err != nil {
 			return err
 		}
