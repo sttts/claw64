@@ -27,8 +27,6 @@ const (
 	// Bridge → C64
 	FrameMsg        byte = 0x4D // 'M' — user's chat message
 	FrameExec       byte = 0x45 // 'E' — tool call: BASIC command to execute
-	FrameExecGo     byte = 0x47 // 'G' — bridge confirmed EXEC may run
-	FrameExecNow    byte = 0x4A // 'J' — execute payload immediately (carries transport ID)
 	FrameStop       byte = 0x4B // 'K' — request RUN/STOP for current BASIC program
 	FrameStatusReq  byte = 0x51 // 'Q' — ask whether BASIC is running or READY
 	FrameText       byte = 0x54 // 'T' — LLM's final answer, forward to user
@@ -134,7 +132,7 @@ readType:
 	chk ^= length
 
 	// sanity check: reject unrecognized frame types
-	if typ != FrameMsg && typ != FrameExec && typ != FrameExecGo && typ != FrameExecNow && typ != FrameStop &&
+	if typ != FrameMsg && typ != FrameExec && typ != FrameStop &&
 		typ != FrameStatusReq && typ != FrameText && typ != FrameScreenshot &&
 		typ != FrameAck && typ != FrameResult && typ != FrameStatus && typ != FrameUser &&
 		typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat &&
@@ -184,10 +182,6 @@ func TypeName(t byte) string {
 		return "MSG"
 	case FrameExec:
 		return "EXEC"
-	case FrameExecGo:
-		return "EXECGO"
-	case FrameExecNow:
-		return "EXECNOW"
 	case FrameStop:
 		return "STOP"
 	case FrameStatusReq:

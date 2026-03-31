@@ -33,8 +33,6 @@ Bridge -> C64:
 
 - `MSG`
 - `EXEC`
-- `EXECGO`
-- `EXECNOW`
 - `STOP`
 - `STATUS`
 - `TEXT`
@@ -188,12 +186,21 @@ Rules:
 `ACK` also does not mean "the ultimate user-visible outcome is finished".
 Example:
 
-- `EXEC RUN` may be ACKed once the command is safely adopted by the C64
+- `EXEC RUN` may be ACKed once the C64 has reached the first semantic
+  completion boundary for that command
 - `STATUS RUNNING` / `RESULT ... READY.` still report later semantic progress
 
 For `TEXT`, this means ACK must not be sent until the C64 has absorbed the
 chunk into durable outbound/user state so the next TEXT chunk cannot clobber
 the first one.
+
+For `EXEC`, this means:
+
+- the C64 first copies the command into C64-owned execution storage
+- if BASIC is already running, the request is rejected immediately with
+  `STATUS BUSY`, and `ACK` may be sent once that rejection is committed
+- otherwise `ACK` is delayed until the first actual semantic outcome is known:
+  `STATUS STORED`, `STATUS RUNNING`, `RESULT ...`, `STATUS READY`, or `ERROR`
 
 This is intentionally smaller than a general ordered-replay protocol. The goal
 is not perfect transport theory. The goal is a tiny reliable control channel
@@ -295,7 +302,7 @@ to the next dependent reliable frame.
 
 Examples:
 
-- do not send `EXECGO` before `EXEC` is ACKed
+- do not send the next dependent bridge request before `EXEC` is ACKed
 - do not send next `TEXT` chunk before current reliable `TEXT` chunk is ACKed
   and that ACK must mean the previous chunk is safe against clobber
 
@@ -307,8 +314,6 @@ It helps to classify frames explicitly.
 
 - `MSG`
 - `EXEC`
-- `EXECGO`
-- `EXECNOW`
 - `STOP`
 - `STATUS`
 - `TEXT`
@@ -563,8 +568,6 @@ Phase 1 reliable bridge -> C64 frames:
 
 - `MSG`
 - `EXEC`
-- `EXECGO`
-- `EXECNOW`
 - `STOP`
 - `STATUS`
 - `TEXT`

@@ -313,10 +313,10 @@ sender may continue, the receiver sends `ACK <id>` (1-byte payload). ACK
 frames are unreliable — no ID of their own, no ACK-of-ACK, no retry.
 
 `ACK` does **not** mean the ultimate long-running work is finished. For
-example, `EXEC("RUN")` may be ACKed once the command has been safely adopted
-by the C64, even though BASIC is still running. But `ACK` **does** mean the
-receiver has committed enough state that the next dependent frame may arrive
-safely.
+example, `EXEC("RUN")` may be ACKed once the C64 has reached the first
+semantic completion boundary for that command, even though BASIC is still
+running. But `ACK` **does** mean the receiver has committed enough state
+that the next dependent frame may arrive safely.
 
 **Duplicate suppression**: each side remembers the last accepted (id, type)
 pair. If the same pair arrives again, re-ACK without replaying side effects.
@@ -335,8 +335,6 @@ overlap during the sensitive completion window.
 Bridge -> C64 (reliable, carry transport ID):
   'M' (0x4D)  MSG         User's chat message text
   'E' (0x45)  EXEC        Tool call: BASIC command to execute
-  'G' (0x47)  EXECGO      Verified EXEC may now run
-  'J' (0x4A)  EXECNOW     Execute payload immediately
   'K' (0x4B)  STOP        Request RUN/STOP on the current BASIC program
   'P' (0x50)  SCREENSHOT  Request current visible text screen
   'Q' (0x51)  STATUS      Ask whether BASIC is RUNNING or READY
@@ -392,8 +390,7 @@ Used by: TEXT, SYSTEM, RESULT.
   through the C64. TEXT responses go LLM→bridge→C64→bridge→user.
 - All frame payloads are displayed char-by-char as bytes arrive on or
   leave the wire. Never buffer and print a complete message at once.
-- All reliable frames use ID-based ACK verification. `EXEC` is
-  verified before `EXECGO` is sent. Both carry transport IDs.
+- All reliable frames use ID-based ACK verification.
 - Tool calls are strictly sequential. The bridge executes at most one tool
   call from a single model response, appends that tool result to history,
   and only then asks the model for the next step.
@@ -402,8 +399,13 @@ Used by: TEXT, SYSTEM, RESULT.
 
 - If a BASIC program keeps running too long, the C64 may detach from the
   wait and return `STATUS "RUNNING"` instead of stalling the whole tool turn.
+- `EXEC` is the only execution request. On receipt, the C64 copies the
+  command into C64-owned execution storage before acting on it.
 - While BASIC is running, `screen`, `status`, and `stop`
-  remain valid, but a second `exec` is rejected with `STATUS "BUSY"`.
+  remain valid, but any new `EXEC` is rejected with `STATUS "BUSY"`.
+- While BASIC is not running, `EXEC` is ACKed only at the first semantic
+  completion boundary: `STATUS "STORED"`, `STATUS "RUNNING"`,
+  `RESULT ...`, `STATUS "READY"`, or `ERROR`.
 
 - Bad checksum: frame dropped silently, parser resets to SYNC hunt.
 - Reliable frames are retransmitted on ACK timeout. Bridge: 3 attempts

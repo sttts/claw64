@@ -458,7 +458,7 @@ bl_fill:
         cpx inj_len
         beq bl_fill_done        // all chars stuffed
 
-        lda AGENT_RXBUF+1,x
+        lda exec_buf,x
         cmp #$61
         bcc bl_nofold
         cmp #$7B
@@ -523,6 +523,7 @@ bl_wait_store:
         sta progline_pending
         sta busy
         jsr queue_state_stored
+        jsr commit_exec_ack_if_pending
         lda #AG_IDLE
         sta agent_state
         jmp bloop
@@ -606,6 +607,7 @@ bl_ready_result:
         lda result_pending
         bne bl_ready_skip       // already sending result chunks
         jsr prepare_result_chunks
+        jsr commit_exec_ack_if_pending
 bl_ready_skip:
         lda #AG_IDLE
         sta agent_state
@@ -628,6 +630,7 @@ bl_wait_not_ready:
         // have hung or produced unexpected output. Send an error frame
         // so the bridge knows the command failed.
         jsr send_error          // send ERROR frame with zero-length payload
+        jsr commit_exec_ack_if_pending
         lda #AG_IDLE
         sta agent_state
         lda #0
@@ -779,6 +782,7 @@ sr_tick_ok:
         bcc sr_done
 sr_report:
         jsr queue_state_running
+        jsr commit_exec_ack_if_pending
         lda #1
         sta running_reported
         sta basic_running
@@ -799,14 +803,17 @@ service_outbound:
 
 so_build_next:
         // TEXT is special: its ACK is deferred until the corresponding
-        // USER frame has fully drained through the KERNAL RS232 TX ring.
-        // ACK must mean the bridge may continue sending dependent frames.
+        // USER frame has fully drained through the KERNAL RS232 TX ring
+        // and the bridge has transport-ACKed that USER frame. ACK must
+        // mean the bridge may continue sending dependent frames.
         lda deferred_ack
         beq so_chk_ack_wait
         lda text_pending
         bne so_chk_ack_wait
         lda send_pos
         cmp send_total
+        bne so_chk_ack_wait
+        lda tx_ack_wait
         bne so_chk_ack_wait
         lda RODBE
         cmp RODBS
@@ -1765,6 +1772,8 @@ fd_accept:
         sta rx_last_type
         cmp #FRAME_TEXT
         beq fd_dispatch
+        cmp #FRAME_EXEC
+        beq fd_dispatch
         lda #1
         sta ack_pending
         jmp fd_dispatch
@@ -1893,30 +1902,6 @@ fd_not_status:
         rts
 
 fd_not_stop:
-        // ---- Check for EXECGO frame ($47 = 'G') ----
-        cmp #FRAME_EXECGO       // bridge confirmed verified EXEC may run
-        bne fd_not_execgo
-        lda exec_pending
-        beq fd_done
-        jmp fd_exec_start
-
-fd_not_execgo:
-        // ---- Check for EXECNOW frame ($4A = 'J') ----
-        cmp #FRAME_EXECNOW
-        bne fd_not_execnow
-
-        lda basic_running
-        bne fd_exec_busy
-        lda agent_state
-        cmp #AG_WAITING
-        beq fd_exec_busy
-
-        lda frame_len
-        sta exec_len
-        jsr detect_program_line
-        jmp fd_exec_start
-
-fd_not_execnow:
         // ---- Check for EXEC frame ($45 = 'E') ----
         cmp #FRAME_EXEC         // is it an EXEC frame (BASIC command to execute)?
         bne fd_done             // no → unknown frame type, ignore
@@ -1928,16 +1913,19 @@ fd_not_execnow:
         cmp #AG_WAITING
         beq fd_exec_busy
 
-        // Keep the verified command in AGENT_RXBUF and wait for EXECGO.
+        // Copy the command into C64-owned storage before acting on it.
         lda frame_len
         sta exec_len
+        jsr copy_exec_from_rxbuf
         jsr detect_program_line
         lda #1
-        sta exec_pending
-        rts
+        sta exec_ack_pending
+        jmp fd_exec_start
 
 fd_exec_busy:
         jsr queue_state_busy
+        lda #1
+        sta ack_pending
 
 fd_done:
         rts
@@ -1953,7 +1941,7 @@ fd_exec_start:
 
         ldx exec_len
         lda #$0D                // RETURN key
-        sta AGENT_RXBUF+1,x     // append after last command char (body starts at +1)
+        sta exec_buf,x          // append after last command char
         inx
         stx inj_len             // injection length = command + RETURN
         lda #0
@@ -1961,7 +1949,6 @@ fd_exec_start:
         lda #AG_INJECTING
         sta agent_state
         lda #0
-        sta exec_pending
         sta running_ticks_lo
         sta running_ticks_hi
         sta running_reported
@@ -1973,7 +1960,7 @@ detect_program_line:
 dpl_skip_spaces:
         cpx frame_len
         beq dpl_no
-        lda AGENT_RXBUF+1,x
+        lda exec_buf,x
         cmp #' '
         bne dpl_check_digit
         inx
@@ -1991,6 +1978,28 @@ dpl_check_digit:
 dpl_no:
         lda #0
         sta progline_pending
+        rts
+
+copy_exec_from_rxbuf:
+        ldx #0
+cef_loop:
+        cpx exec_len
+        beq cef_done
+        lda AGENT_RXBUF+1,x
+        sta exec_buf,x
+        inx
+        jmp cef_loop
+cef_done:
+        rts
+
+commit_exec_ack_if_pending:
+        lda exec_ack_pending
+        beq ceap_done
+        lda #0
+        sta exec_ack_pending
+        lda #1
+        sta ack_pending
+ceap_done:
         rts
 
 // ---------------------------------------------------------
@@ -2087,8 +2096,8 @@ prompt_pending: .byte 0 // 1 = system prompt chunks still need sending
 result_pending: .byte 0 // 1 = RESULT chunks still need sending
 text_pending: .byte 0   // 1 = forward TEXT to user via drip-send
 text_len:     .byte 0   // saved TEXT body length for the USER frame
-exec_pending: .byte 0   // 1 = verified EXEC payload waiting for EXECGO
-exec_len:      .byte 0  // saved EXEC payload length while waiting for EXECGO
+exec_len:      .byte 0  // saved EXEC payload length in exec_buf
+exec_ack_pending: .byte 0 // 1 = delay EXEC ACK until first semantic boundary
 ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
 deferred_ack: .byte 0   // 1 = current inbound TEXT is not safe to ACK yet
 ack_pos:      .byte 0   // current position in ack_buf during paced send
@@ -2123,6 +2132,7 @@ running_reported: .byte 0 // 1 once "RUNNING" was already reported
 basic_running: .byte 0  // 1 = BASIC program still running after detach
 stop_requested: .byte 0 // 1 = ask ISTOP to trigger RUN/STOP
 progline_pending: .byte 0 // 1 = current EXEC starts with a BASIC line number
+exec_buf:     .fill 128, 0 // durable command storage for single EXEC path
 
 // color cycle for busy lobster: red → orange → yellow → white
 busy_colors:  .byte 2, 8, 7, 1

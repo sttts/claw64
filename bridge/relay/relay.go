@@ -155,6 +155,18 @@ func logStream(format string, args ...any) {
 	fmt.Fprint(os.Stderr, termstyle.Dim(fmt.Sprintf("%s %s", ts, msg)))
 }
 
+func logWarnf(format string, args ...any) {
+	ts := time.Now().Format("2006/01/02 15:04:05")
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintln(os.Stderr, termstyle.Warn(fmt.Sprintf("%s %s", ts, msg)))
+}
+
+func logErrorf(format string, args ...any) {
+	ts := time.Now().Format("2006/01/02 15:04:05")
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintln(os.Stderr, termstyle.Error(fmt.Sprintf("%s %s", ts, msg)))
+}
+
 // SetupProgress installs a send-progress callback on the serial link
 // that prints payload bytes char-by-char as they are sent.
 func (r *Relay) SetupProgress() {
@@ -200,7 +212,7 @@ func (r *Relay) SetupProgress() {
 
 func sendLogSkipsTransportID(typeName string) bool {
 	switch typeName {
-	case "MSG", "EXEC", "EXECGO", "EXECNOW", "STOP", "STATUS", "TEXT", "SCREENSHOT":
+	case "MSG", "EXEC", "STOP", "STATUS", "TEXT", "SCREENSHOT":
 		return true
 	default:
 		return false
@@ -320,6 +332,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 				r.completionDrain = false
 				r.basicRunning = false
 			}
+
 			log.Printf("C64 → LLM:   STATUS %s", status)
 			r.appendToolResult(userID, "[C64 BASIC status]: "+status)
 			if err := r.callAndDispatch(ctx, userID); err != nil {
@@ -366,7 +379,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			if ackID, ok := serial.ExtractAckID(f.Payload); ok && r.consumeLateAck(ackID) {
 				continue
 			}
-			log.Printf("C64 → bridge: unexpected ACK frame")
+			logWarnf("C64 → bridge: unexpected ACK frame")
 			continue
 
 		case serial.FrameHeartbeat:
@@ -469,7 +482,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 			cmd = cmd[:127]
 		}
 		logStream("LLM → C64:  EXEC ")
-		if err := r.sendExecVerified(ctx, []byte(cmd)); err != nil {
+		if err := r.sendExec(ctx, []byte(cmd)); err != nil {
 			return fmt.Errorf("send EXEC: %w", err)
 		}
 
@@ -567,7 +580,7 @@ func (r *Relay) sendTextChunk(ctx context.Context, chunk []byte) error {
 		if err == nil {
 			return nil
 		}
-		log.Printf("     ! TEXT ack attempt %d failed: %v", attempt+1, err)
+		logWarnf("     ! TEXT ack attempt %d failed: %v", attempt+1, err)
 		if attempt+1 < len(retryDelays) {
 			time.Sleep(retryDelays[attempt])
 		}
@@ -580,15 +593,9 @@ func (r *Relay) startToolWait() {
 	r.toolStartedAt = time.Now()
 }
 
-func (r *Relay) sendExecVerified(ctx context.Context, cmd []byte) error {
+func (r *Relay) sendExec(ctx context.Context, cmd []byte) error {
 	execFrame := serial.Frame{Type: serial.FrameExec, Payload: cmd}
-	if err := r.sendVerified(ctx, execFrame, "EXEC"); err != nil {
-		return err
-	}
-
-	// EXECGO also carries a transport ID for reliable delivery.
-	goFrame := serial.Frame{Type: serial.FrameExecGo}
-	if err := r.sendVerified(ctx, goFrame, "EXECGO"); err != nil {
+	if err := r.sendVerifiedOrSemantic(ctx, execFrame, "EXEC"); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr)
@@ -614,7 +621,7 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 		if err == nil {
 			return nil
 		}
-		log.Printf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
+		logWarnf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
 		if attempt+1 < len(retryDelays) {
 			time.Sleep(retryDelays[attempt])
 		}
@@ -626,7 +633,6 @@ func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, 
 	id := r.allocID()
 	frame.Payload = serial.PrependID(id, frame.Payload)
 	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
-
 	for attempt := 0; attempt < len(retryDelays); attempt++ {
 		r.settlePendingAcks()
 
@@ -636,7 +642,7 @@ func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, 
 
 		ok, err := r.waitForAckOrSemantic(ctx, id, ackTimeout)
 		if err != nil {
-			log.Printf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
+			logWarnf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
 			if attempt+1 < len(retryDelays) {
 				time.Sleep(retryDelays[attempt])
 			}
@@ -645,7 +651,7 @@ func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, 
 		if ok {
 			return nil
 		}
-		log.Printf("     ! %s ack attempt %d failed: no confirmation", name, attempt+1)
+		logWarnf("     ! %s ack attempt %d failed: no confirmation", name, attempt+1)
 		if attempt+1 < len(retryDelays) {
 			time.Sleep(retryDelays[attempt])
 		}
@@ -730,7 +736,7 @@ func (r *Relay) flushPendingAcks() {
 		log.Printf("     → C64: ACK id=%d", id)
 		ack := serial.Frame{Type: serial.FrameAck, Payload: []byte{id}}
 		if err := r.Link.Send(ack); err != nil {
-			log.Printf("     ! failed to send ACK(%d) to C64: %v", id, err)
+			logErrorf("     ! failed to send ACK(%d) to C64: %v", id, err)
 		}
 	}
 	r.pendingAcks = r.pendingAcks[:0]
@@ -766,7 +772,10 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) 
 			if ok && ackID == id {
 				return f, nil
 			}
-			log.Printf("     ! ACK id mismatch: got %d want %d", ackID, id)
+			if ok && r.consumeLateAck(ackID) {
+				continue
+			}
+			logWarnf("     ! ACK id mismatch: got %d want %d", ackID, id)
 			continue
 		case serial.FrameUser, serial.FrameSystem, serial.FrameStatus,
 			serial.FrameResult, serial.FrameError, serial.FrameLLM:
@@ -803,7 +812,7 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			if ok && r.consumeLateAck(ackID) {
 				continue
 			}
-			log.Printf("     ! ACK id mismatch: got %d want %d", ackID, id)
+			logWarnf("     ! ACK id mismatch: got %d want %d", ackID, id)
 			continue
 		case serial.FrameUser, serial.FrameSystem:
 			if r.acceptC64Frame(&f, true) {
@@ -859,7 +868,9 @@ func (r *Relay) recvFromSocketOnly(ctx context.Context, waitingTextAck bool) (se
 		}
 
 		var timeout <-chan time.Time
-		if waitingTextAck || r.waitingTool {
+		if waitingTextAck {
+			timeout = time.After(textAckTimeout)
+		} else if r.waitingTool {
 			timeout = time.After(ackTimeout)
 		} else if r.basicRunning {
 			timeout = nil
@@ -924,7 +935,9 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 		}
 
 		var timeout <-chan time.Time
-		if waitingTextAck || r.waitingTool {
+		if waitingTextAck {
+			timeout = time.After(textAckTimeout)
+		} else if r.waitingTool {
 			timeout = time.After(ackTimeout)
 		} else if r.basicRunning {
 			timeout = nil
@@ -990,10 +1003,10 @@ func (r *Relay) dumpTextAckStall() {
 		r.currentTextChunk(),
 	)
 	if err != nil {
-		log.Printf("     ! text ack stall; debug dump failed: %v", err)
+		logErrorf("     ! text ack stall; debug dump failed: %v", err)
 		return
 	}
-	log.Printf("     ! text ack stall; wrote debug dump to %s", filename)
+	logErrorf("     ! text ack stall; wrote debug dump to %s", filename)
 }
 
 func (r *Relay) currentTextChunk() []byte {
@@ -1017,10 +1030,10 @@ func (r *Relay) dumpToolAckStall() {
 		r.currentToolPayload(),
 	)
 	if err != nil {
-		log.Printf("     ! tool stall; debug dump failed: %v", err)
+		logErrorf("     ! tool stall; debug dump failed: %v", err)
 		return
 	}
-	log.Printf("     ! tool stall; wrote debug dump to %s", filename)
+	logErrorf("     ! tool stall; wrote debug dump to %s", filename)
 }
 
 func (r *Relay) currentToolPayload() []byte {
@@ -1039,8 +1052,8 @@ func (r *Relay) dumpC64SilenceStall() {
 		nil,
 	)
 	if err != nil {
-		log.Printf("     ! c64 silence stall; debug dump failed: %v", err)
+		logErrorf("     ! c64 silence stall; debug dump failed: %v", err)
 		return
 	}
-	log.Printf("     ! c64 silence stall; wrote debug dump to %s", filename)
+	logErrorf("     ! c64 silence stall; wrote debug dump to %s", filename)
 }
