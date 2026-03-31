@@ -612,7 +612,10 @@ bl_ready_found:
         jmp bloop
 
 bl_ready_result:
+        lda result_pending
+        bne bl_ready_skip       // already sending result chunks
         jsr prepare_result_chunks
+bl_ready_skip:
         lda #AG_IDLE
         sta agent_state
         jmp bloop
@@ -1008,6 +1011,8 @@ irq_rx_done:
         sta busy
         lda #AG_IDLE
         sta agent_state
+        lda result_pending
+        bne irq_tx_check
         jsr prepare_result_chunks
         jmp irq_tx_check
 
@@ -1028,6 +1033,8 @@ irq_wait_state:
         sta busy
         lda #AG_IDLE
         sta agent_state
+        lda result_pending
+        bne irq_tx_check
         jsr prepare_result_chunks
         jmp irq_tx_check
 
