@@ -153,10 +153,13 @@ func (r *Relay) SetupProgress() {
 		}
 	}
 
-	// receive callback: print header on first byte, then stream chars
+	// receive callback: print header on first byte, then stream chars.
+	// Skip transport ID (first byte of reliable C64→bridge frames) and
+	// chunk headers so only semantic content streams to the terminal.
 	r.Link.OnRecvByte = func(frameType byte, idx int, b byte) {
+		isReliable := serial.IsReliableC64(frameType)
+
 		if idx == 0 {
-			name := serial.TypeName(frameType)
 			switch frameType {
 			case serial.FrameLLM:
 				logStream("C64 → LLM:   ")
@@ -168,15 +171,27 @@ func (r *Relay) SetupProgress() {
 				logStream("C64 → USER:  ")
 			case serial.FrameSystem:
 				logStream("C64 → soul:  ")
+			case serial.FrameAck:
+				// ACK payload is 1-byte id — print as number, not text.
+				logStream("C64 → bridge: ACK id=%d", b)
+				return
 			default:
-				logStream("C64 → ???:   %s ", name)
+				logStream("C64 → ???:   %s ", serial.TypeName(frameType))
 			}
 		}
 
-		// SYSTEM and RESULT frames start with [chunk_index, total_chunks], not text.
-		if (frameType == serial.FrameSystem || frameType == serial.FrameResult) && idx < 2 {
+		// Skip bytes that are transport/chunk overhead, not semantic text.
+		skip := 0
+		if isReliable {
+			skip = 1 // transport ID at position 0
+		}
+		if frameType == serial.FrameSystem || frameType == serial.FrameResult {
+			skip += 2 // chunk_index + total_chunks
+		}
+		if idx < skip {
 			return
 		}
+
 		if b == '\n' {
 			fmt.Fprint(os.Stderr, termstyle.Dim(`\n`))
 		} else {
@@ -632,6 +647,7 @@ func (r *Relay) queueAckToC64(id byte) {
 // bridge→C64 sends to prevent ACK deadlocks.
 func (r *Relay) flushPendingAcks() {
 	for _, id := range r.pendingAcks {
+		log.Printf("     → C64: ACK id=%d", id)
 		ack := serial.Frame{Type: serial.FrameAck, Payload: []byte{id}}
 		if err := r.Link.Send(ack); err != nil {
 			log.Printf("     ! failed to send ACK(%d) to C64: %v", id, err)
@@ -648,12 +664,13 @@ func (r *Relay) unwrapC64Frame(f *serial.Frame) bool {
 	}
 	id, body, ok := serial.StripID(f.Payload)
 	if !ok {
+		log.Printf("     ← %s: empty payload, cannot strip id", serial.TypeName(f.Type))
 		return false
 	}
 	f.Payload = body
 	r.queueAckToC64(id)
 	if id == r.rxLastID && f.Type == r.rxLastType {
-		log.Printf("     ← duplicate %s id=%d, re-ACKed", serial.TypeName(f.Type), id)
+		log.Printf("     ← dedup %s id=%d (same as last)", serial.TypeName(f.Type), id)
 		return true
 	}
 	r.rxLastID = id
