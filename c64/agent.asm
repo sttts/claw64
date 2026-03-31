@@ -324,13 +324,32 @@ spr_cp0:lda spr_claw1,x
         lda #%00110101
         sta PROCPORT
 
-        // System prompt address was passed by the loader in $FB/$FC.
-        // Save to soul_ptr so build_next_prompt_chunk can read from it.
-        // No copy needed — the soul stays in the loader's data area.
-        lda $FB
-        sta soul_ptr
-        lda $FC
-        sta soul_ptr+1
+        // ---- Copy system prompt to SOUL_BASE ($9800) ----
+        // Source address was passed by the loader in $FB/$FC.
+        // Destination is top of BASIC RAM, protected by lowering MEMSIZ.
+        lda #<SOUL_BASE
+        sta $FD
+        lda #>SOUL_BASE
+        sta $FE
+        ldy #0
+        ldx #((PROMPT_LEN + 255) / 256)
+soul_cp:
+        lda ($FB),y
+        sta ($FD),y
+        iny
+        bne soul_cp
+        inc $FC
+        inc $FE
+        dex
+        bne soul_cp
+
+        // Lower MEMSIZ ($37/$38) to protect soul area from BASIC strings.
+        lda #<SOUL_BASE
+        sta $37
+        sta $33                 // string pointer top = MEMSIZ
+        lda #>SOUL_BASE
+        sta $38
+        sta $34
 
         // ---- Initialize agent state variables ----
         lda #0
@@ -2049,7 +2068,6 @@ tx_ack_id:    .byte 0   // transport id of the frame we're waiting ACK for
 tx_ack_timer: .byte 0   // frames since last send (for retransmit timeout)
 tx_retries:   .byte 0   // retry count for current outbound frame
 prompt_sent:  .byte 0   // 1 = prompt already sent
-soul_ptr:     .word 0   // address of system prompt text (set by loader via $FB/$FC)
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
@@ -2150,10 +2168,10 @@ ssp_mul:
         bne ssp_mul
 ssp_addr:
         clc
-        lda soul_ptr
+        lda #<SOUL_BASE
         adc ssp_off_lo
         sta ssp_src_lo
-        lda soul_ptr+1
+        lda #>SOUL_BASE
         adc ssp_off_hi
         sta ssp_src_hi
 
