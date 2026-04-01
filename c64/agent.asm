@@ -553,11 +553,13 @@ bl_wait_ready:
 
         // Increment timer — we don't check for READY. immediately because
         // BASIC needs time to process the command and print output.
-        // At 60 Hz (NTSC) or 50 Hz (PAL) main loop iterations,
-        // timer=60 gives roughly 1 second of delay before first check.
+        // At 60 Hz (NTSC) or 50 Hz (PAL) main loop iterations, a shorter
+        // delay keeps immediate direct-mode commands such as LIST within
+        // the normal 3s reliable-frame budget while still avoiding the
+        // stale READY. that was already on screen before injection.
         inc ready_timer         // count main loop iterations
         lda ready_timer
-        cmp #60                 // have we waited ~1 second?
+        cmp #20                 // have we waited long enough for screen update?
         bcc bl_wait_not_ready   // not yet → skip screen scanning
 
         // ---- Scan screen memory for "READY." ----
@@ -894,7 +896,22 @@ sr_done:
 
 // service_outbound — build/send queued frame bytes via the current RS232 path.
 // Shared by the normal editor loop and the running-program control path.
+//
+// The main loop, BSOUT hook, and IRQ path can all try to drain outbound
+// frames. Serialize access so shared send/ack state is advanced by only one
+// context at a time.
 service_outbound:
+        lda tx_service_busy
+        bne so_guard_done
+        lda #1
+        sta tx_service_busy
+        jsr service_outbound_inner
+        lda #0
+        sta tx_service_busy
+so_guard_done:
+        rts
+
+service_outbound_inner:
         lda send_pos
         cmp send_total
         beq so_build_next
@@ -1163,6 +1180,7 @@ irq_wait_state:
         sta agent_state
         lda result_pending
         bne irq_tx_check
+        jsr commit_exec_ack_if_pending
         jsr prepare_result_chunks
         jmp irq_tx_check
 
@@ -1195,7 +1213,7 @@ irq_mark_running:
 irq_tx_check:
         // ACK bytes must be able to leave immediately once committed,
         // even when there is no reliable outbound frame in flight.
-        jsr drain_ack_outbound
+        jsr service_outbound
 
         // Advance retransmit timer at 60Hz (not main loop speed).
         lda tx_ack_wait
@@ -2012,13 +2030,10 @@ fd_status_running:
         lda send_buf+1
         cmp #FRAME_STATUS
         bne fd_status_queue
-        lda send_pos
-        cmp send_total
-        bne fd_done
-        lda #0
-        sta send_pos
-        sta tx_ack_timer
-        rts
+        // A STATUS reply is already in flight. Do not restart it while
+        // the KERNAL TX ring may still be draining the current copy.
+        // Queue one fresh STATUS reply for after the bridge ACK arrives.
+        jmp fd_status_queue
 fd_status_queue:
         jsr queue_state_running
         rts
@@ -2246,6 +2261,7 @@ tx_ack_wait:  .byte 0   // 1 = waiting for ACK of current outbound frame
 tx_ack_id:    .byte 0   // transport id of the frame we're waiting ACK for
 tx_ack_timer: .byte 0   // frames since last send (for retransmit timeout)
 tx_retries:   .byte 0   // retry count for current outbound frame
+tx_service_busy:.byte 0 // 1 while one context is draining outbound bytes
 prompt_sent:  .byte 0   // 1 = prompt already sent
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
