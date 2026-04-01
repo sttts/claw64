@@ -277,142 +277,35 @@ Current intent:
 
 ### Serial Protocol
 
-Binary frame protocol over RS232 at 2400 baud.
+The wire protocol is specified in [`PROTOCOL.md`](/Users/sts/Quellen/slagent/claw64/PROTOCOL.md).
 
-#### Frame format
+This document only states the architectural contract:
 
-```
-+------+------+--------+-------------+------+
-| SYNC | TYPE | LENGTH | PAYLOAD     | CHK  |
-| 0xFE | 1 b  | 1 byte | 0-255 bytes | 1 b  |
-+------+------+--------+-------------+------+
-```
+- Binary frames run over RS232 at 2400 baud.
+- Reliable frames use 1-byte transport IDs scoped per direction.
+- `ACK` means the sender may continue safely. It does not merely mean
+  "frame parsed", and it does not imply the final user-visible outcome is done.
+- `EXEC` is the only execution request.
+- On receipt, the C64 copies `EXEC` text into C64-owned execution storage
+  before acting on it.
+- While BASIC is running, `status`, `stop`, and `screen` remain valid, and
+  any new `EXEC` is rejected with `STATUS "BUSY"`.
+- While BASIC is not running, `EXEC` is ACKed at the first semantic boundary:
+  `STATUS "STORED"`, `STATUS "RUNNING"`, `RESULT ...`, `STATUS "READY"`, or `ERROR`.
+- TEXT responses still flow LLM→bridge→C64→bridge→user. The bridge does not
+  shortcut around the C64.
+- The bridge stays a pure relay. It owns transport, history, and API calls,
+  not agent behavior.
 
-- **SYNC** (1 byte): `0xFE`. Marks frame start. (`0xFF` gets corrupted
-  by VICE RS232.)
-- **TYPE** (1 byte): Frame type, printable ASCII (avoids PETSCII
-  control char issues with KERNAL CHROUT).
-- **LENGTH** (1 byte): Payload length, 0-255. Includes the transport ID
-  byte for reliable frames.
-- **PAYLOAD** (0-255 bytes): For reliable frames, the first byte is a
-  1-byte transport ID. The remaining bytes are the frame body.
-- **CHK** (1 byte): XOR of TYPE, LENGTH, and all PAYLOAD bytes
-  (including the transport ID).
+The protocol reference also defines:
 
-Total overhead: 4 bytes per frame (+ 1 byte transport ID for reliable frames).
-
-#### Reliable transport
-
-All bridge→C64 and C64→bridge frames (except ACK and HEARTBEAT) carry a
-1-byte transport ID as the first payload byte. IDs start at 1 (0 = unset)
-and increment modulo 256, skipping 0 on wraparound. IDs are scoped per
-direction — each side maintains its own counter.
-
-**ACK by ID**: when a reliable frame has been accepted far enough that the
-sender may continue, the receiver sends `ACK <id>` (1-byte payload). ACK
-frames are unreliable — no ID of their own, no ACK-of-ACK, no retry.
-
-`ACK` does **not** mean the ultimate long-running work is finished. For
-example, `EXEC("RUN")` may be ACKed once the C64 has reached the first
-semantic completion boundary for that command, even though BASIC is still
-running. But `ACK` **does** mean the receiver has committed enough state
-that the next dependent frame may arrive safely.
-
-**Duplicate suppression**: each side remembers the last accepted (id, type)
-pair. If the same pair arrives again, re-ACK without replaying side effects.
-
-**Retransmission**: if no ACK is received within a timeout, the sender
-retransmits the same frame with the same ID. Retry budget: 3 attempts.
-Bridge retries at 500ms, 1s, 2s intervals. C64 retries at ~4s intervals.
-
-**Completion drain**: while BASIC is in RUNNING state, the bridge holds
-TEXT frames until RESULT or STATUS READY arrives. This avoids bidirectional
-overlap during the sensitive completion window.
-
-#### Frame types
-
-```
-Bridge -> C64 (reliable, carry transport ID):
-  'M' (0x4D)  MSG         User's chat message text
-  'E' (0x45)  EXEC        Tool call: BASIC command to execute
-  'K' (0x4B)  STOP        Request RUN/STOP on the current BASIC program
-  'P' (0x50)  SCREENSHOT  Request current visible text screen
-  'Q' (0x51)  STATUS      Ask whether BASIC is RUNNING or READY
-  'T' (0x54)  TEXT        LLM's final text response (forward to user)
-
-C64 -> Bridge (reliable, carry transport ID):
-  'R' (0x52)  RESULT      Tool result: EXEC output or screenshot text
-  'U' (0x55)  STATUS      BASIC state text, e.g. RUNNING or READY.
-  'Y' (0x59)  USER        User-visible text emitted by the C64
-  'L' (0x4C)  LLM_MSG     Message to append to LLM conversation
-  'X' (0x58)  ERROR       Tool call timed out or failed
-  'S' (0x53)  SYSTEM      System prompt chunk (sent on first MSG)
-
-C64 -> Bridge (unreliable, no transport ID):
-  'A' (0x41)  ACK         Transport ID echo for verified delivery
-  'H' (0x48)  HEARTBEAT   Agent is alive (fire-and-forget)
-```
-
-#### System prompt (the C64's soul)
-
-The system prompt lives on the C64 — it IS the agent. The text is stored
-in the loader PRG and copied to `$A000` (BASIC ROM shadow RAM) at boot.
-This area is safe with BASIC programs loaded (`$0800-$9FFF`) and survives
-reattach. On the first user message, the C64 sends it to the bridge as
-multiple reliable SYSTEM frames before the LLM_MSG (max 60 bytes text per
-frame, with transport ID and chunk header). Each frame's payload:
-`[id, chunk_index, total_chunks, text...]`.
-The bridge assembles the chunks and uses the result as the LLM system prompt.
-
-All payloads are plain text. No JSON, no quoting, no escaping.
-
-#### Multi-frame messages
-
-Frame payload is limited to 120 bytes for text-oriented frames. SYSTEM and
-RESULT use an in-band chunk header: `[chunk_index, total_chunks, text...]`.
-TEXT is chunked as repeated 120-byte frames. The bridge must not send the
-next TEXT chunk until the current chunk has been ACKed. That ACK means the
-C64 has processed the chunk far enough that the next chunk may safely arrive.
-
-Used by: TEXT, SYSTEM, RESULT.
-
-#### SYNC recovery and bit masking
-
-- If the checksum byte happens to equal `0xFE` (SYNC), the receiver
-  treats it as the start of the next frame.
-- Bit 7 masking: the bridge strips bit 7 from type, length, and payload
-  bytes (VICE RS232 sometimes sets it spuriously).
-- No bytes are filtered from the payload — all values 0x00-0xFF are valid.
-
-#### Bridge display rules
-
-- The bridge is a pure serial↔HTTPS relay. No shortcuts: all data flows
-  through the C64. TEXT responses go LLM→bridge→C64→bridge→user.
-- All frame payloads are displayed char-by-char as bytes arrive on or
-  leave the wire. Never buffer and print a complete message at once.
-- All reliable frames use ID-based ACK verification.
-- Tool calls are strictly sequential. The bridge executes at most one tool
-  call from a single model response, appends that tool result to history,
-  and only then asks the model for the next step.
-
-#### Error handling
-
-- If a BASIC program keeps running too long, the C64 may detach from the
-  wait and return `STATUS "RUNNING"` instead of stalling the whole tool turn.
-- `EXEC` is the only execution request. On receipt, the C64 copies the
-  command into C64-owned execution storage before acting on it.
-- While BASIC is running, `screen`, `status`, and `stop`
-  remain valid, but any new `EXEC` is rejected with `STATUS "BUSY"`.
-- While BASIC is not running, `EXEC` is ACKed only at the first semantic
-  completion boundary: `STATUS "STORED"`, `STATUS "RUNNING"`,
-  `RESULT ...`, `STATUS "READY"`, or `ERROR`.
-
-- Bad checksum: frame dropped silently, parser resets to SYNC hunt.
-- Reliable frames are retransmitted on ACK timeout. Bridge: 3 attempts
-  at 500ms/1s/2s. C64: 3 attempts at ~4s intervals.
-- Duplicate frames are re-ACKed without replaying side effects.
-- Bridge defers ACKs to C64 until the wire is quiet (after frame decode)
-  to reduce bidirectional RS232 overlap corruption.
+- exact frame layout
+- frame classes and payload conventions
+- duplicate suppression
+- retry rules
+- serialization rules for sensitive phases
+- chunking and reassembly mechanics
+- bridge and C64 transport responsibilities
 
 #### Protocol flow
 

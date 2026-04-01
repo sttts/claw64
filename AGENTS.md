@@ -135,13 +135,13 @@ allocation and `make kill` to stop processes without starting new ones.
 
 ## Architecture Notes
 - C64 agent is a TSR at $C000, hooks KERNAL at $E5D1 and IRQ at $0314/$0315, invisible to user.
-- Serial protocol: SYNC(0xFE) + TYPE(1) + LENGTH(1) + PAYLOAD + CHK(XOR).
-  Reliable frames prepend a 1-byte transport ID to the payload.
-  ACK frames echo the ID for verified delivery. ACK means the sender may
-  continue; it does not merely mean "frame parsed". HEARTBEAT is fire-and-forget.
-- Frame types include MSG('M'), EXEC('E'), EXECGO('G'), EXECNOW('J'), STOP('K'),
-  STATUS('Q'/'U'), TEXT('T'), RESULT('R'), ACK('A'), USER('Y'), LLM_MSG('L'),
-  ERROR('X'), SYSTEM('S'), HEARTBEAT('H'), SCREENSHOT('P').
+- Serial protocol: see `PROTOCOL.md` for the normative wire format and rules.
+  In short: SYNC(0xFE) + TYPE(1) + LENGTH(1) + PAYLOAD + CHK(XOR), with
+  reliable frames carrying a 1-byte transport ID in the payload.
+  ACK means the sender may continue safely. HEARTBEAT is fire-and-forget.
+- Frame types include MSG('M'), EXEC('E'), STOP('K'), STATUS('Q'/'U'),
+  TEXT('T'), RESULT('R'), ACK('A'), USER('Y'), LLM_MSG('L'), ERROR('X'),
+  SYSTEM('S'), HEARTBEAT('H'), SCREENSHOT('P').
 - Text-oriented multi-frame payloads use 120-byte chunks with in-band chunk headers for SYSTEM and RESULT.
 - RS232 at 2400 baud via C64 userport. VICE maps to TCP localhost:25232.
 - Bridge sends bytes with paced writes to satisfy VICE/KERNAL RS232 timing.
