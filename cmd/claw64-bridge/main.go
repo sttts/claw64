@@ -38,6 +38,7 @@ type CLI struct {
 	Slack      SlackCmd      `cmd:"" help:"Chat over Slack."`
 	WhatsApp   WhatsAppCmd   `cmd:"" name:"whatsapp" help:"Chat over WhatsApp."`
 	Signal     SignalCmd     `cmd:"" help:"Chat over Signal."`
+	Burnin     BurninCmd     `cmd:"" help:"Run deterministic end-to-end protocol burn-in scenarios."`
 	Auth       AuthCmd       `cmd:"" help:"Manage Anthropic direct-API credentials."`
 	TestSerial TestSerialCmd `cmd:"" name:"test-serial" help:"Send a test EXEC and print the RESULT."`
 }
@@ -59,6 +60,10 @@ type SignalCmd struct {
 	Account string `arg:"" required:"" help:"Signal account / phone number used by signal-cli."`
 	Target  string `arg:"" required:"" help:"Explicit Signal target: user:<phone> or group:<group-id>."`
 	Config  string `name:"config" help:"Optional signal-cli config directory."`
+}
+
+type BurninCmd struct {
+	Scenario string `arg:"" default:"stop-screen" enum:"stop-screen" help:"Deterministic protocol scenario to run."`
 }
 
 type AuthCmd struct {
@@ -103,6 +108,8 @@ func main() {
 		runChatBridge(cli, waCh)
 	case "signal <account> <target>":
 		runChatBridge(cli, chat.NewSignal(cli.Signal.Account, cli.Signal.Config, cli.Signal.Target))
+	case "burnin <scenario>":
+		runBurnin(cli, cli.Burnin.Scenario)
 	case "auth set-key":
 		token := cli.Auth.SetKey.Token
 		if token == "" {
@@ -177,33 +184,7 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 		log.Fatalf("setup: %v", err)
 	}
 
-	var viceCmd *exec.Cmd
-	cleanupLoader := func() {}
-	startSerial := func() (*serial.Link, error) {
-		if !cfg.SpawnVICE {
-			return serial.Listen(cfg.SerialAddr)
-		}
-
-		loaderPath, cleanup, err := loaderPRGPath(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("vice: %w", err)
-		}
-		cleanupLoader = cleanup
-
-		return serial.ListenAndStart(cfg.SerialAddr, func() error {
-			log.Printf("vice: spawning %s with %s", cfg.ViceBin, loaderPath)
-
-			viceCmd, err = spawnVICE(cfg, loaderPath)
-			if err != nil {
-				cleanupLoader()
-				cleanupLoader = func() {}
-				return fmt.Errorf("vice: %w", err)
-			}
-			return nil
-		})
-	}
-
-	link, err := startSerial()
+	link, viceCmd, cleanupLoader, err := startSerialLink(cfg)
 	if err != nil {
 		log.Fatalf("serial: %v", err)
 	}
@@ -238,6 +219,46 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, chat.ErrInterrupted) && ctx.Err() == nil {
 		log.Fatalf("chat: %v", err)
 	}
+}
+
+func startSerialLink(cfg CLI) (*serial.Link, *exec.Cmd, func(), error) {
+	if cfg.SerialAddr == "" || cfg.MonitorAddr == "" {
+		serialAddr, monitorAddr := defaultPortAddrs()
+		if cfg.SerialAddr == "" {
+			cfg.SerialAddr = serialAddr
+		}
+		if cfg.MonitorAddr == "" {
+			cfg.MonitorAddr = monitorAddr
+		}
+	}
+
+	if !cfg.SpawnVICE {
+		link, err := serial.Listen(cfg.SerialAddr)
+		return link, nil, func() {}, err
+	}
+
+	loaderPath, cleanupLoader, err := loaderPRGPath(cfg)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("vice: %w", err)
+	}
+
+	var viceCmd *exec.Cmd
+	link, err := serial.ListenAndStart(cfg.SerialAddr, func() error {
+		log.Printf("vice: spawning %s with %s", cfg.ViceBin, loaderPath)
+
+		viceCmd, err = spawnVICE(cfg, loaderPath)
+		if err != nil {
+			cleanupLoader()
+			return fmt.Errorf("vice: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		cleanupLoader()
+		return nil, nil, nil, err
+	}
+
+	return link, viceCmd, cleanupLoader, nil
 }
 
 func defaultPortAddrs() (string, string) {

@@ -777,6 +777,12 @@ bsout_hook:
         cmp #SCREEN_DEV
         bne bsout_done
 
+        // PRINT-heavy loops may spend most of their time here instead of
+        // in the normal RUN/STOP hook. Consume a pending STOP request
+        // from this path too so STOP takes effect promptly while output
+        // is still flowing.
+        jsr consume_stop_request
+
         ldx #2
 bsout_rx_loop:
         jsr serial_read
@@ -842,13 +848,7 @@ drco_done:
 // detach the agent logically: tell the bridge it is still running,
 // stop the busy animation, and leave control tools available.
 service_running:
-        lda stop_requested
-        beq sr_not_stop
-        lda #$7F
-        sta $91                 // make original ISTOP see STOP pressed
-        lda #0
-        sta stop_requested
-sr_not_stop:
+        jsr consume_stop_request
 
         lda agent_state
         cmp #AG_WAITING
@@ -892,6 +892,16 @@ sr_report:
         lda #0
         sta busy
 sr_done:
+        rts
+
+consume_stop_request:
+        lda stop_requested
+        beq csr_done
+        lda #$7F
+        sta $91                 // make the original RUN/STOP path see STOP pressed
+        lda #0
+        sta stop_requested
+csr_done:
         rts
 
 // service_outbound — build/send queued frame bytes via the current RS232 path.

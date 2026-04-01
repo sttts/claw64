@@ -124,6 +124,19 @@ PRG by default. The repo build writes that loader directly to
 [`cmd/claw64-bridge/claw64.prg`](/Users/sts/Quellen/slagent/claw64/cmd/claw64-bridge/claw64.prg),
 so `--loader-prg` is only needed to override it.
 
+### Burn-In
+
+Use the scripted burn-in scenario to verify the protocol without LLM noise:
+
+```bash
+make vice
+go run ./cmd/claw64-bridge --spawn-vice=false burnin stop-screen
+```
+
+`stop-screen` writes a long-running counter, runs it, sends `STOP`, polls
+`STATUS` until `READY.`, captures a screen snapshot, and verifies that the
+final user-visible `TEXT` still completes cleanly.
+
 ## Architecture
 
 ```

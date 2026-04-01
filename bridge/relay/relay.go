@@ -51,6 +51,7 @@ type Relay struct {
 	pendingFrames   []queuedFrame
 	lateAckIDs      map[byte]struct{}
 	lastAckSentAt   time.Time
+	lastC64FrameAt  time.Time
 	recvOnce        sync.Once
 	recvCh          chan recvResult
 }
@@ -72,6 +73,7 @@ const textChunkMax = 62
 const ackTimeout = 3 * time.Second
 const ackQuietWindow = 150 * time.Millisecond
 const runningAckQuietWindow = 3 * time.Second
+const runningRecvQuietWindow = 1 * time.Second
 
 // textAckTimeout allows one inbound TEXT chunk, the resulting USER frame,
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
@@ -780,6 +782,12 @@ func (r *Relay) settlePendingAcks() {
 	if remain := quietWindow - time.Since(r.lastAckSentAt); remain > 0 {
 		time.Sleep(remain)
 	}
+	if !r.basicRunning || r.lastC64FrameAt.IsZero() {
+		return
+	}
+	if remain := runningRecvQuietWindow - time.Since(r.lastC64FrameAt); remain > 0 {
+		time.Sleep(remain)
+	}
 }
 
 // unwrapC64Frame strips the transport ID from a reliable C64→bridge frame,
@@ -928,6 +936,7 @@ func (r *Relay) recvFromSocketOnly(ctx context.Context, waitingTextAck bool) (se
 			if res.frame.Type == serial.FrameHeartbeat {
 				continue
 			}
+			r.lastC64FrameAt = time.Now()
 			return res.frame, nil
 
 		case <-timeout:
@@ -1003,6 +1012,7 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 			if res.frame.Type == serial.FrameHeartbeat {
 				continue
 			}
+			r.lastC64FrameAt = time.Now()
 			return res.frame, false, nil
 
 		case <-timeout:
