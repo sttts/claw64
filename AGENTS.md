@@ -63,9 +63,19 @@ Module: `github.com/sttts/claw64`
 - VICE launch: `make vice` (requires `brew install --cask vice`)
 - Full stack: `make run` (assembles, starts bridge + VICE, kills VICE on exit)
 - Bridge only: `make bridge` (requires Go)
+- Regenerate assets: `make assets` (PNG → C64 bins, requires Pillow)
 - Serial test: `make test-serial`
 - Show ports: `make ports` (prints serial + monitor ports for this worktree)
 - Kill running: `make kill` (kills VICE/bridge on this worktree's ports)
+
+### Splash screen assets
+Source of truth: two PNGs in `c64/assets/`:
+- `splash-multicolor.png` — 160x200, the lobster (multicolor bitmap mode)
+- `splash-hires-bottom.png` — 320x64, rows 17-24 (hires: red arc + CLAW64 text)
+
+`make assets` runs `c64/tools/png_to_c64.py` to convert the PNGs into
+the `.bin` files that `loader.asm` imports. Edit the PNGs, run `make assets`,
+then `make assemble`.
 
 ### Per-worktree ports
 Each directory gets its own TCP ports for VICE serial and monitor,
