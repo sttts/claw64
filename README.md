@@ -23,6 +23,13 @@ behalf of the C64, which cannot reach the internet at 2400 baud.
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 ![Vibe Coded](https://img.shields.io/badge/100%25-vibe_coded-blueviolet)
 
+## Where To Read What
+
+- [README.md](/Users/sts/Quellen/slagent/claw64/README.md): quickstart, workflows, and a high-level overview
+- [SPEC.md](/Users/sts/Quellen/slagent/claw64/SPEC.md): product and architecture specification
+- [PROTOCOL.md](/Users/sts/Quellen/slagent/claw64/PROTOCOL.md): wire protocol and transport design reference
+- [AGENTS.md](/Users/sts/Quellen/slagent/claw64/AGENTS.md): repo-specific working rules for coding and debugging
+
 ## Quickstart
 
 ### Prerequisites
