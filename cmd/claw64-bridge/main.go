@@ -24,8 +24,8 @@ import (
 )
 
 type CLI struct {
-	SerialAddr  string `name:"serial-addr" default:"127.0.0.1:25232" help:"Serial TCP address VICE connects to."`
-	MonitorAddr string `name:"monitor-addr" default:"127.0.0.1:6510" help:"VICE remote monitor address."`
+	SerialAddr  string `name:"serial-addr" help:"Serial TCP address VICE connects to. Defaults to the worktree .ports file when present."`
+	MonitorAddr string `name:"monitor-addr" help:"VICE remote monitor address. Defaults to the worktree .ports file when present."`
 	LLM        string `name:"llm" default:"openai" enum:"anthropic,openai,ollama" help:"LLM backend."`
 	Model      string `name:"model" help:"Override the LLM model name."`
 	LLMURL     string `name:"llm-url" help:"Override the OpenAI/Ollama-compatible endpoint URL."`
@@ -79,7 +79,11 @@ var embeddedLoaderPRG []byte
 func main() {
 	log.SetOutput(termstyle.DimWriter(os.Stderr))
 
-	var cli CLI
+	serialAddr, monitorAddr := defaultPortAddrs()
+	cli := CLI{
+		SerialAddr:  serialAddr,
+		MonitorAddr: monitorAddr,
+	}
 	ctx := kong.Parse(
 		&cli,
 		kong.Name("claw64-bridge"),
@@ -234,6 +238,43 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, chat.ErrInterrupted) && ctx.Err() == nil {
 		log.Fatalf("chat: %v", err)
 	}
+}
+
+func defaultPortAddrs() (string, string) {
+	serialAddr := "127.0.0.1:25232"
+	monitorAddr := "127.0.0.1:6510"
+
+	f, err := os.Open(".ports")
+	if err != nil {
+		return serialAddr, monitorAddr
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		switch strings.TrimSpace(key) {
+		case "SERIAL_PORT":
+			if value = strings.TrimSpace(value); value != "" {
+				serialAddr = "127.0.0.1:" + value
+			}
+		case "MONITOR_PORT":
+			if value = strings.TrimSpace(value); value != "" {
+				monitorAddr = "127.0.0.1:" + value
+			}
+		}
+	}
+
+	return serialAddr, monitorAddr
 }
 
 func preflightInfra(ctx context.Context, cfg CLI, ch chat.Channel, llmClient llm.Completer) error {
