@@ -77,6 +77,10 @@ const runningAckQuietWindow = 3 * time.Second
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
 const textAckTimeout = 7 * time.Second
 
+// execAckTimeout covers direct EXEC commands whose first semantic boundary is
+// the completed command result rather than a quick RUNNING/STORED transition.
+const execAckTimeout = 8 * time.Second
+
 // c64FrameTimeout is how long the bridge waits for any C64 frame
 // before triggering a stall dump.
 const c64FrameTimeout = 8 * time.Second
@@ -598,7 +602,13 @@ func (r *Relay) startToolWait() {
 
 func (r *Relay) sendExec(ctx context.Context, cmd []byte) error {
 	execFrame := serial.Frame{Type: serial.FrameExec, Payload: cmd}
-	if err := r.sendVerifiedOrSemantic(ctx, execFrame, "EXEC"); err != nil {
+	if err := r.sendVerifiedOrSemanticWith(
+		ctx,
+		execFrame,
+		"EXEC",
+		execAckTimeout,
+		[]time.Duration{1 * time.Second, 2 * time.Second},
+	); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr)
