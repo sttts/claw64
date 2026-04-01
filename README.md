@@ -9,8 +9,10 @@ The Commodore 64 is the agent. BASIC and the visible text screen are its tools.
 Claw64 turns a Commodore 64 into an autonomous AI agent. The C64 receives
 messages from chat users, consults an LLM for decisions, and acts by typing
 BASIC commands into its own REPL — reading the screen to see what happened.
-The bridge is a dumb relay: it proxies LLM calls and chat messages on
-behalf of the C64, which cannot reach the internet at 2400 baud.
+The bridge is necessary because a stock C64 has no Ethernet or Wi-Fi and only
+its user port, with a fairly poor RS232 implementation, to talk to the outside
+world. The bridge is a dumb relay: it proxies LLM calls and chat messages on
+behalf of the C64 over that serial link.
 
 > [!IMPORTANT]
 > The full agent loop runs on the C64.
@@ -31,6 +33,17 @@ behalf of the C64, which cannot reach the internet at 2400 baud.
 - [SPEC.md](/Users/sts/Quellen/slagent/claw64/SPEC.md): product and architecture specification
 - [PROTOCOL.md](/Users/sts/Quellen/slagent/claw64/PROTOCOL.md): wire protocol and transport design reference
 - [AGENTS.md](/Users/sts/Quellen/slagent/claw64/AGENTS.md): repo-specific working rules for coding and debugging
+
+## Tools
+
+The C64 exposes four tools to the LLM through the bridge:
+
+- `exec(command)`: send one line of C64 BASIC input. This is how the agent computes, changes hardware state, stores program lines, runs programs, and asks BASIC to `LIST`. Numbered lines are stored on the C64; they are not just returned as text.
+- `screen()`: return the current visible 40x25 text screen without typing anything into BASIC.
+- `status()`: report whether BASIC is currently `RUNNING`, `STOP REQUESTED`, or back at `READY.`
+- `stop()`: request a RUN/STOP-style break for the currently running BASIC program.
+
+Those four tools are the whole interface. The bridge exposes them, but the C64 decides when and how to use them.
 
 ## Quickstart
 
@@ -157,13 +170,13 @@ transition.
                  ┌──────────────────────┐
                  │     Bridge (Go)      │
                  │                      │
-                 │  Relay — not an      │
-                 │  agent. Never makes  │
-                 │  decisions.          │
+                 │  Proxy only:         │
+                 │  chat/stdin ↔ serial │
+                 │  and HTTPS ↔ serial  │
                  │                      │
-                 │  • Chat ←→ C64      │     ┌─────────────────┐
-                 │  • LLM  ←→ C64      │────▶│ LLM (Anthropic, │
-                 │  • History store     │◀────│ OpenAI, Ollama) │
+                 │  • chat/stdin ↔ C64  │     ┌─────────────────┐
+                 │  • LLM        ↔ C64  │────▶│ LLM (Anthropic, │
+                 │  • serial transport  │◀────│ OpenAI, Ollama) │
                  └──────────┬───────────┘     └─────────────────┘
                             │
                      RS232, 2400 baud
@@ -281,12 +294,11 @@ Bridge → C64:       M │ Print 1 to 1001
 C64 → Bridge:       L │ Print 1 to 1001
 LLM → Bridge:       tool_call: exec("FORI=1TO1001:PRINTI:NEXTI")
 Bridge → C64:       E │ FORI=1TO1001:PRINTI:NEXTI
-Bridge → C64:       G │
 
 C64 starts the BASIC program
 If it keeps running too long, the C64 returns:
 
-C64 → Bridge:       U │ RUNNING
+C64 → Bridge:       Q │ RUNNING
 
 LLM may then use:
 - status()
@@ -294,7 +306,7 @@ LLM may then use:
 - screen()
 
 `exec()` accepts immediate commands, colon-separated statements, and numbered BASIC program lines, up to 127 characters. Numbered program lines return `STORED` and are not executed; follow them with `exec("RUN")` if you want to run the program.
-While BASIC is running, a second exec is rejected.
+While BASIC is running, another `exec()` is rejected with `BUSY`.
 ```
 
 ## Chat Platforms
