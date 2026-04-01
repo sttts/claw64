@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/sttts/claw64/bridge/llm"
@@ -23,6 +21,10 @@ func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ [
 	switch s.scenario {
 	case "stop-screen":
 		return s.completeStopScreen(messages)
+	case "screen-repeat":
+		return s.completeScreenRepeat(messages)
+	case "direct-exec":
+		return s.completeDirectExec(messages)
 	default:
 		return llm.Message{}, fmt.Errorf("unknown burn-in scenario %q", s.scenario)
 	}
@@ -86,6 +88,70 @@ func (s *scriptedBurnin) completeStopScreen(messages []llm.Message) (llm.Message
 	}
 }
 
+func (s *scriptedBurnin) completeScreenRepeat(messages []llm.Message) (llm.Message, error) {
+	lastTool := lastToolMessage(messages)
+
+	switch s.step {
+	case 0:
+		s.step++
+		return execToolCall("10 PRINT \"SCREEN REPEAT\"", s.step), nil
+	case 1:
+		if lastTool != "[C64 BASIC status]: STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED, got %q", s.step, lastTool)
+		}
+		s.step++
+		return execToolCall("20 PRINT \"SECOND LINE\"", s.step), nil
+	case 2:
+		if lastTool != "[C64 BASIC status]: STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED, got %q", s.step, lastTool)
+		}
+		s.step++
+		return execToolCall("LIST", s.step), nil
+	case 3:
+		if !toolResultContains(lastTool, "[C64 screen output]: ", "10 PRINT \"SCREEN REPEAT\"", "20 PRINT \"SECOND LINE\"", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected LIST output, got %q", s.step, lastTool)
+		}
+		s.step++
+		return simpleToolCall("screen", "{}", s.step), nil
+	case 4:
+		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "10 PRINT \"SCREEN REPEAT\"", "20 PRINT \"SECOND LINE\"", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected first screenshot output, got %q", s.step, lastTool)
+		}
+		s.step++
+		return simpleToolCall("screen", "{}", s.step), nil
+	case 5:
+		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "10 PRINT \"SCREEN REPEAT\"", "20 PRINT \"SECOND LINE\"", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected second screenshot output, got %q", s.step, lastTool)
+		}
+		return llm.Message{Role: "assistant", Content: "BURN-IN screen-repeat complete."}, nil
+	default:
+		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
+	}
+}
+
+func (s *scriptedBurnin) completeDirectExec(messages []llm.Message) (llm.Message, error) {
+	lastTool := lastToolMessage(messages)
+
+	switch s.step {
+	case 0:
+		s.step++
+		return execToolCall("PRINT 7*8", s.step), nil
+	case 1:
+		if !toolResultContains(lastTool, "[C64 screen output]: ", "56", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected direct PRINT result, got %q", s.step, lastTool)
+		}
+		s.step++
+		return execToolCall("PRINT 42", s.step), nil
+	case 2:
+		if !toolResultContains(lastTool, "[C64 screen output]: ", "42", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected second direct PRINT result, got %q", s.step, lastTool)
+		}
+		return llm.Message{Role: "assistant", Content: "BURN-IN direct-exec complete."}, nil
+	default:
+		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
+	}
+}
+
 func execToolCall(command string, n int) llm.Message {
 	return simpleToolCall("exec", fmt.Sprintf("{\"command\":%q}", command), n)
 }
@@ -115,9 +181,21 @@ func lastToolMessage(messages []llm.Message) string {
 	return ""
 }
 
+func toolResultContains(result, prefix string, parts ...string) bool {
+	if !strings.HasPrefix(result, prefix) {
+		return false
+	}
+
+	for _, part := range parts {
+		if !strings.Contains(result, part) {
+			return false
+		}
+	}
+	return true
+}
+
 func runBurnin(cfg CLI, scenario string) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx := context.Background()
 
 	if cfg.SerialAddr == "" || cfg.MonitorAddr == "" {
 		serialAddr, monitorAddr := defaultPortAddrs()
@@ -156,7 +234,7 @@ func runBurnin(cfg CLI, scenario string) {
 	time.Sleep(750 * time.Millisecond)
 
 	var lastText string
-	reply, err := rl.HandleMessageStream(ctx, "burnin", "BURNIN "+scenario, func(message string) error {
+	reply, err := rl.HandleMessageStream(ctx, "burnin", "Hi", func(message string) error {
 		lastText = message
 		fmt.Fprintf(os.Stdout, "\n%s %s\n", "c64>", message)
 		return nil

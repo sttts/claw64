@@ -126,16 +126,25 @@ so `--loader-prg` is only needed to override it.
 
 ### Burn-In
 
-Use the scripted burn-in scenario to verify the protocol without LLM noise:
+Use the scripted burn-in scenarios to verify the protocol without LLM noise:
 
 ```bash
 make vice
 go run ./cmd/claw64-bridge --spawn-vice=false burnin stop-screen
+go run ./cmd/claw64-bridge --spawn-vice=false burnin screen-repeat
+go run ./cmd/claw64-bridge --spawn-vice=false burnin direct-exec
 ```
 
 `stop-screen` writes a long-running counter, runs it, sends `STOP`, polls
 `STATUS` until `READY.`, captures a screen snapshot, and verifies that the
 final user-visible `TEXT` still completes cleanly.
+
+`screen-repeat` stores a tiny program, verifies `LIST`, then requests two
+consecutive `SCREENSHOT`s to exercise repeated chunked `RESULT` delivery.
+
+`direct-exec` verifies direct BASIC commands that complete at the prompt,
+including correct `EXEC` completion without a stored program or long-running
+transition.
 
 ## Architecture
 

@@ -63,7 +63,7 @@ type SignalCmd struct {
 }
 
 type BurninCmd struct {
-	Scenario string `arg:"" default:"stop-screen" enum:"stop-screen" help:"Deterministic protocol scenario to run."`
+	Scenario string `arg:"" default:"stop-screen" enum:"stop-screen,screen-repeat,direct-exec" help:"Deterministic protocol scenario to run."`
 }
 
 type AuthCmd struct {

@@ -899,8 +899,6 @@ consume_stop_request:
         beq csr_done
         lda #$7F
         sta $91                 // make the original RUN/STOP path see STOP pressed
-        lda #0
-        sta stop_requested
 csr_done:
         rts
 
