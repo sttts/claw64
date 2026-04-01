@@ -617,6 +617,7 @@ bl_ready_found:
         sta progline_pending
         sta busy
         jsr queue_state_stored
+        jsr commit_exec_ack_if_pending
         lda #AG_IDLE
         sta agent_state
         jmp bloop
@@ -820,6 +821,15 @@ drain_running_control_outbound:
         bne drco_done
 
 drco_service:
+        lda ack_pending
+        bne drco_do_service
+        lda ack_pos
+        cmp ack_total
+        bne drco_do_service
+        jsr service_outbound
+        jmp drco_done
+
+drco_do_service:
         jsr service_outbound
 
 drco_done:
@@ -1173,6 +1183,7 @@ irq_tick_ok:
         bcc irq_tx_check
 irq_mark_running:
         jsr queue_state_running
+        jsr commit_exec_ack_if_pending
         lda #1
         sta running_reported
         sta basic_running
@@ -1182,15 +1193,15 @@ irq_mark_running:
         sta busy
 
 irq_tx_check:
+        // ACK bytes must be able to leave immediately once committed,
+        // even when there is no reliable outbound frame in flight.
+        jsr drain_ack_outbound
+
         // Advance retransmit timer at 60Hz (not main loop speed).
         lda tx_ack_wait
         beq irq_done_io
         inc tx_ack_timer
 
-        // IRQ-side receive can accept reliable bridge frames while BASIC
-        // is running. Drain only ACK bytes here so transport confirmation
-        // does not wait on sparse ISTOP hooks.
-        jsr drain_ack_outbound
 irq_done_io:
         rts
 
