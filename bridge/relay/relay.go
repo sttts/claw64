@@ -70,10 +70,17 @@ const textChunkMax = 62
 // With ID-based delivery, ACKs always arrive promptly regardless of
 // whether BASIC is running — the C64 ACKs at transport level.
 const ackTimeout = 3 * time.Second
+const ackQuietWindow = 150 * time.Millisecond
+const runningAckQuietWindow = 1500 * time.Millisecond
 
 // textAckTimeout allows one inbound TEXT chunk, the resulting USER frame,
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
 const textAckTimeout = 7 * time.Second
+
+// runningStatusAckTimeout keeps STATUS polling responsive while BASIC is
+// running by retrying lost requests quickly without exceeding a normal
+// end-to-end timeout budget.
+const runningStatusAckTimeout = 400 * time.Millisecond
 
 // c64FrameTimeout is how long the bridge waits for any C64 frame
 // before triggering a stall dump.
@@ -631,9 +638,29 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 }
 
 func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, name string) error {
+	if frame.Type == serial.FrameStatusReq && r.basicRunning {
+		return r.sendVerifiedOrSemanticWith(
+			ctx,
+			frame,
+			name,
+			runningStatusAckTimeout,
+			[]time.Duration{
+				50 * time.Millisecond,
+				50 * time.Millisecond,
+				50 * time.Millisecond,
+				50 * time.Millisecond,
+				50 * time.Millisecond,
+				50 * time.Millisecond,
+			},
+		)
+	}
+
+	return r.sendVerifiedOrSemanticWith(ctx, frame, name, ackTimeout, []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second})
+}
+
+func (r *Relay) sendVerifiedOrSemanticWith(ctx context.Context, frame serial.Frame, name string, timeout time.Duration, retryDelays []time.Duration) error {
 	id := r.allocID()
 	frame.Payload = serial.PrependID(id, frame.Payload)
-	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
 	for attempt := 0; attempt < len(retryDelays); attempt++ {
 		r.settlePendingAcks()
 
@@ -641,7 +668,7 @@ func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, 
 			return err
 		}
 
-		ok, err := r.waitForAckOrSemantic(ctx, id, ackTimeout)
+		ok, err := r.waitForAckOrSemantic(ctx, id, timeout)
 		if err != nil {
 			logWarnf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
 			if attempt+1 < len(retryDelays) {
@@ -758,7 +785,11 @@ func (r *Relay) settlePendingAcks() {
 	if r.lastAckSentAt.IsZero() {
 		return
 	}
-	if remain := 150*time.Millisecond - time.Since(r.lastAckSentAt); remain > 0 {
+	quietWindow := ackQuietWindow
+	if r.basicRunning {
+		quietWindow = runningAckQuietWindow
+	}
+	if remain := quietWindow - time.Since(r.lastAckSentAt); remain > 0 {
 		time.Sleep(remain)
 	}
 }

@@ -24,9 +24,11 @@
 .const CHKOUT  = $FFC9
 .const CLRCHN  = $FFCC
 .const CHROUT  = $FFD2
+.const DFLTO   = $9A    // KERNAL default output device
 .const LDTND   = $98    // KERNAL logical-file count
 .const LAT     = $0259  // KERNAL logical-file table
 .const GETIN   = $FFE4
+.const SCREEN_DEV = 3   // KERNAL screen output device number
 
 // System locations
 .const IRQ_LO       = $0314  // IRQ vector low byte
@@ -38,6 +40,8 @@
 .const ISTOP_LO     = $032C  // KERNAL STOP-check vector low byte
 .const ISTOP_HI     = $032D  // KERNAL STOP-check vector high byte
 .const IBASIN_LO    = $0326  // KERNAL BASIN vector low byte
+.const IBSOUT_LO    = $0328  // KERNAL BSOUT vector low byte
+.const IBSOUT_HI    = $0329  // KERNAL BSOUT vector high byte
 .const IBASIN_HI    = $0327  // KERNAL BASIN vector high byte
 
 // RS232 buffer pointers (set by KERNAL OPEN)

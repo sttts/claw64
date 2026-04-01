@@ -47,6 +47,11 @@
 // Located at $C900 (AGENT_TXBUF), above the receive buffer.
 .const send_buf = AGENT_TXBUF
 
+// EXEC payloads only need durable storage until injection finishes.
+// Reuse send_buf for that window instead of reserving a separate 128-byte
+// variable inside the resident image.
+.const exec_buf = AGENT_TXBUF
+
 // Agent state machine constants.
 // The agent cycles through these states as it processes commands:
 //   IDLE → INJECTING → WAITING/STOREWAIT → (send) → IDLE
@@ -214,6 +219,19 @@ cp_bas_wr:
         sta ISTOP_LO
         lda #>istop_hook
         sta ISTOP_HI
+
+        // ---- Hook BSOUT so PRINT-heavy programs keep control alive ----
+        // BASIC hits BSOUT for visible screen output far more often than
+        // ISTOP in tight print loops. Use that path to service control
+        // traffic while a program is spewing text.
+        lda IBSOUT_LO
+        sta old_bsout_lo
+        lda IBSOUT_HI
+        sta old_bsout_hi
+        lda #<bsout_hook
+        sta IBSOUT_LO
+        lda #>bsout_hook
+        sta IBSOUT_HI
 
         // ---- Set up lobster claw sprites ----
         // Sprite 0: claw (always visible, top-right)
@@ -736,6 +754,53 @@ ih_rx_done:
         pla
         jmp (old_istop_lo)
 
+// BSOUT hook — keep control traffic alive during PRINT-heavy programs.
+// This runs only when output goes to the screen; RS232 CHROUT from the
+// agent itself bypasses the extra work. Keep this path minimal: receive
+// bytes promptly and drain only ACK traffic. RESULT/STATUS/TEXT framing
+// stays on the normal IRQ/ISTOP paths.
+bsout_hook:
+        jsr bsout_call_old
+
+        pha
+        txa
+        pha
+        tya
+        pha
+
+        lda basic_running
+        beq bsout_done
+        lda DFLTO
+        cmp #SCREEN_DEV
+        bne bsout_done
+
+        ldx #2
+bsout_rx_loop:
+        jsr serial_read
+        bcs bsout_rx_done
+        sta rx_byte
+        lda #0
+        sta busy_timer
+        lda #1
+        sta dot_dir
+        lda rx_byte
+        jsr frame_rx_byte
+        dex
+        bne bsout_rx_loop
+bsout_rx_done:
+        jsr drain_ack_outbound
+
+bsout_done:
+        pla
+        tay
+        pla
+        tax
+        pla
+        rts
+
+bsout_call_old:
+        jmp (old_bsout_lo)
+
 // service_running — state maintenance while BASIC is executing.
 // Once a program runs for long enough without returning to READY.,
 // detach the agent logically: tell the bridge it is still running,
@@ -924,29 +989,12 @@ so_chk_text:
         jmp so_send_check
 
 so_send_check:
-        // Build ACK into ack_buf immediately when pending.
-        // Must happen here (not in so_build_next) so ACKs are built
-        // even when send_buf is busy draining a reliable frame.
-        lda ack_pending
-        beq so_drain_ack
+        // ACKs use their own buffer and can drain even while send_buf is
+        // waiting on a reliable outbound frame.
+        jsr drain_ack_outbound
         lda ack_pos
         cmp ack_total
-        bne so_drain_ack         // ack_buf still draining previous ACK
-        lda #0
-        sta ack_pending
-        jsr build_ack_frame
-
-so_drain_ack:
-        // Drain ack_buf (separate buffer, safe during retransmit wait).
-        lda ack_pos
-        cmp ack_total
-        beq so_send_main
-        tax
-        lda ack_buf,x
-        jsr so_chrout
-        bcs so_done
-        inc ack_pos
-        jmp so_send_check
+        bne so_send_check
 
 so_send_main:
         lda send_pos
@@ -1003,6 +1051,30 @@ so_chr_fail:
         sec
         rts
 
+// drain_ack_outbound — build and send one queued ACK byte, if any.
+// Safe to call from both the normal loop and the IRQ receive path.
+drain_ack_outbound:
+        lda ack_pending
+        beq dao_drain
+        lda ack_pos
+        cmp ack_total
+        bne dao_drain
+        lda #0
+        sta ack_pending
+        jsr build_ack_frame
+
+dao_drain:
+        lda ack_pos
+        cmp ack_total
+        beq dao_done
+        tax
+        lda ack_buf,x
+        jsr so_chrout
+        bcs dao_done
+        inc ack_pos
+dao_done:
+        rts
+
 build_reliable_outbound:
         // STATUS frames have priority among reliable outbound frames.
         lda state_pending
@@ -1023,6 +1095,10 @@ irq_service_io:
         lda text_pending
         bne irq_rx_done
 
+        // Keep RS232 selected on the IRQ-side receive path too.
+        ldx #RS232_DEV
+        jsr CHKIN
+
         // Keep IRQ-side receive ahead of 2400 baud even while the main
         // loop is busy in KERNAL/BASIC work.
         ldx #8
@@ -1039,6 +1115,8 @@ irq_rx_loop:
         dex
         bne irq_rx_loop
 irq_rx_done:
+        jsr CLRCHN
+
         lda basic_running
         beq irq_wait_state
 
@@ -1114,6 +1192,11 @@ irq_tx_check:
         lda tx_ack_wait
         beq irq_done_io
         inc tx_ack_timer
+
+        // IRQ-side receive can accept reliable bridge frames while BASIC
+        // is running. Drain only ACK bytes here so transport confirmation
+        // does not wait on sparse ISTOP hooks.
+        jsr drain_ack_outbound
 irq_done_io:
         rts
 
@@ -2146,6 +2229,8 @@ old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
 old_istop_lo: .byte 0   // saved ISTOP vector low byte
 old_istop_hi: .byte 0   // saved ISTOP vector high byte
+old_bsout_lo: .byte 0   // saved BSOUT vector low byte
+old_bsout_hi: .byte 0   // saved BSOUT vector high byte
 anim_timer:   .byte 5   // frames between dot shifts
 dot_dir:      .byte 1   // 0=left (sending), 1=right (receiving)
 busy_timer:   .byte 0   // frames since last serial activity (auto-clear at 30)
@@ -2156,8 +2241,6 @@ running_reported: .byte 0 // 1 once "RUNNING" was already reported
 basic_running: .byte 0  // 1 = BASIC program still running after detach
 stop_requested: .byte 0 // 1 = ask ISTOP to trigger RUN/STOP
 progline_pending: .byte 0 // 1 = current EXEC starts with a BASIC line number
-exec_buf:     .fill 128, 0 // durable command storage for single EXEC path
-
 // color cycle for busy lobster: red → orange → yellow → white
 busy_colors:  .byte 2, 8, 7, 1
 claw_timer:   .byte 30  // frames between claw animation toggles
