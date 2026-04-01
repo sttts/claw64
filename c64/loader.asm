@@ -11,8 +11,11 @@
 .const LDR_DST_LO = $FD
 .const LDR_DST_HI = $FE
 
-.const SAVE_SCREEN = $5000
-.const SAVE_COLOR  = $5400
+// Save buffers must live above the PRG end to avoid corrupting
+// inline source data.  The PRG currently ends around $5100-$5200;
+// $5800 gives comfortable headroom.
+.const SAVE_SCREEN = $5800
+.const SAVE_COLOR  = $5C00
 
 *= $0801
 
@@ -75,6 +78,23 @@ spr_cp: lda spr_claw1,x
 // ---------------------------------------------------------
 // Show the lobster logo in multicolor bitmap mode.
 // Assets live in the loader PRG so the 4K agent stays untouched.
+// Helper: set up LDR_SRC/DST/LEN and call copy_block.
+.macro copy_setup(src, dst, len) {
+        lda #<src
+        sta LDR_SRC_LO
+        lda #>src
+        sta LDR_SRC_HI
+        lda #<dst
+        sta LDR_DST_LO
+        lda #>dst
+        sta LDR_DST_HI
+        lda #<len
+        sta LDR_LEN_LO
+        lda #>len
+        sta LDR_LEN_HI
+        jsr copy_block
+}
+
 // ---------------------------------------------------------
 show_logo:
         lda $D011
@@ -127,83 +147,44 @@ show_logo:
         sta LDR_LEN_HI
         jsr copy_block
 
-        // Copy bitmap data to $6000-$7F3F in VIC bank 1.
-        // $2000 would overlap the inline loader payload and corrupt the source.
-        lda #<startup_logo_bitmap
-        sta LDR_SRC_LO
-        lda #>startup_logo_bitmap
-        sta LDR_SRC_HI
-        lda #$00
-        sta LDR_DST_LO
-        lda #$60
-        sta LDR_DST_HI
-        lda #<8000
-        sta LDR_LEN_LO
-        lda #>8000
-        sta LDR_LEN_HI
-        jsr copy_block
+        // VIC bank 1 layout: bitmap at $6000, screen at $4400.
+        .const VIC_BANK      = $4000
+        .const BITMAP_BASE   = VIC_BANK + $2000        // $6000
+        .const SCREEN_BASE   = VIC_BANK + $0400        // $4400
+        .const COLOR_BASE    = $D800
+        .const HIRES_ROW     = 17
+        .const HIRES_ROWS    = 8
 
-        // Overlay character rows 17-24 with hi-res bitmap data.
-        // Must happen before the screen copy below, because
-        // the screen destination ($4400) overlaps this source.
-        lda #<startup_hires_bitmap
-        sta LDR_SRC_LO
-        lda #>startup_hires_bitmap
-        sta LDR_SRC_HI
-        lda #$40                    // $7540 = $6000 + 17*320
-        sta LDR_DST_LO
-        lda #$75
-        sta LDR_DST_HI
-        lda #<2560
-        sta LDR_LEN_LO
-        lda #>2560
-        sta LDR_LEN_HI
-        jsr copy_block
+        .const DST_MC_BMP    = BITMAP_BASE              // $6000
+        .const LEN_MC_BMP    = 8000
+        .const DST_HR_BMP    = BITMAP_BASE + HIRES_ROW * 320
+        .const LEN_HR_BMP    = HIRES_ROWS * 320
+        .const DST_MC_SCR    = SCREEN_BASE              // $4400
+        .const LEN_MC_SCR    = 1000
+        .const DST_HR_SCR    = SCREEN_BASE + HIRES_ROW * 40
+        .const LEN_HR_SCR    = HIRES_ROWS * 40
+        .const DST_MC_COL    = COLOR_BASE               // $D800
+        .const LEN_MC_COL    = 1000
 
-        // Copy screen colors to $4400-$47E7 in the same VIC bank.
-        lda #<startup_logo_screen
-        sta LDR_SRC_LO
-        lda #>startup_logo_screen
-        sta LDR_SRC_HI
-        lda #$00
-        sta LDR_DST_LO
-        lda #$44
-        sta LDR_DST_HI
-        lda #<1000
-        sta LDR_LEN_LO
-        lda #>1000
-        sta LDR_LEN_HI
-        jsr copy_block
+        // The inline data can overlap VIC bank 1 ($4000-$7FFF).
+        // Copy sources from highest address first so the screen write
+        // ($4400) cannot corrupt data that hasn't been read yet.
+        // Hires screen overlay goes last (after screen, to overlay it).
 
-        // Overlay screen RAM for the hi-res text rows.
-        lda #<startup_hires_screen
-        sta LDR_SRC_LO
-        lda #>startup_hires_screen
-        sta LDR_SRC_HI
-        lda #$A8                    // $46A8 = $4400 + 17*40
-        sta LDR_DST_LO
-        lda #$46
-        sta LDR_DST_HI
-        lda #<320
-        sta LDR_LEN_LO
-        lda #>320
-        sta LDR_LEN_HI
-        jsr copy_block
+        // 1. Bitmap → $6000
+        :copy_setup(startup_logo_bitmap, DST_MC_BMP, LEN_MC_BMP)
 
-        // Copy color RAM values to $D800-$DBE7.
-        lda #<startup_logo_color
-        sta LDR_SRC_LO
-        lda #>startup_logo_color
-        sta LDR_SRC_HI
-        lda #$00
-        sta LDR_DST_LO
-        lda #$D8
-        sta LDR_DST_HI
-        lda #<1000
-        sta LDR_LEN_LO
-        lda #>1000
-        sta LDR_LEN_HI
-        jsr copy_block
+        // 2. Hires bitmap overlay → $7540
+        :copy_setup(startup_hires_bitmap, DST_HR_BMP, LEN_HR_BMP)
+
+        // 3. Color RAM → $D800
+        :copy_setup(startup_logo_color, DST_MC_COL, LEN_MC_COL)
+
+        // 4. Screen → $4400
+        :copy_setup(startup_logo_screen, DST_MC_SCR, LEN_MC_SCR)
+
+        // 5. Hires screen overlay → $46A8
+        :copy_setup(startup_hires_screen, DST_HR_SCR, LEN_HR_SCR)
 
         lda startup_logo_bg
         sta $D020
@@ -225,6 +206,11 @@ show_logo:
         lda vic_d016_save
         ora #$10                // multicolor bitmap
         sta $D016
+        sta vic_d016_multi      // save for raster split restore
+
+        // precompute hires variant (MCM cleared)
+        and #%11101111
+        sta vic_d016_hires
 
         lda vic_d011_save
         ora #$20                // bitmap mode on
@@ -239,17 +225,15 @@ show_logo:
 .const SPLIT_LINE = 185  // two lines before row 17 to avoid any skew at the boundary
 
 wait_logo:
-        ldx #120
+        ldx #180
 wl_frame:
         // Wait for top of frame (raster < 51, 9th bit clear).
 wl_top:
         bit $D011
-        bmi wl_top              // raster >= 256, keep waiting
+        bmi wl_top
         lda $D012
         cmp #51
-        bcs wl_top              // raster >= 51, keep waiting
-
-        // Top of frame — multicolor is already on.
+        bcs wl_top
 
         // Wait for the split point.
 wl_split:
@@ -257,9 +241,8 @@ wl_split:
         cmp #SPLIT_LINE
         bcc wl_split
 
-        // Switch to standard hi-res (clear multicolor bit).
-        lda $D016
-        and #%11101111
+        // Switch to standard hi-res.
+        lda vic_d016_hires
         sta $D016
 
         // Wait for end of visible area.
@@ -268,9 +251,8 @@ wl_bot:
         cmp #251
         bcc wl_bot
 
-        // Restore multicolor for the next frame's top portion.
-        lda $D016
-        ora #%00010000
+        // Restore multicolor for next frame.
+        lda vic_d016_multi
         sta $D016
 
         dex
@@ -367,6 +349,8 @@ border_save:    .byte 0
 bg_save:        .byte 0
 cursor_col_save: .byte 0
 cursor_row_save: .byte 0
+vic_d016_multi:  .byte 0     // $D016 value with MCM set
+vic_d016_hires:  .byte 0     // $D016 value with MCM clear
 
 // Agent code stored inline — assembled as if at $C000
 #define LOADER_MODE
