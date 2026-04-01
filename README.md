@@ -14,6 +14,10 @@ its user port, with a fairly poor RS232 implementation, to talk to the outside
 world. The bridge is a dumb relay: it proxies LLM calls and chat messages on
 behalf of the C64 over that serial link.
 
+<p align="center">
+  <img src="video-93750952.gif" width="80%" alt="Claw64 running in VICE">
+</p>
+
 > [!IMPORTANT]
 > The full agent loop runs on the C64.
 > The C64 receives the user message, decides what to do via the LLM, uses BASIC
