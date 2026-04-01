@@ -23,6 +23,8 @@
         "Do NOT repeat a successful tool call.",
         "",
         "PROGRAMS:",
+        "If asked for a program, write it in BASIC on the C64 with exec.",
+        "Do not answer with a BASIC listing in plain text instead.",
         "To write a program, exec each numbered line separately.",
         "Each numbered line returns STORED, not output.",
         "NEVER put RUN on the same exec as a numbered line.",
