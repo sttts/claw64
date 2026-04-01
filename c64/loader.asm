@@ -143,6 +143,23 @@ show_logo:
         sta LDR_LEN_HI
         jsr copy_block
 
+        // Overlay character rows 17-24 with hi-res bitmap data.
+        // Must happen before the screen copy below, because
+        // the screen destination ($4400) overlaps this source.
+        lda #<startup_hires_bitmap
+        sta LDR_SRC_LO
+        lda #>startup_hires_bitmap
+        sta LDR_SRC_HI
+        lda #$40                    // $7540 = $6000 + 17*320
+        sta LDR_DST_LO
+        lda #$75
+        sta LDR_DST_HI
+        lda #<2560
+        sta LDR_LEN_LO
+        lda #>2560
+        sta LDR_LEN_HI
+        jsr copy_block
+
         // Copy screen colors to $4400-$47E7 in the same VIC bank.
         lda #<startup_logo_screen
         sta LDR_SRC_LO
@@ -155,6 +172,21 @@ show_logo:
         lda #<1000
         sta LDR_LEN_LO
         lda #>1000
+        sta LDR_LEN_HI
+        jsr copy_block
+
+        // Overlay screen RAM for the hi-res text rows.
+        lda #<startup_hires_screen
+        sta LDR_SRC_LO
+        lda #>startup_hires_screen
+        sta LDR_SRC_HI
+        lda #$A8                    // $46A8 = $4400 + 17*40
+        sta LDR_DST_LO
+        lda #$46
+        sta LDR_DST_HI
+        lda #<320
+        sta LDR_LEN_LO
+        lda #>320
         sta LDR_LEN_HI
         jsr copy_block
 
@@ -201,19 +233,46 @@ show_logo:
 
 // ---------------------------------------------------------
 // Keep the logo visible for roughly two seconds.
+// Each frame: multicolor for the lobster (rows 0-16), then
+// raster-split to standard hi-res for the text (rows 17-24).
 // ---------------------------------------------------------
+.const SPLIT_LINE = 185  // two lines before row 17 to avoid any skew at the boundary
+
 wait_logo:
         ldx #120
 wl_frame:
-        lda #$FF
-wl_wait1:
-        cmp $D012
-        bne wl_wait1
-wl_wait2:
+        // Wait for top of frame (raster < 51, 9th bit clear).
+wl_top:
+        bit $D011
+        bmi wl_top              // raster >= 256, keep waiting
         lda $D012
-        beq wl_done_frame
-        jmp wl_wait2
-wl_done_frame:
+        cmp #51
+        bcs wl_top              // raster >= 51, keep waiting
+
+        // Top of frame — multicolor is already on.
+
+        // Wait for the split point.
+wl_split:
+        lda $D012
+        cmp #SPLIT_LINE
+        bcc wl_split
+
+        // Switch to standard hi-res (clear multicolor bit).
+        lda $D016
+        and #%11101111
+        sta $D016
+
+        // Wait for end of visible area.
+wl_bot:
+        lda $D012
+        cmp #251
+        bcc wl_bot
+
+        // Restore multicolor for the next frame's top portion.
+        lda $D016
+        ora #%00010000
+        sta $D016
+
         dex
         bne wl_frame
         rts
@@ -415,3 +474,9 @@ startup_logo_bg:
 
 startup_logo_color:
         .import binary "assets/startup-logo-lobster-color.bin"
+
+startup_hires_bitmap:
+        .import binary "assets/startup-logo-lobster-bitmap-hires-bottom.bin"
+
+startup_hires_screen:
+        .import binary "assets/startup-logo-lobster-screen-hires-bottom.bin"
