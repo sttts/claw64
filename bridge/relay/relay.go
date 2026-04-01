@@ -77,11 +77,6 @@ const runningAckQuietWindow = 1500 * time.Millisecond
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
 const textAckTimeout = 7 * time.Second
 
-// runningStatusAckTimeout keeps STATUS polling responsive while BASIC is
-// running by retrying lost requests quickly without exceeding a normal
-// end-to-end timeout budget.
-const runningStatusAckTimeout = 400 * time.Millisecond
-
 // c64FrameTimeout is how long the bridge waits for any C64 frame
 // before triggering a stall dump.
 const c64FrameTimeout = 8 * time.Second
@@ -638,23 +633,6 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 }
 
 func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, name string) error {
-	if frame.Type == serial.FrameStatusReq && r.basicRunning {
-		return r.sendVerifiedOrSemanticWith(
-			ctx,
-			frame,
-			name,
-			runningStatusAckTimeout,
-			[]time.Duration{
-				50 * time.Millisecond,
-				50 * time.Millisecond,
-				50 * time.Millisecond,
-				50 * time.Millisecond,
-				50 * time.Millisecond,
-				50 * time.Millisecond,
-			},
-		)
-	}
-
 	return r.sendVerifiedOrSemanticWith(ctx, frame, name, ackTimeout, []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second})
 }
 
@@ -834,11 +812,12 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) 
 }
 
 func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.Duration) (bool, error) {
-	waitCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	deadline := time.Now().Add(timeout)
 
 	for {
+		waitCtx, cancel := context.WithDeadline(ctx, deadline)
 		f, err := r.recvFromSocketOnly(waitCtx, false)
+		cancel()
 		if err != nil {
 			return false, err
 		}
@@ -859,6 +838,7 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			if r.acceptC64Frame(&f, true) {
 				continue
 			}
+			deadline = time.Now().Add(timeout)
 			fmt.Fprintln(os.Stderr)
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
 		case serial.FrameHeartbeat:
@@ -867,9 +847,9 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			if r.acceptC64Frame(&f, true) {
 				continue
 			}
-			r.rememberLateAck(id)
+			deadline = time.Now().Add(timeout)
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
-			return true, nil
+			continue
 		default:
 			return false, fmt.Errorf("unexpected frame while waiting for ACK: %s", serial.TypeName(f.Type))
 		}

@@ -788,7 +788,7 @@ bsout_rx_loop:
         dex
         bne bsout_rx_loop
 bsout_rx_done:
-        jsr drain_ack_outbound
+        jsr drain_running_control_outbound
 
 bsout_done:
         pla
@@ -800,6 +800,30 @@ bsout_done:
 
 bsout_call_old:
         jmp (old_bsout_lo)
+
+// drain_running_control_outbound — keep running-mode control replies moving
+// while BASIC is actively printing, without driving the full outbound state
+// machine from inside BSOUT.
+drain_running_control_outbound:
+        lda state_pending
+        bne drco_service
+
+        lda ack_pos
+        cmp ack_total
+        bne drco_service
+
+        lda send_pos
+        cmp send_total
+        beq drco_done
+        lda send_buf+1
+        cmp #FRAME_STATUS
+        bne drco_done
+
+drco_service:
+        jsr service_outbound
+
+drco_done:
+        rts
 
 // service_running — state maintenance while BASIC is executing.
 // Once a program runs for long enough without returning to READY.,
@@ -885,36 +909,6 @@ so_build_next:
         bne so_chk_ack_wait
         lda #0
         sta deferred_ack
-        lda #1
-        sta ack_pending
-
-        // EXEC is also semantic-boundary ACKed. Only ACK the inbound EXEC
-        // after the resulting outbound STATUS/RESULT/ERROR traffic has
-        // fully drained and the bridge has ACKed it, so the next bridge
-        // frame cannot arrive while this semantic completion is still
-        // transport-live.
-so_chk_exec_ack:
-        lda exec_ack_pending
-        beq so_chk_ack_wait
-        lda prompt_pending
-        ora result_pending
-        ora llm_pending
-        ora text_pending
-        ora state_pending
-        bne so_chk_ack_wait
-        lda send_pos
-        cmp send_total
-        bne so_chk_ack_wait
-        lda ack_pos
-        cmp ack_total
-        bne so_chk_ack_wait
-        lda tx_ack_wait
-        bne so_chk_ack_wait
-        lda RODBE
-        cmp RODBS
-        bne so_chk_ack_wait
-        lda #0
-        sta exec_ack_pending
         lda #1
         sta ack_pending
 
@@ -2106,6 +2100,12 @@ cef_done:
         rts
 
 commit_exec_ack_if_pending:
+        lda exec_ack_pending
+        beq ceap_done
+        lda #0
+        sta exec_ack_pending
+        lda #1
+        sta ack_pending
 ceap_done:
         rts
 
