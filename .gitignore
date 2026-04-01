@@ -5,3 +5,4 @@ c64/*.sym
 /debug/
 /.claude/
 .ports
+__pycache__/

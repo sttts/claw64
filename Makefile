@@ -27,7 +27,7 @@ ECHO_OUT    = c64/echotest.prg
 VEC_SRC     = c64/vectest.asm
 VEC_OUT     = c64/vectest.prg
 
-.PHONY: assemble echotest vice vice-echo bridge run test-serial ports kill clean clean-all clean-ports
+.PHONY: assemble assets echotest vice vice-echo bridge run test-serial ports kill clean clean-all clean-ports
 
 # download KickAssembler if not present
 $(KICKASS_JAR):
@@ -44,6 +44,10 @@ $(PORT_FILE):
 	 echo "SERIAL_PORT=$$SERIAL" > $(PORT_FILE); \
 	 echo "MONITOR_PORT=$$MONITOR" >> $(PORT_FILE); \
 	 echo "Allocated ports: serial=$$SERIAL monitor=$$MONITOR"
+
+# regenerate C64 binary assets from source PNGs (requires Pillow)
+assets:
+	python3 c64/tools/png_to_c64.py
 
 # assemble the C64 loader (includes agent.asm via #import)
 assemble: $(KICKASS_JAR)
