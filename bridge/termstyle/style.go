@@ -13,6 +13,8 @@ const (
 	bold  = "\033[1m"
 	cyan  = "\033[96m"
 	green = "\033[92m"
+	yellow = "\033[93m"
+	red   = "\033[91m"
 )
 
 func enabled(file *os.File) bool {
@@ -32,6 +34,14 @@ func wrap(file *os.File, style, text string) string {
 
 func Dim(text string) string {
 	return wrap(os.Stderr, dim, text)
+}
+
+func Warn(text string) string {
+	return wrap(os.Stderr, yellow, text)
+}
+
+func Error(text string) string {
+	return wrap(os.Stderr, red, text)
 }
 
 func UserPrompt(text string) string {

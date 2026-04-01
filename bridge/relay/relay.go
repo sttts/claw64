@@ -71,7 +71,7 @@ const textChunkMax = 62
 // whether BASIC is running — the C64 ACKs at transport level.
 const ackTimeout = 3 * time.Second
 const ackQuietWindow = 150 * time.Millisecond
-const runningAckQuietWindow = 1500 * time.Millisecond
+const runningAckQuietWindow = 3 * time.Second
 
 // textAckTimeout allows one inbound TEXT chunk, the resulting USER frame,
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.

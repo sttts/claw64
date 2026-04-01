@@ -1139,9 +1139,9 @@ irq_rx_done:
         sta busy
         lda #AG_IDLE
         sta agent_state
-        lda result_pending
-        bne irq_tx_check
-        jsr prepare_result_chunks
+        // Detached RUN-completion is observed via STATUS/SCREENSHOT.
+        // Do not auto-emit RESULT here or it will overlap with the
+        // explicit completion polling flow from the bridge.
         jmp irq_tx_check
 
 irq_wait_state:
@@ -2007,6 +2007,19 @@ fd_status_now_ready:
         sta running_reported
         jmp fd_status_ready
 fd_status_running:
+        lda tx_ack_wait
+        beq fd_status_queue
+        lda send_buf+1
+        cmp #FRAME_STATUS
+        bne fd_status_queue
+        lda send_pos
+        cmp send_total
+        bne fd_done
+        lda #0
+        sta send_pos
+        sta tx_ack_timer
+        rts
+fd_status_queue:
         jsr queue_state_running
         rts
 
