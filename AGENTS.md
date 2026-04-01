@@ -93,7 +93,7 @@ allocation and `make kill` to stop processes without starting new ones.
 - If behavior and transport disagree, prefer the dump and the raw frame log over visual impressions.
 
 ### VICE monitor
-- VICE is started with `-remotemonitor -remotemonitoraddress 127.0.0.1:6510`.
+- VICE is started with `-remotemonitor -remotemonitoraddress <worktree-monitor-port>`.
 - The stall dumper already talks to that monitor automatically.
 - If you need to inspect manually, connect to the monitor and check:
   - CPU registers

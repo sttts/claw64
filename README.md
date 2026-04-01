@@ -186,50 +186,26 @@ so `--loader-prg` is only needed to override it.
 
 ## Serial Protocol
 
-The C64 communicates with the outside world via serial frames.
-The bridge translates frames to HTTP/chat APIs — it never decides anything.
+The wire protocol is defined in [`PROTOCOL.md`](/Users/sts/Quellen/slagent/claw64/PROTOCOL.md).
 
-```
-┌──────┬──────┬────────┬─────────────┬──────┐
-│ SYNC │ TYPE │ LENGTH │ PAYLOAD     │ CHK  │
-│ 0xFE │ 1 b  │ 1 byte │ 0-255 bytes │ XOR  │
-└──────┴──────┴────────┴─────────────┴──────┘
-```
+At a high level:
 
-Payloads are raw bytes. Text-carrying frames use plain text payloads.
+- the C64 communicates with the outside world via binary serial frames
+- the bridge translates those frames to HTTP/chat APIs, but does not decide anything
+- reliable frames use 1-byte transport ids with explicit ACKs
+- `EXEC` is the only execution request
+- TEXT responses still flow `LLM -> bridge -> C64 -> bridge -> user`
+- SYSTEM and RESULT use chunked text payloads above the frame transport
+- tool calls are strictly sequential
 
-### Frame types
+See `PROTOCOL.md` for:
 
-```
-Bridge → C64:
-  M  MSG         User's chat message ("What is 6502*8?")
-  E  EXEC        Tool call: BASIC command to execute ("PRINT 6502*8")
-  P  SCREENSHOT  Request current visible text screen
-  T  TEXT        LLM's final answer, forward to chat user
-
-C64 → Bridge:
-  R  RESULT      Tool result (EXEC output or screenshot text)
-  L  LLM_MSG     Context message for the LLM
-  X  ERROR       Tool call timed out
-  T  TEXT        LLM's answer forwarded back to user (C64 relays it)
-  S  SYSTEM      System prompt chunk (sent on first MSG)
-```
-
-The bridge is a pure relay — no shortcuts. TEXT responses flow
-LLM→bridge→C64→bridge→user. The C64 forwards every TEXT frame back.
-Tool calls are strictly sequential: the bridge executes at most one tool
-call from a model response, feeds that tool result back into history, and
-only then asks the model for the next step.
-
-The system prompt — the C64's soul — lives in the C64's memory. On the
-first message, it's sent as chunked SYSTEM frames before the LLM_MSG.
-
-SYSTEM and RESULT use a 2-byte chunk header: `[chunk_index, total_chunks]`.
-TEXT is chunked by the bridge into 120-byte payload frames and reassembled
-after the C64 forwards them back. The bridge waits for each forwarded TEXT
-chunk before sending the next chunk. Tool calls are also one-at-a-time:
-if the model wants to store a numbered BASIC line and then run it, it must
-first wait for `STORED`, then issue a later `exec("RUN")`.
+- exact frame layout
+- frame classes
+- ACK semantics
+- duplicate suppression
+- retry rules
+- chunking and serialization rules
 
 ### Example flow
 
