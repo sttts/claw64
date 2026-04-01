@@ -4,3 +4,4 @@ c64/*.sym
 /claw64-bridge
 /debug/
 /.claude/
+.ports

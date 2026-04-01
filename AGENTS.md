@@ -64,11 +64,21 @@ Module: `github.com/sttts/claw64`
 - Full stack: `make run` (assembles, starts bridge + VICE, kills VICE on exit)
 - Bridge only: `make bridge` (requires Go)
 - Serial test: `make test-serial`
+- Show ports: `make ports` (prints serial + monitor ports for this worktree)
+- Kill running: `make kill` (kills VICE/bridge on this worktree's ports)
+
+### Per-worktree ports
+Each directory gets its own TCP ports for VICE serial and monitor,
+stored in `.ports` (gitignored, created on first `make vice`/`make run`).
+Multiple worktrees can run VICE concurrently without port collisions.
+`make vice` and `make run` automatically kill the previous instance on
+the same ports before starting. Use `make ports` to see the current
+allocation and `make kill` to stop processes without starting new ones.
 
 ## Debugging Workflow
 - Prefer `make run` for end-to-end debugging. It assembles, starts the bridge, and spawns VICE with RS232 and remote monitor enabled.
 - Prefer `make vice` plus `make bridge` in separate terminals when you need to restart only one side.
-- VICE remote monitor listens on `127.0.0.1:6510`. Use it whenever the C64 seems stuck, corrupted, or silent.
+- VICE remote monitor listens on the worktree's monitor port (`make ports` to check). Use it whenever the C64 seems stuck, corrupted, or silent.
 - The bridge writes stall dumps to `debug/stall-YYYYMMDD-HHMMSS.log` when transport or tool execution stalls.
 - Always inspect the latest stall dump before guessing. The dump is the primary forensic artifact.
 

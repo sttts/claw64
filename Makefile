@@ -7,13 +7,9 @@
 
 VICE        ?= x64sc
 
-# VICE RS232 flags: map userport to TCP socket
-# VICE acts as TCP client — bridge must listen on port 25232 FIRST
-# -rsdev1: TCP endpoint VICE connects to when C64 opens RS232
-# -rsuserdev 0: map userport to rsdev1
-# -rsuserbaud: emulated baud rate (must match C64 software)
-VICE_RS     = -rsdev1 "127.0.0.1:25232" -userportdevice 2 -rsuserdev 0 -rsuserbaud 2400
-VICE_MON    = -remotemonitor -remotemonitoraddress 127.0.0.1:6510
+# Per-worktree port file — allocates sticky serial + monitor ports so
+# multiple worktrees can run VICE concurrently without collisions.
+PORT_FILE = .ports
 
 # KickAssembler (auto-downloaded)
 KICKASS_DIR  = build/kickassembler
@@ -31,7 +27,7 @@ ECHO_OUT    = c64/echotest.prg
 VEC_SRC     = c64/vectest.asm
 VEC_OUT     = c64/vectest.prg
 
-.PHONY: assemble echotest vice vice-echo bridge run test-serial clean clean-all
+.PHONY: assemble echotest vice vice-echo bridge run test-serial ports kill clean clean-all clean-ports
 
 # download KickAssembler if not present
 $(KICKASS_JAR):
@@ -40,6 +36,14 @@ $(KICKASS_JAR):
 	unzip -o -q $(KICKASS_ZIP) -d $(KICKASS_DIR)
 	@rm -f $(KICKASS_ZIP)
 	@test -f $(KICKASS_JAR) || { echo "ERROR: KickAss.jar not found after unzip"; exit 1; }
+
+# allocate two free TCP ports and persist them for this worktree
+$(PORT_FILE):
+	@SERIAL=$$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()"); \
+	 MONITOR=$$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()"); \
+	 echo "SERIAL_PORT=$$SERIAL" > $(PORT_FILE); \
+	 echo "MONITOR_PORT=$$MONITOR" >> $(PORT_FILE); \
+	 echo "Allocated ports: serial=$$SERIAL monitor=$$MONITOR"
 
 # assemble the C64 loader (includes agent.asm via #import)
 assemble: $(KICKASS_JAR)
@@ -51,41 +55,76 @@ echotest: $(KICKASS_JAR)
 	java -jar $(KICKASS_JAR) -o $(ECHO_OUT) $(ECHO_SRC)
 
 # launch VICE with the agent and RS232 enabled
-# Agent is auto-loaded but not auto-run. Type SYS 49152 to start.
-vice: assemble
-	$(VICE) $(VICE_RS) $(VICE_MON) -autostart $(LOADER_OUT)
+vice: assemble $(PORT_FILE)
+	@. ./$(PORT_FILE); \
+	lsof -ti :$$SERIAL_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
+	lsof -ti :$$MONITOR_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
+	echo "VICE: serial=$$SERIAL_PORT monitor=$$MONITOR_PORT"; \
+	$(VICE) \
+	  -rsdev1 "127.0.0.1:$$SERIAL_PORT" -userportdevice 2 -rsuserdev 0 -rsuserbaud 2400 \
+	  -remotemonitor -remotemonitoraddress "127.0.0.1:$$MONITOR_PORT" \
+	  -autostart $(LOADER_OUT)
 
 # assemble the vector test
 vectest: $(KICKASS_JAR)
 	java -jar $(KICKASS_JAR) -o $(VEC_OUT) $(VEC_SRC)
 
 # launch VICE with vector test (to find which vectors fire at READY prompt)
-vice-vec: vectest
-	$(VICE) $(VICE_RS) -autostart $(VEC_OUT)
+vice-vec: vectest $(PORT_FILE)
+	@. ./$(PORT_FILE); \
+	$(VICE) \
+	  -rsdev1 "127.0.0.1:$$SERIAL_PORT" -userportdevice 2 -rsuserdev 0 -rsuserbaud 2400 \
+	  -autostart $(VEC_OUT)
 
 # launch VICE with the echo test
-vice-echo: echotest
-	$(VICE) $(VICE_RS) -autostartprgmode 1 $(ECHO_OUT)
+vice-echo: echotest $(PORT_FILE)
+	@. ./$(PORT_FILE); \
+	$(VICE) \
+	  -rsdev1 "127.0.0.1:$$SERIAL_PORT" -userportdevice 2 -rsuserdev 0 -rsuserbaud 2400 \
+	  -autostartprgmode 1 $(ECHO_OUT)
 
 # launch everything via the bridge CLI. By default, it spawns VICE itself.
-run: assemble
-	@-lsof -ti :25232 2>/dev/null | xargs kill 2>/dev/null; true
-	@-pkill -f "$(VICE).*$(LOADER_OUT)" 2>/dev/null; true
-	go run ./cmd/claw64-bridge --vice-bin $(VICE) stdin
+run: assemble $(PORT_FILE)
+	@. ./$(PORT_FILE); \
+	lsof -ti :$$SERIAL_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
+	go run ./cmd/claw64-bridge \
+	  --serial-addr "127.0.0.1:$$SERIAL_PORT" \
+	  --monitor-addr "127.0.0.1:$$MONITOR_PORT" \
+	  --vice-bin $(VICE) stdin
 
 # run the Go bridge without spawning VICE
-bridge:
-	@-lsof -ti :25232 2>/dev/null | xargs kill 2>/dev/null; true
-	go run ./cmd/claw64-bridge --spawn-vice=false stdin
+bridge: $(PORT_FILE)
+	@. ./$(PORT_FILE); \
+	lsof -ti :$$SERIAL_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
+	go run ./cmd/claw64-bridge \
+	  --serial-addr "127.0.0.1:$$SERIAL_PORT" \
+	  --monitor-addr "127.0.0.1:$$MONITOR_PORT" \
+	  --spawn-vice=false stdin
 
 # run the serial test tool (TCP server on port 25232)
 test-serial:
 	cd tools && go run serialtest.go
 
+# show allocated ports for this worktree
+ports: $(PORT_FILE)
+	@. ./$(PORT_FILE); \
+	echo "serial=$$SERIAL_PORT monitor=$$MONITOR_PORT"
+
+# kill VICE/bridge running on this worktree's ports
+kill: $(PORT_FILE)
+	@. ./$(PORT_FILE); \
+	lsof -ti :$$SERIAL_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
+	lsof -ti :$$MONITOR_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
+	echo "killed processes on serial=$$SERIAL_PORT monitor=$$MONITOR_PORT"
+
 # remove build artifacts
 clean:
 	rm -f $(ASM_OUT) c64/*.sym
 
+# remove port allocation
+clean-ports:
+	rm -f $(PORT_FILE)
+
 # remove everything including downloaded tools
-clean-all: clean
+clean-all: clean clean-ports
 	rm -rf build/

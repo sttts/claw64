@@ -24,7 +24,8 @@ import (
 )
 
 type CLI struct {
-	SerialAddr string `name:"serial-addr" default:"127.0.0.1:25232" help:"Serial TCP address VICE connects to."`
+	SerialAddr  string `name:"serial-addr" default:"127.0.0.1:25232" help:"Serial TCP address VICE connects to."`
+	MonitorAddr string `name:"monitor-addr" default:"127.0.0.1:6510" help:"VICE remote monitor address."`
 	LLM        string `name:"llm" default:"openai" enum:"anthropic,openai,ollama" help:"LLM backend."`
 	Model      string `name:"model" help:"Override the LLM model name."`
 	LLMURL     string `name:"llm-url" help:"Override the OpenAI/Ollama-compatible endpoint URL."`
@@ -213,7 +214,7 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 		LLM:         llmClient,
 		History:     relay.NewHistory(),
 		DebugDir:    "debug",
-		MonitorAddr: "127.0.0.1:6510",
+		MonitorAddr: cfg.MonitorAddr,
 		SymbolPath:  defaultSymbolPath(),
 	}
 	rl.SetupProgress()
@@ -313,7 +314,7 @@ func spawnVICE(cfg CLI, loaderPath string) (*exec.Cmd, error) {
 		"-rsuserdev", "0",
 		"-rsuserbaud", "2400",
 		"-remotemonitor",
-		"-remotemonitoraddress", "127.0.0.1:6510",
+		"-remotemonitoraddress", cfg.MonitorAddr,
 		"-autostart", loaderPath,
 	}
 
