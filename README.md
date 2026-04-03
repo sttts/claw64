@@ -15,7 +15,7 @@ world. The bridge is a dumb relay: it proxies LLM calls and chat messages on
 behalf of the C64 over that serial link.
 
 <p align="center">
-  <img src="video-93750952.gif" width="80%" alt="Claw64 running in VICE">
+  <img src="video-874892ea.gif" width="80%" alt="Claw64 running in VICE">
 </p>
 
 > [!IMPORTANT]
