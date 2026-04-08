@@ -62,7 +62,7 @@ It must originate in the C64 TSR, not in the bridge.
 ### Semantics
 
 - when the C64 is idle long enough, the TSR generates a heartbeat event
-- the heartbeat may trigger an LLM call
+- the heartbeat triggers an LLM call
 - the heartbeat may result in tool calls
 - the heartbeat may or may not produce user-visible text
 
@@ -81,6 +81,10 @@ For this design, "activity" means any meaningful agent or chat event:
 - outbound user-visible `TEXT`
 - an LLM cycle started by heartbeat or user input
 
+Heartbeat therefore means genuine silence.
+
+If there is pending user input, that is no longer a heartbeat condition.
+
 ### Optional User Text
 
 Heartbeat output to chat must be optional.
@@ -93,6 +97,17 @@ The soul should say this explicitly:
 
 This same optionality should apply to non-heartbeat LLM cycles too. The system
 should stop assuming every cycle must end in `TEXT`.
+
+### Heartbeat Payload
+
+Heartbeat uses a normal C64-originated `LLM_MSG`.
+
+Initial content:
+
+- `[heartbeat] idle for 10 minutes`
+
+The bridge does not need special heartbeat semantics. It just forwards the
+normal C64 `LLM_MSG` to the LLM backend.
 
 ### End of LLM Cycle
 
@@ -136,7 +151,8 @@ Instead:
 
 - the bridge queues the new user text for the single configured chat
 - the C64 receives it when transport allows
-- the next LLM call includes all pending user messages since the previous LLM call
+- the next LLM call includes all pending user messages since the previous LLM
+  call, preserving each message as its own message entry
 
 This removes the strict turn boundary from user interaction.
 
@@ -147,6 +163,7 @@ Use a fixed-size ring buffer for pending user input on the C64 side.
 Initial limit:
 
 - `1024 bytes` total pending user text
+- at most `8` queued user messages
 
 Overflow policy:
 
@@ -204,6 +221,23 @@ If a write exceeds the size limit:
 
 - reject it explicitly
 - do not silently truncate
+
+Suggested `MEMORY_FULL` format:
+
+```text
+== NOTE ==
+Observed that user prefers silent heartbeat turns.
+
+== NOTE ==
+Remember to inspect BASIC listing before suggesting RUN.
+```
+
+This is intentionally plain:
+
+- human-readable
+- easy to rewrite wholesale
+- easy to parse as text on the C64
+- no timestamps, because a stock C64 has no real clock
 
 ### Ownership
 
@@ -347,13 +381,6 @@ These still need precise decisions:
    - dedicated protocol frame?
    - state transition plus transport ACK?
    - another internal-only completion mechanism?
-
-2. How should multiple queued user messages be coalesced before the next LLM call?
-
-3. What exact on-disk text format should `MEMORY_SUMMARY` and `MEMORY_FULL` use?
-   - raw text
-   - line-oriented blocks
-   - timestamped sections
 
 ## Summary
 
