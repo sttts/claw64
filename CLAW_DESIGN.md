@@ -287,6 +287,16 @@ semantic changes.
 5. The system needs an internal end-of-cycle signal or state transition for
    LLM responses that produce no user-visible `TEXT`.
 
+The first implementation should not add a new protocol frame for this.
+
+Instead:
+
+- the bridge delivers the LLM response normally
+- the C64 parses it
+- if it contains no tool call and no `TEXT`, the C64 treats that as
+  "LLM replied with no outward action"
+- the C64 clears its in-flight LLM state and returns to idle/event-waiting
+
 ## C64 State Machine Consequences
 
 The C64 will need a more explicit event queue / pending-state model.
@@ -372,15 +382,6 @@ Not needed immediately:
 - bridge-side autonomous scheduling
 - complex structured memory formats
 - bridge-side summarization pretending to be memory
-
-## Open Questions
-
-These still need precise decisions:
-
-1. What exact internal signal marks "LLM cycle finished with no user text"?
-   - dedicated protocol frame?
-   - state transition plus transport ACK?
-   - another internal-only completion mechanism?
 
 ## Summary
 
