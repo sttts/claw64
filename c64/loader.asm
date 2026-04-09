@@ -10,6 +10,7 @@
 .const LDR_SRC_HI = $FC
 .const LDR_DST_LO = $FD
 .const LDR_DST_HI = $FE
+.const LDR_PROCPORT = $01
 
 // Save buffers must live above the PRG end to avoid corrupting
 // inline source data.  The PRG currently ends around $5100-$5200;
@@ -47,6 +48,25 @@ ldr_cp: lda (LDR_SRC_LO),y
         inc LDR_DST_HI
         dex
         bne ldr_cp
+
+        // Copy cold helper code into RAM under BASIC ROM at $A000.
+        lda #%00110101
+        sta LDR_PROCPORT
+        lda #<cold_data
+        sta LDR_SRC_LO
+        lda #>cold_data
+        sta LDR_SRC_HI
+        lda #<COLD_CODE_BASE
+        sta LDR_DST_LO
+        lda #>COLD_CODE_BASE
+        sta LDR_DST_HI
+        lda #<(cold_end - cold_data)
+        sta LDR_LEN_LO
+        lda #>(cold_end - cold_data)
+        sta LDR_LEN_HI
+        jsr copy_block
+        lda #%00110111
+        sta LDR_PROCPORT
 
         jsr wait_logo
         jsr hide_logo
@@ -360,6 +380,13 @@ agent_data:
 }
 agent_end:
 
+// Cold helper code stored inline — assembled as if at $A000.
+cold_data:
+.pseudopc COLD_CODE_BASE {
+        #import "cold.asm"
+}
+cold_end:
+
 // System prompt text — copied to SOUL_BASE at boot.
 .encoding "petscii_mixed"
 soul_data:
@@ -471,6 +498,7 @@ startup_hires_screen:
 .assert "user queue region must end before memory staging", USERQ_BASE < USERQ_LIMIT, true
 .assert "memory staging must stay below resident runtime", MEM_STAGE_BASE < MEM_STAGE_LIMIT, true
 .assert "memory staging must not overlap resident runtime", MEM_STAGE_LIMIT <= AGENT_BASE, true
+.assert "cold code must fit inside reserved region", COLD_CODE_BASE + (cold_end - cold_data) <= COLD_CODE_LIMIT, true
 .assert "loader runtime must fit below AGENT_RXBUF", agent_end <= AGENT_RXBUF, true
 .assert "AGENT_RXBUF must fit before AGENT_TXBUF", AGENT_RXBUF + AGENT_RXBUF_LEN <= AGENT_TXBUF, true
 .assert "AGENT_TXBUF must stay below $D000", AGENT_TXBUF + AGENT_TXBUF_LEN <= $D000, true
