@@ -2,7 +2,9 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/sttts/claw64/bridge/llm"
 )
@@ -80,5 +82,58 @@ func TestAppendC64LLMEventUsesBackendCompatibleUserRole(t *testing.T) {
 	}
 	if got[0].Content != "[heartbeat] idle for 10 minutes" {
 		t.Fatalf("content = %q", got[0].Content)
+	}
+}
+
+func TestAcquireMessageGateWaitsUntilRelease(t *testing.T) {
+	r := &Relay{
+		msgRetryBase: 2 * time.Millisecond,
+		msgRetryMax:  4 * time.Millisecond,
+	}
+	if err := r.acquireMessageGate(context.Background()); err != nil {
+		t.Fatalf("first acquire error = %v", err)
+	}
+
+	acquired := make(chan error, 1)
+	go func() {
+		acquired <- r.acquireMessageGate(context.Background())
+	}()
+
+	select {
+	case err := <-acquired:
+		t.Fatalf("second acquire returned too early: %v", err)
+	case <-time.After(5 * time.Millisecond):
+	}
+
+	r.releaseMessageGate()
+
+	select {
+	case err := <-acquired:
+		if err != nil {
+			t.Fatalf("second acquire error = %v", err)
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("second acquire did not complete after release")
+	}
+
+	r.releaseMessageGate()
+}
+
+func TestAcquireMessageGateHonorsContextWhileBusy(t *testing.T) {
+	r := &Relay{
+		msgRetryBase: 5 * time.Millisecond,
+		msgRetryMax:  5 * time.Millisecond,
+	}
+	if err := r.acquireMessageGate(context.Background()); err != nil {
+		t.Fatalf("first acquire error = %v", err)
+	}
+	defer r.releaseMessageGate()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Millisecond)
+	defer cancel()
+
+	err := r.acquireMessageGate(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("acquire error = %v, want deadline exceeded", err)
 	}
 }

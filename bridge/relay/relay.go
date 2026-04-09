@@ -56,6 +56,10 @@ type Relay struct {
 	lastC64FrameAt  time.Time
 	recvOnce        sync.Once
 	recvCh          chan recvResult
+	msgGateMu       sync.Mutex
+	msgGateBusy     bool
+	msgRetryBase    time.Duration
+	msgRetryMax     time.Duration
 }
 
 type recvResult struct {
@@ -95,6 +99,60 @@ var llmTools = []llm.Tool{
 	llm.TextScreenshotTool,
 	llm.BasicStopTool,
 	llm.BasicStatusTool,
+}
+
+func (r *Relay) messageRetryBase() time.Duration {
+	if r.msgRetryBase > 0 {
+		return r.msgRetryBase
+	}
+	return 100 * time.Millisecond
+}
+
+func (r *Relay) messageRetryMax() time.Duration {
+	if r.msgRetryMax > 0 {
+		return r.msgRetryMax
+	}
+	return 1 * time.Second
+}
+
+func (r *Relay) acquireMessageGate(ctx context.Context) error {
+	backoff := r.messageRetryBase()
+	maxBackoff := r.messageRetryMax()
+
+	for {
+		r.msgGateMu.Lock()
+		if !r.msgGateBusy {
+			r.msgGateBusy = true
+			r.msgGateMu.Unlock()
+			return nil
+		}
+		r.msgGateMu.Unlock()
+
+		log.Printf("%s", flowLine("USER", "↺", "bridge", "busy", fmt.Sprintf("retry in %s", backoff)))
+
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
+}
+
+func (r *Relay) releaseMessageGate() {
+	r.msgGateMu.Lock()
+	r.msgGateBusy = false
+	r.msgGateMu.Unlock()
 }
 
 // handleSystemFrame assembles SYSTEM prompt chunks from the C64.
@@ -257,6 +315,11 @@ type basicExecArgs struct {
 // message through emit. A relay cycle may also complete without any
 // user-visible text.
 func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text string, emit func(string) error) error {
+	if err := r.acquireMessageGate(ctx); err != nil {
+		return fmt.Errorf("wait for relay idle: %w", err)
+	}
+	defer r.releaseMessageGate()
+
 	text = serial.ToASCII(text)
 
 	// send user message to C64 (header now, chars stream via callback)
