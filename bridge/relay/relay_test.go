@@ -65,3 +65,20 @@ func TestShouldUseCompletionGraceWindow(t *testing.T) {
 		t.Fatalf("grace window enabled while BASIC is still running")
 	}
 }
+
+func TestAppendC64LLMEventUsesBackendCompatibleUserRole(t *testing.T) {
+	r := &Relay{History: NewHistory()}
+
+	r.appendC64LLMEvent("u", "[heartbeat] idle for 10 minutes")
+
+	got := r.History.Get("u")
+	if len(got) != 1 {
+		t.Fatalf("history len = %d, want 1", len(got))
+	}
+	if got[0].Role != "user" {
+		t.Fatalf("role = %q, want user", got[0].Role)
+	}
+	if got[0].Content != "[heartbeat] idle for 10 minutes" {
+		t.Fatalf("content = %q", got[0].Content)
+	}
+}

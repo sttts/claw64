@@ -311,7 +311,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 		// SYSTEM is streamed during receive; the other frame types are
 		// logged only after full decode/unwrap.
 		if f.Type == serial.FrameLLM {
-			log.Printf("%s", flowLine("LLM", "←", "C64", "PROMPT", string(f.Payload)))
+			log.Printf("%s", flowLine("LLM", "←", "C64", "EVENT", string(f.Payload)))
 		}
 		if f.Type == serial.FrameUser {
 			log.Printf("%s", flowLine("USER", "←", "C64", "TEXT", fmt.Sprintf("len=%d text=%q", len(f.Payload), truncate(string(f.Payload), 60))))
@@ -320,7 +320,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 		switch f.Type {
 		case serial.FrameLLM:
 			fmt.Fprintln(r.streamOut()) // newline after streamed payload
-			r.History.Append(userID, llm.Message{Role: "user", Content: string(f.Payload)})
+			r.appendC64LLMEvent(userID, string(f.Payload))
 			r.drainTrailingLLMMessages(userID)
 			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
@@ -501,8 +501,8 @@ func (r *Relay) drainTrailingLLMMessages(userID string) {
 		switch f.Type {
 		case serial.FrameLLM:
 			fmt.Fprintln(r.streamOut())
-			log.Printf("%s", flowLine("LLM", "←", "C64", "PROMPT", string(f.Payload)))
-			r.History.Append(userID, llm.Message{Role: "user", Content: string(f.Payload)})
+			log.Printf("%s", flowLine("LLM", "←", "C64", "EVENT", string(f.Payload)))
+			r.appendC64LLMEvent(userID, string(f.Payload))
 		case serial.FrameHeartbeat:
 			continue
 		case serial.FrameSystem:
@@ -513,6 +513,13 @@ func (r *Relay) drainTrailingLLMMessages(userID string) {
 			return
 		}
 	}
+}
+
+// appendC64LLMEvent records a C64-originated LLM input event in backend history.
+// Current LLM backends only understand standard chat roles, so these events are
+// serialized as user messages even though they originate on the C64 side.
+func (r *Relay) appendC64LLMEvent(userID, content string) {
+	r.History.Append(userID, llm.Message{Role: "user", Content: content})
 }
 
 // callAndDispatch calls the LLM and dispatches the response to the C64.
