@@ -109,6 +109,10 @@ type c64ReplyMsg string
 type logLineMsg string
 type streamMsg string
 type streamCommitMsg struct{}
+type settledMsg []consoleLine
+type flushScrollbackMsg struct{}
+type flushEarlyMsg struct{}
+type redrawMsg struct{}
 type handlerDoneMsg struct {
 	reply string
 	err   error
@@ -142,8 +146,11 @@ type tuiModel struct {
 	program *tea.Program
 
 	input       textinput.Model
+	settled     consoleLine
 	stream      consoleLine
 	earlyLines  []string // buffered before program start
+	ready       bool
+	scrollback  []string
 	width       int
 	interrupted bool
 	busy        bool
@@ -168,22 +175,34 @@ type consoleOps struct {
 }
 
 func (o consoleOps) Print(text string) tea.Cmd {
-	return emit(o.model.printStream(text, false))
+	lines := o.model.printStream(text, false)
+	if len(lines) == 0 {
+		return nil
+	}
+	return func() tea.Msg { return settledMsg(lines) }
 }
 
 func (o consoleOps) Log(text string) tea.Cmd {
-	return emit(o.model.printStream(text, true))
+	lines := o.model.printStream(text, true)
+	if len(lines) == 0 {
+		return nil
+	}
+	return func() tea.Msg { return settledMsg(lines) }
 }
 
 func (o consoleOps) Logln(line string) tea.Cmd {
-	return emit(o.model.printLog(line))
+	lines := o.model.printLog(line)
+	if len(lines) == 0 {
+		return nil
+	}
+	return func() tea.Msg { return settledMsg(lines) }
 }
 
 func (o consoleOps) Println(line string) tea.Cmd {
 	if line == "" {
 		return nil
 	}
-	return emit([]consoleLine{{text: line}})
+	return func() tea.Msg { return settledMsg([]consoleLine{{text: line}}) }
 }
 
 func (m *tuiModel) console() consoleOutput {
@@ -232,35 +251,83 @@ func (m *tuiModel) commitStream() []consoleLine {
 	return lines
 }
 
-// emit sends non-empty lines to scrollback with exactly one tea.Println.
-func emit(lines []consoleLine) tea.Cmd {
-	out := make([]string, 0, len(lines))
+func (m *tuiModel) wrappedLines(lines []consoleLine) []consoleLine {
+	out := make([]consoleLine, 0, len(lines))
 	for _, line := range lines {
-		if line.text != "" {
-			text := line.text
-			if line.dim {
-				text = termstyle.Dim(text)
+		if line.text == "" {
+			continue
+		}
+
+		text := line.text
+		if m.width > 0 {
+			text = xansi.Hardwrap(text, m.width, true)
+		}
+
+		for _, part := range strings.Split(text, "\n") {
+			if part != "" {
+				out = append(out, consoleLine{text: part, dim: line.dim})
 			}
-			out = append(out, text)
 		}
 	}
-	if len(out) == 0 {
+	return out
+}
+
+func (m *tuiModel) applySettled(lines []consoleLine) tea.Cmd {
+	wrapped := m.wrappedLines(lines)
+	if len(wrapped) == 0 {
 		return nil
 	}
-	return tea.Println(strings.Join(out, "\n"))
+
+	if m.settled.text != "" {
+		text := m.settled.text
+		if m.settled.dim {
+			text = termstyle.Dim(text)
+		}
+		m.scrollback = append(m.scrollback, text)
+		m.settled = consoleLine{}
+	}
+
+	for _, line := range wrapped[:max(0, len(wrapped)-1)] {
+		text := line.text
+		if line.dim {
+			text = termstyle.Dim(text)
+		}
+		m.scrollback = append(m.scrollback, text)
+	}
+	m.settled = wrapped[len(wrapped)-1]
+
+	return func() tea.Msg { return flushScrollbackMsg{} }
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func (m *tuiModel) flushScrollback() tea.Cmd {
+	if len(m.scrollback) == 0 {
+		return nil
+	}
+
+	out := m.scrollback[0]
+	m.scrollback = m.scrollback[1:]
+	return tea.Sequence(
+		tea.Println(out),
+		func() tea.Msg {
+			if len(m.scrollback) > 0 {
+				return flushScrollbackMsg{}
+			}
+			return redrawMsg{}
+		},
+	)
 }
 
 // --- Init / Update / View ---
 
 func (m *tuiModel) Init() tea.Cmd {
-	var lines []consoleLine
-	for _, line := range m.earlyLines {
-		if xansi.StringWidth(line) > 0 {
-			lines = append(lines, consoleLine{text: line, dim: true})
-		}
-	}
-	m.earlyLines = nil
-	return tea.Batch(emit(lines), m.input.Focus())
+	return m.input.Focus()
 }
 
 func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -268,7 +335,33 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		if !m.ready {
+			m.ready = true
+			return m, func() tea.Msg { return flushEarlyMsg{} }
+		}
 		return m, nil
+
+	case flushScrollbackMsg:
+		return m, m.flushScrollback()
+
+	case redrawMsg:
+		return m, nil
+
+	case flushEarlyMsg:
+		var lines []consoleLine
+		for _, line := range m.earlyLines {
+			if xansi.StringWidth(line) > 0 {
+				lines = append(lines, consoleLine{text: line, dim: true})
+			}
+		}
+		m.earlyLines = nil
+		if len(lines) == 0 {
+			return m, nil
+		}
+		return m, func() tea.Msg { return settledMsg(lines) }
+
+	case settledMsg:
+		return m, m.applySettled([]consoleLine(msg))
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
@@ -286,7 +379,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case c64ReplyMsg:
 		line := fmt.Sprintf("\033[1;92mc64>\033[0m %s", string(msg))
-		return m, m.console().Println(line)
+		return m, func() tea.Msg { return settledMsg([]consoleLine{{text: line}}) }
 
 	case logLineMsg:
 		return m, m.console().Logln(string(msg))
@@ -295,12 +388,18 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.console().Log(string(msg))
 
 	case streamCommitMsg:
-		return m, emit(m.commitStream())
+		lines := m.commitStream()
+		if len(lines) == 0 {
+			return m, nil
+		}
+		return m, func() tea.Msg { return settledMsg(lines) }
 
 	case handlerDoneMsg:
 		m.busy = false
 		if msg.err != nil {
-			return m, m.console().Println(fmt.Sprintf("\033[91merror: %v\033[0m", msg.err))
+			return m, func() tea.Msg {
+				return settledMsg([]consoleLine{{text: fmt.Sprintf("\033[91merror: %v\033[0m", msg.err)}})
+			}
 		}
 		return m, nil
 	}
@@ -311,15 +410,19 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) View() tea.View {
-	if m.stream.text == "" {
+	displayLine := m.stream
+	if displayLine.text == "" {
+		displayLine = m.settled
+	}
+	if displayLine.text == "" {
 		return tea.NewView(m.input.View())
 	}
 
-	display := strings.ReplaceAll(strings.ReplaceAll(m.stream.text, "\r", ""), "\n", "")
+	display := strings.ReplaceAll(strings.ReplaceAll(displayLine.text, "\r", ""), "\n", "")
 	if m.width > 0 {
 		display = xansi.Truncate(display, m.width, "")
 	}
-	if m.stream.dim {
+	if displayLine.dim {
 		display = termstyle.Dim(display)
 	}
 	return tea.NewView(display + "\n" + m.input.View())
@@ -353,7 +456,7 @@ func (m *tuiModel) handleEnter() (tea.Model, tea.Cmd) {
 	echo := fmt.Sprintf("\033[1;96myou>\033[0m %s", text)
 	m.busy = true
 	return m, tea.Batch(
-		m.console().Println(echo),
+		func() tea.Msg { return settledMsg([]consoleLine{{text: echo}}) },
 		func() tea.Msg {
 			reply, err := m.handler(m.ctx, "local", text)
 			if err != nil {
