@@ -65,6 +65,10 @@ ldr_cp: lda (LDR_SRC_LO),y
         lda #>(cold_end - cold_data)
         sta LDR_LEN_HI
         jsr copy_block
+
+        // Prove that ROM-shadow helper code can execute and return.
+        jsr cold_entry
+
         lda #%00110111
         sta LDR_PROCPORT
 
