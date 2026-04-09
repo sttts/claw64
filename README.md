@@ -145,26 +145,15 @@ so `--loader-prg` is only needed to override it.
 
 ### Burn-In
 
-Use the scripted burn-in scenarios to verify the protocol without LLM noise:
+The bridge includes scripted burn-in scenarios for deterministic end-to-end
+verification without LLM noise. The heavy default gate is:
 
 ```bash
-make vice
-go run ./cmd/claw64-bridge --spawn-vice=false burnin stop-screen
-go run ./cmd/claw64-bridge --spawn-vice=false burnin screen-repeat
-go run ./cmd/claw64-bridge --spawn-vice=false burnin direct-exec
+go run ./cmd/claw64-bridge burnin direct-exec
 ```
 
-`stop-screen` writes a long-running counter, runs it, sends `STOP`, polls
-`STATUS` until `READY.`, captures a screen snapshot, and verifies that the
-final user-visible `TEXT` still completes cleanly.
-
-`screen-repeat` stores a tiny program, verifies `LIST`, then requests two
-consecutive `SCREENSHOT`s to exercise repeated chunked `RESULT` delivery.
-
-`direct-exec` is the heavier mixed gate: it spans three user messages,
-exercises eleven `EXEC` calls, stores and lists a small BASIC program, runs it,
-and verifies the final `5050` output after the normal `RUNNING -> READY.`
-drain path.
+Developer-facing burn-in workflow and gate policy are documented in
+[AGENTS.md](/Users/sts/Quellen/slagent/claw64/AGENTS.md).
 
 ## Architecture
 

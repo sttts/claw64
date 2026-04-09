@@ -92,6 +92,19 @@ allocation and `make kill` to stop processes without starting new ones.
 - The bridge writes stall dumps to `debug/stall-YYYYMMDD-HHMMSS.log` when transport or tool execution stalls.
 - Always inspect the latest stall dump before guessing. The dump is the primary forensic artifact.
 
+### Burn-In Gates
+- For protocol, runtime, transport, or C64-control changes, do not proceed to further feature work unless the full gate is green.
+- The full gate is:
+  - `make assemble`
+  - `go test ./...`
+  - a live VICE burn-in
+- Default heavy gate: `go run ./cmd/claw64-bridge burnin direct-exec`
+- `direct-exec` is the main regression gate. It spans three user messages, exercises eleven `EXEC` calls, stores and lists a small BASIC program, runs it, and verifies the final `5050` output after the normal `RUNNING -> READY.` drain path.
+- Additional scenarios:
+  - `go run ./cmd/claw64-bridge burnin stop-screen`
+  - `go run ./cmd/claw64-bridge burnin screen-repeat`
+- If the full gate fails, stop and fix that failure before adding more behavior.
+
 ### Usual loop
 - Reproduce with the smallest prompt that still fails.
 - Read the bridge log first: look for `ACK`, duplicate `STATUS`, `bad type`, `resync`, `framing mismatch`, `tool stall`, or `c64 silence stall`.
