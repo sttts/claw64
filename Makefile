@@ -29,6 +29,25 @@ VEC_OUT     = c64/vectest.prg
 
 .PHONY: assemble assets echotest vice vice-echo bridge run test-serial ports kill clean clean-all clean-ports
 
+define KILL_PORTS
+	@. ./$(PORT_FILE); \
+	for PORT in $$SERIAL_PORT $$MONITOR_PORT; do \
+	  PIDS=$$(lsof -ti :$$PORT 2>/dev/null); \
+	  if [ -n "$$PIDS" ]; then \
+	    kill $$PIDS 2>/dev/null || true; \
+	    sleep 0.2; \
+	    PIDS=$$(lsof -ti :$$PORT 2>/dev/null); \
+	    if [ -n "$$PIDS" ]; then \
+	      kill -9 $$PIDS 2>/dev/null || true; \
+	    fi; \
+	    for _ in 1 2 3 4 5 6 7 8 9 10; do \
+	      lsof -ti :$$PORT 2>/dev/null >/dev/null || break; \
+	      sleep 0.1; \
+	    done; \
+	  fi; \
+	done
+endef
+
 # download KickAssembler if not present
 $(KICKASS_JAR):
 	@mkdir -p build
@@ -60,9 +79,8 @@ echotest: $(KICKASS_JAR)
 
 # launch VICE with the agent and RS232 enabled
 vice: assemble $(PORT_FILE)
+	$(KILL_PORTS)
 	@. ./$(PORT_FILE); \
-	lsof -ti :$$SERIAL_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
-	lsof -ti :$$MONITOR_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
 	echo "VICE: serial=$$SERIAL_PORT monitor=$$MONITOR_PORT"; \
 	$(VICE) \
 	  -rsdev1 "127.0.0.1:$$SERIAL_PORT" -userportdevice 2 -rsuserdev 0 -rsuserbaud 2400 \
@@ -89,8 +107,8 @@ vice-echo: echotest $(PORT_FILE)
 
 # launch everything via the bridge CLI. By default, it spawns VICE itself.
 run: assemble $(PORT_FILE)
+	$(KILL_PORTS)
 	@. ./$(PORT_FILE); \
-	lsof -ti :$$SERIAL_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
 	go run ./cmd/claw64-bridge \
 	  --serial-addr "127.0.0.1:$$SERIAL_PORT" \
 	  --monitor-addr "127.0.0.1:$$MONITOR_PORT" \
@@ -98,8 +116,8 @@ run: assemble $(PORT_FILE)
 
 # run the Go bridge without spawning VICE
 bridge: $(PORT_FILE)
+	$(KILL_PORTS)
 	@. ./$(PORT_FILE); \
-	lsof -ti :$$SERIAL_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
 	go run ./cmd/claw64-bridge \
 	  --serial-addr "127.0.0.1:$$SERIAL_PORT" \
 	  --monitor-addr "127.0.0.1:$$MONITOR_PORT" \
@@ -116,9 +134,8 @@ ports: $(PORT_FILE)
 
 # kill VICE/bridge running on this worktree's ports
 kill: $(PORT_FILE)
+	$(KILL_PORTS)
 	@. ./$(PORT_FILE); \
-	lsof -ti :$$SERIAL_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
-	lsof -ti :$$MONITOR_PORT 2>/dev/null | xargs kill 2>/dev/null; true; \
 	echo "killed processes on serial=$$SERIAL_PORT monitor=$$MONITOR_PORT"
 
 # remove build artifacts
