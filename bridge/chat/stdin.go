@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -45,7 +44,6 @@ func (s *StdinChannel) sendLine(line string) {
 		s.program.Send(logLineMsg(line))
 	} else {
 		s.early = append(s.early, line)
-		fmt.Fprintln(os.Stderr, line)
 	}
 }
 
