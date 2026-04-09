@@ -12,6 +12,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/sttts/claw64/bridge/termstyle"
@@ -161,7 +162,12 @@ type tuiModel struct {
 
 func newTuiModel(ctx context.Context, handler MessageHandler) *tuiModel {
 	ti := textinput.New()
-	ti.Prompt = "\033[1;96myou>\033[0m "
+	ti.Prompt = "you> "
+	ti.SetVirtualCursor(false)
+	styles := ti.Styles()
+	styles.Focused.Prompt = styles.Focused.Prompt.Foreground(lipgloss.Color("14")).Bold(true)
+	styles.Blurred.Prompt = styles.Blurred.Prompt.Foreground(lipgloss.Color("14")).Bold(true)
+	ti.SetStyles(styles)
 	ti.Focus()
 	ti.CharLimit = 0
 	return &tuiModel{ctx: ctx, handler: handler, input: ti}
@@ -414,7 +420,9 @@ func (m *tuiModel) View() tea.View {
 		displayLine = m.settled
 	}
 	if displayLine.text == "" {
-		return tea.NewView(m.input.View())
+		view := tea.NewView(m.input.View())
+		view.Cursor = m.input.Cursor()
+		return view
 	}
 
 	display := strings.ReplaceAll(strings.ReplaceAll(displayLine.text, "\r", ""), "\n", "")
@@ -424,7 +432,12 @@ func (m *tuiModel) View() tea.View {
 	if displayLine.dim {
 		display = termstyle.Dim(display)
 	}
-	return tea.NewView(display + "\n" + m.input.View())
+	view := tea.NewView(display + "\n" + m.input.View())
+	if cursor := m.input.Cursor(); cursor != nil {
+		cursor.Position.Y++
+		view.Cursor = cursor
+	}
+	return view
 }
 
 func (m *tuiModel) handleCtrlC() (tea.Model, tea.Cmd) {
@@ -452,7 +465,7 @@ func (m *tuiModel) handleEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	echo := fmt.Sprintf("\033[1;96myou>\033[0m %s", text)
+	echo := fmt.Sprintf("%s%s", m.input.Styles().Focused.Prompt.Render(m.input.Prompt), text)
 	m.busy = true
 	return m, tea.Batch(
 		func() tea.Msg { return settledMsg([]consoleLine{{text: echo}}) },

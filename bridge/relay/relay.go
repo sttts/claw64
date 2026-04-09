@@ -128,7 +128,7 @@ func (r *Relay) acquireMessageGate(ctx context.Context) error {
 		}
 		r.msgGateMu.Unlock()
 
-		log.Printf("%s", flowLine("USER", "↺", "bridge", "busy", fmt.Sprintf("retry in %s", backoff)))
+		log.Printf("%s", flowLine("USER", "->", "bridge", "busy", fmt.Sprintf("retry in %s", backoff)))
 
 		timer := time.NewTimer(backoff)
 		select {
@@ -688,7 +688,9 @@ func (r *Relay) logLLMRequest(messages []llm.Message, tools []llm.Tool) {
 			return
 		}
 		log.Printf("%s", flowLine("", "→", "LLM", "request", url))
-		log.Printf("%s", flowLine("", "→", "LLM", "request", string(body)))
+		if strings.TrimSpace(os.Getenv("CLAW64_DEBUG_LLM_REQUESTS")) != "" {
+			log.Printf("%s", flowLine("", "→", "LLM", "request", string(body)))
+		}
 		return
 	}
 	log.Printf("%s", flowLine("", "→", "LLM", "request", "request"))

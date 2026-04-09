@@ -90,6 +90,7 @@ allocation and `make kill` to stop processes without starting new ones.
 - Prefer `make vice` plus `make bridge` in separate terminals when you need to restart only one side.
 - VICE remote monitor listens on the worktree's monitor port (`make ports` to check). Use it whenever the C64 seems stuck, corrupted, or silent.
 - The bridge writes stall dumps to `debug/stall-YYYYMMDD-HHMMSS.log` when transport or tool execution stalls.
+- Full LLM request JSON is hidden by default. Set `CLAW64_DEBUG_LLM_REQUESTS=1` when you need the complete request body in the bridge log.
 - Always inspect the latest stall dump before guessing. The dump is the primary forensic artifact.
 
 ### Burn-In Gates
