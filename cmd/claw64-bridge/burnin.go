@@ -131,6 +131,7 @@ func (s *scriptedBurnin) completeScreenRepeat(messages []llm.Message) (llm.Messa
 
 func (s *scriptedBurnin) completeDirectExec(messages []llm.Message) (llm.Message, error) {
 	lastTool := lastToolMessage(messages)
+	lastUser := lastUserMessage(messages)
 
 	switch s.step {
 	case 0:
@@ -145,6 +146,94 @@ func (s *scriptedBurnin) completeDirectExec(messages []llm.Message) (llm.Message
 	case 2:
 		if !toolResultContains(lastTool, "[C64 screen output]: ", "42", "READY.") {
 			return llm.Message{}, fmt.Errorf("step %d: expected second direct PRINT result, got %q", s.step, lastTool)
+		}
+		s.step++
+		return llm.Message{Role: "assistant", Content: "READY FOR PROGRAMMING."}, nil
+	case 3:
+		if !strings.Contains(strings.ToLower(lastUser), "program") {
+			return llm.Message{}, fmt.Errorf("step %d: expected programming request, got %q", s.step, lastUser)
+		}
+		s.step++
+		return execToolCall("10 S=0", s.step), nil
+	case 4:
+		if lastTool != "[C64 BASIC status]: STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED for line 10, got %q", s.step, lastTool)
+		}
+		s.step++
+		return execToolCall("20 FOR I=1 TO 25", s.step), nil
+	case 5:
+		if lastTool != "[C64 BASIC status]: STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED for line 20, got %q", s.step, lastTool)
+		}
+		s.step++
+		return execToolCall("30 S=S+I", s.step), nil
+	case 6:
+		if lastTool != "[C64 BASIC status]: STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED for line 30, got %q", s.step, lastTool)
+		}
+		s.step++
+		return execToolCall("40 NEXT I", s.step), nil
+	case 7:
+		if lastTool != "[C64 BASIC status]: STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED for line 40, got %q", s.step, lastTool)
+		}
+		s.step++
+		return execToolCall("50 FOR I=26 TO 100", s.step), nil
+	case 8:
+		if lastTool != "[C64 BASIC status]: STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED for line 50, got %q", s.step, lastTool)
+		}
+		s.step++
+		return execToolCall("60 S=S+I:NEXT I", s.step), nil
+	case 9:
+		if lastTool != "[C64 BASIC status]: STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED for line 60, got %q", s.step, lastTool)
+		}
+		s.step++
+		return execToolCall("70 PRINT S", s.step), nil
+	case 10:
+		if lastTool != "[C64 BASIC status]: STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED for line 70, got %q", s.step, lastTool)
+		}
+		s.step++
+		return execToolCall("LIST", s.step), nil
+	case 11:
+		if !toolResultContains(lastTool, "[C64 screen output]: ", "10 S=0", "70 PRINT S", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected LIST output, got %q", s.step, lastTool)
+		}
+		s.step++
+		return llm.Message{Role: "assistant", Content: "I'VE STORED THIS PROGRAM:\n\n10 S=0\n...\n70 PRINT S"}, nil
+	case 12:
+		if !strings.Contains(strings.ToLower(lastUser), "run") {
+			return llm.Message{}, fmt.Errorf("step %d: expected run request, got %q", s.step, lastUser)
+		}
+		s.step++
+		return execToolCall("RUN", s.step), nil
+	case 13:
+		switch {
+		case toolResultContains(lastTool, "[C64 screen output]: ", "5050", "READY."):
+			return llm.Message{Role: "assistant", Content: "BURN-IN direct-exec complete."}, nil
+		case lastTool == "[C64 BASIC status]: RUNNING":
+			s.step++
+			return simpleToolCall("status", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected RUN result or RUNNING, got %q", s.step, lastTool)
+		}
+	case 14:
+		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
+		switch status {
+		case "RUNNING", "STOP REQUESTED":
+			return simpleToolCall("status", "{}", s.step), nil
+		case "READY", "READY.":
+			s.step++
+			return simpleToolCall("screen", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining RUN, got %q", s.step, lastTool)
+		}
+	case 15:
+		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "5050", "READY.") &&
+			!toolResultContains(lastTool, "[C64 screen output]: ", "5050", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected final screenshot/result with 5050, got %q", s.step, lastTool)
 		}
 		return llm.Message{Role: "assistant", Content: "BURN-IN direct-exec complete."}, nil
 	default:
@@ -175,6 +264,15 @@ func simpleToolCall(name, args string, n int) llm.Message {
 func lastToolMessage(messages []llm.Message) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "tool" {
+			return messages[i].Content
+		}
+	}
+	return ""
+}
+
+func lastUserMessage(messages []llm.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
 			return messages[i].Content
 		}
 	}
@@ -233,18 +331,34 @@ func runBurnin(cfg CLI, scenario string) {
 	// C64 handshake. Let the serial side settle before the first scripted MSG.
 	time.Sleep(750 * time.Millisecond)
 
+	inputs := burninInputs(scenario)
 	var lastText string
-	err = rl.HandleMessageStream(ctx, "burnin", "Hi", func(message string) error {
-		lastText = message
-		fmt.Fprintf(os.Stdout, "\n%s %s\n", "c64>", message)
-		return nil
-	})
-	if err != nil {
-		log.Fatalf("burnin: %v", err)
+	for _, input := range inputs {
+		err = rl.HandleMessageStream(ctx, "burnin", input, func(message string) error {
+			lastText = message
+			fmt.Fprintf(os.Stdout, "\n%s %s\n", "c64>", message)
+			return nil
+		})
+		if err != nil {
+			log.Fatalf("burnin: %v", err)
+		}
 	}
 	if lastText == "" {
 		log.Printf("burnin: scenario %s completed without user-visible text", scenario)
 		return
 	}
 	log.Printf("burnin: scenario %s completed", scenario)
+}
+
+func burninInputs(scenario string) []string {
+	switch scenario {
+	case "direct-exec":
+		return []string{
+			"Hi",
+			"Can you program a sum of 1 to 100 ?",
+			"run it",
+		}
+	default:
+		return []string{"Hi"}
+	}
 }

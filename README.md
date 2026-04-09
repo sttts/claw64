@@ -161,9 +161,10 @@ final user-visible `TEXT` still completes cleanly.
 `screen-repeat` stores a tiny program, verifies `LIST`, then requests two
 consecutive `SCREENSHOT`s to exercise repeated chunked `RESULT` delivery.
 
-`direct-exec` verifies direct BASIC commands that complete at the prompt,
-including correct `EXEC` completion without a stored program or long-running
-transition.
+`direct-exec` is the heavier mixed gate: it spans three user messages,
+exercises eleven `EXEC` calls, stores and lists a small BASIC program, runs it,
+and verifies the final `5050` output after the normal `RUNNING -> READY.`
+drain path.
 
 ## Architecture
 
