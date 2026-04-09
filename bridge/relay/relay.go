@@ -253,30 +253,24 @@ type basicExecArgs struct {
 	Command string `json:"command"`
 }
 
-// HandleMessage relays a user message through LLM and C64.
-func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (string, error) {
-	return r.HandleMessageStream(ctx, userID, text, nil)
-}
-
 // HandleMessageStream relays a user message and emits every C64 user-visible
-// message through emit. If emit is nil, the first user-visible message is
-// returned directly for compatibility with older call sites. A relay cycle may
-// also complete without any user-visible text.
-func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text string, emit func(string) error) (string, error) {
+// message through emit. A relay cycle may also complete without any
+// user-visible text.
+func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text string, emit func(string) error) error {
 	text = serial.ToASCII(text)
 
 	// send user message to C64 (header now, chars stream via callback)
 	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
 	if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
-		return "", fmt.Errorf("send MSG: %w", err)
+		return fmt.Errorf("send MSG: %w", err)
 	}
 
 	return r.eventLoop(ctx, userID, emit)
 }
 
 // eventLoop waits for C64 frames and reacts.
-func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) error) (string, error) {
+func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) error) error {
 	deliveredUserText := false
 	completedWithoutText := false
 
@@ -293,9 +287,9 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 		recvCancel()
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) && (deliveredUserText || completedWithoutText) {
-				return "", nil
+				return nil
 			}
-			return "", err
+			return err
 		}
 		completedWithoutText = false
 
@@ -324,7 +318,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			r.drainTrailingLLMMessages(userID)
 			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
-				return "", err
+				return err
 			}
 			if idle {
 				completedWithoutText = true
@@ -353,7 +347,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			r.appendToolResult(userID, result)
 			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
-				return "", err
+				return err
 			}
 			if idle {
 				completedWithoutText = true
@@ -380,7 +374,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			r.appendToolResult(userID, "[C64 BASIC status]: "+status)
 			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
-				return "", err
+				return err
 			}
 			if idle {
 				completedWithoutText = true
@@ -396,7 +390,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			r.appendToolResult(userID, "ERROR: command timed out on C64")
 			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
-				return "", err
+				return err
 			}
 			if idle {
 				completedWithoutText = true
@@ -414,13 +408,10 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			text := string(r.textBuf)
 			r.textBuf = nil
 			deliveredUserText = true
-			if emit != nil {
-				if err := emit(text); err != nil {
-					return "", err
-				}
-				continue
+			if err := emit(text); err != nil {
+				return err
 			}
-			return text, nil
+			continue
 
 		case serial.FrameSystem:
 			fmt.Fprintln(r.streamOut()) // newline after streamed payload

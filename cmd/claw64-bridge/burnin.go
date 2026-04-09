@@ -234,17 +234,13 @@ func runBurnin(cfg CLI, scenario string) {
 	time.Sleep(750 * time.Millisecond)
 
 	var lastText string
-	reply, err := rl.HandleMessageStream(ctx, "burnin", "Hi", func(message string) error {
+	err = rl.HandleMessageStream(ctx, "burnin", "Hi", func(message string) error {
 		lastText = message
 		fmt.Fprintf(os.Stdout, "\n%s %s\n", "c64>", message)
 		return nil
 	})
 	if err != nil {
 		log.Fatalf("burnin: %v", err)
-	}
-	if reply != "" {
-		lastText = reply
-		fmt.Fprintf(os.Stdout, "\n%s %s\n", "c64>", reply)
 	}
 	if lastText == "" {
 		log.Printf("burnin: scenario %s completed without user-visible text", scenario)
