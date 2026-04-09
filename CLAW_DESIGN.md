@@ -162,8 +162,9 @@ Use a fixed-size ring buffer for pending user input on the C64 side.
 
 Initial limit:
 
-- `1024 bytes` total pending user text
-- at most `8` queued user messages
+- `3` queued user messages
+- `256 bytes` per queued message slot
+- `768 bytes` total reserved queue storage on the C64
 
 Overflow policy:
 

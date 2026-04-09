@@ -22,6 +22,9 @@
 .const HEARTBEAT_BASE  = $A400
 .const USERQ_BASE      = $A500
 .const USERQ_LIMIT     = $A800
+.const USERQ_SLOTS     = 3
+.const USERQ_SLOT_SIZE = $100
+.const USERQ_BYTES     = USERQ_LIMIT - USERQ_BASE
 .const MEM_STAGE_BASE  = $A800
 .const MEM_STAGE_LIMIT = $C000
 

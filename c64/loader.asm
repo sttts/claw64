@@ -491,6 +491,7 @@ startup_hires_screen:
 .assert "cold code region must end before heartbeat region", COLD_CODE_BASE < COLD_CODE_LIMIT, true
 .assert "heartbeat region must end before user queue region", HEARTBEAT_BASE < USERQ_BASE, true
 .assert "user queue region must end before memory staging", USERQ_BASE < USERQ_LIMIT, true
+.assert "user queue storage must match 3 fixed 256-byte slots", USERQ_SLOTS * USERQ_SLOT_SIZE == USERQ_BYTES, true
 .assert "memory staging must stay below resident runtime", MEM_STAGE_BASE < MEM_STAGE_LIMIT, true
 .assert "memory staging must not overlap resident runtime", MEM_STAGE_LIMIT <= AGENT_BASE, true
 .assert "cold code must fit inside reserved region", COLD_CODE_BASE + (cold_end - cold_data) <= COLD_CODE_LIMIT, true
