@@ -38,3 +38,30 @@ func TestCallAndDispatchSilentCompletionIsIdleWithoutHistoryMutation(t *testing.
 		t.Fatalf("textOutQueue len = %d, want 0", len(r.textOutQueue))
 	}
 }
+
+func TestShouldUseCompletionGraceWindow(t *testing.T) {
+	r := &Relay{}
+	if r.shouldUseCompletionGraceWindow(false, false) {
+		t.Fatalf("grace window enabled without completion")
+	}
+	if !r.shouldUseCompletionGraceWindow(false, true) {
+		t.Fatalf("grace window disabled after silent completion")
+	}
+
+	r.textOutQueue = []byte("x")
+	if r.shouldUseCompletionGraceWindow(false, true) {
+		t.Fatalf("grace window enabled while text is queued")
+	}
+
+	r.textOutQueue = nil
+	r.waitingTool = true
+	if r.shouldUseCompletionGraceWindow(true, false) {
+		t.Fatalf("grace window enabled while tool is in flight")
+	}
+
+	r.waitingTool = false
+	r.basicRunning = true
+	if r.shouldUseCompletionGraceWindow(true, false) {
+		t.Fatalf("grace window enabled while BASIC is still running")
+	}
+}

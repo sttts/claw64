@@ -278,11 +278,12 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 // eventLoop waits for C64 frames and reacts.
 func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) error) (string, error) {
 	deliveredUserText := false
+	completedWithoutText := false
 
 	for {
 		recvCtx := ctx
 		recvCancel := func() {}
-		if deliveredUserText && len(r.textOutQueue) == 0 && !r.waitingTool && !r.basicRunning {
+		if r.shouldUseCompletionGraceWindow(deliveredUserText, completedWithoutText) {
 			graceCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 			recvCtx = graceCtx
 			recvCancel = cancel
@@ -291,11 +292,12 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 		f, accepted, err := r.recvFromC64(recvCtx, len(r.textOutQueue) > 0)
 		recvCancel()
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) && deliveredUserText {
+			if errors.Is(err, context.DeadlineExceeded) && (deliveredUserText || completedWithoutText) {
 				return "", nil
 			}
 			return "", err
 		}
+		completedWithoutText = false
 
 		// Strip transport ID from reliable C64→bridge frames, queue ACK,
 		// and suppress duplicate semantic processing.
@@ -325,7 +327,8 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 				return "", err
 			}
 			if idle {
-				return "", nil
+				completedWithoutText = true
+				continue
 			}
 
 		case serial.FrameResult:
@@ -353,7 +356,8 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 				return "", err
 			}
 			if idle {
-				return "", nil
+				completedWithoutText = true
+				continue
 			}
 
 		case serial.FrameStatus:
@@ -379,7 +383,8 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 				return "", err
 			}
 			if idle {
-				return "", nil
+				completedWithoutText = true
+				continue
 			}
 
 		case serial.FrameError:
@@ -394,7 +399,8 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 				return "", err
 			}
 			if idle {
-				return "", nil
+				completedWithoutText = true
+				continue
 			}
 
 		case serial.FrameUser:
@@ -436,6 +442,13 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			log.Printf("%s", flowLine("", "←", "C64", "malformed", fmt.Sprintf("unknown frame 0x%02X", f.Type)))
 		}
 	}
+}
+
+func (r *Relay) shouldUseCompletionGraceWindow(deliveredUserText, completedWithoutText bool) bool {
+	if !deliveredUserText && !completedWithoutText {
+		return false
+	}
+	return len(r.textOutQueue) == 0 && !r.waitingTool && !r.basicRunning
 }
 
 func (r *Relay) drainTrailingAfterUserText() {
