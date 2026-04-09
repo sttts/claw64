@@ -415,6 +415,7 @@ func parseOpenAICodexSSE(r io.Reader) (Message, error) {
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
 	var dataLines []string
+	var streamedItems []codexResponseItem
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -432,6 +433,10 @@ func parseOpenAICodexSSE(r io.Reader) (Message, error) {
 			switch env.Type {
 			case "error":
 				return Message{}, fmt.Errorf("Codex error: %s", firstNonEmpty(env.Message, env.Code))
+			case "response.output_item.done":
+				if env.Item != nil {
+					streamedItems = append(streamedItems, *env.Item)
+				}
 			case "response.failed":
 				if env.Response != nil && env.Response.Error != nil {
 					return Message{}, fmt.Errorf("Codex response failed: %s", env.Response.Error.Message)
@@ -440,6 +445,9 @@ func parseOpenAICodexSSE(r io.Reader) (Message, error) {
 			case "response.completed", "response.done", "response.incomplete":
 				if env.Response == nil {
 					return Message{}, fmt.Errorf("Codex response missing payload")
+				}
+				if len(env.Response.Output) == 0 && len(streamedItems) > 0 {
+					env.Response.Output = append(env.Response.Output, streamedItems...)
 				}
 				return codexResponseToMessage(env.Response), nil
 			}

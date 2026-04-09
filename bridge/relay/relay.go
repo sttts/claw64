@@ -448,6 +448,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) error {
 		return fmt.Errorf("llm: %w", err)
 	}
 	r.History.Append(userID, resp)
+	r.logLLMResponse(resp)
 
 	// Text responses still flow through the C64. The bridge only translates
 	// protocols; the C64 remains the user-facing agent.
@@ -546,6 +547,22 @@ func (r *Relay) logLLMRequest(messages []llm.Message, tools []llm.Tool) {
 		return
 	}
 	log.Printf("     → LLM:  request")
+}
+
+func (r *Relay) logLLMResponse(resp llm.Message) {
+	if len(resp.ToolCalls) == 0 && resp.Content == "" {
+		log.Printf("%s", flowLine("", "←", "LLM", "response", "silent completion"))
+		return
+	}
+
+	if resp.Content != "" {
+		log.Printf("%s", flowLine("", "←", "LLM", "response", fmt.Sprintf("text: %q", truncate(resp.Content, 200))))
+	}
+
+	for i, tc := range resp.ToolCalls {
+		payload := fmt.Sprintf("tool[%d]: %s %s", i+1, tc.Function.Name, truncate(tc.Function.Arguments, 200))
+		log.Printf("%s", flowLine("", "←", "LLM", "response", payload))
+	}
 }
 
 func (r *Relay) sendNextTextChunk(ctx context.Context) error {
