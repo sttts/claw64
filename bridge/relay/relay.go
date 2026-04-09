@@ -20,8 +20,8 @@ import (
 	"github.com/sttts/claw64/bridge/termstyle"
 )
 
-// maxIterations caps the LLM loop to prevent infinite cycles.
-// No iteration limit — the event loop runs until TEXT is returned or an error occurs.
+// The relay loop stays active while immediate C64/LLM work remains.
+// User-visible TEXT is optional; silence is a valid completion.
 
 // Relay routes messages between chat, LLM, and the C64 serial link.
 // The C64 drives the agent loop; the relay just forwards.
@@ -260,7 +260,8 @@ func (r *Relay) HandleMessage(ctx context.Context, userID string, text string) (
 
 // HandleMessageStream relays a user message and emits every C64 user-visible
 // message through emit. If emit is nil, the first user-visible message is
-// returned directly for compatibility with older call sites.
+// returned directly for compatibility with older call sites. A relay cycle may
+// also complete without any user-visible text.
 func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text string, emit func(string) error) (string, error) {
 	text = serial.ToASCII(text)
 
@@ -319,11 +320,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			fmt.Fprintln(r.streamOut()) // newline after streamed payload
 			r.History.Append(userID, llm.Message{Role: "user", Content: string(f.Payload)})
 			r.drainTrailingLLMMessages(userID)
-			done, err := r.callAndDispatch(ctx, userID)
+			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
 				return "", err
 			}
-			if done {
+			if idle {
 				return "", nil
 			}
 
@@ -347,11 +348,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 				result = resultPrefix + "(empty)"
 			}
 			r.appendToolResult(userID, result)
-			done, err := r.callAndDispatch(ctx, userID)
+			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
 				return "", err
 			}
-			if done {
+			if idle {
 				return "", nil
 			}
 
@@ -373,11 +374,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 
 			log.Printf("%s", flowLine("LLM", "←", "C64", "STATUS!", status))
 			r.appendToolResult(userID, "[C64 BASIC status]: "+status)
-			done, err := r.callAndDispatch(ctx, userID)
+			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
 				return "", err
 			}
-			if done {
+			if idle {
 				return "", nil
 			}
 
@@ -388,11 +389,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			r.basicRunning = false
 			r.completionDrain = false
 			r.appendToolResult(userID, "ERROR: command timed out on C64")
-			done, err := r.callAndDispatch(ctx, userID)
+			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
 				return "", err
 			}
-			if done {
+			if idle {
 				return "", nil
 			}
 
@@ -502,6 +503,8 @@ func (r *Relay) drainTrailingLLMMessages(userID string) {
 }
 
 // callAndDispatch calls the LLM and dispatches the response to the C64.
+// It returns idle=true when the model chose no immediate outward action:
+// no tool call and no user-visible text.
 func (r *Relay) callAndDispatch(ctx context.Context, userID string) (bool, error) {
 	history := r.History.Get(userID)
 	msgs := make([]llm.Message, 0, 1+len(history))
@@ -521,7 +524,7 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) (bool, error
 	// protocols; the C64 remains the user-facing agent.
 	if len(resp.ToolCalls) == 0 {
 		if resp.Content == "" {
-			log.Printf("%s", flowLine("LLM", "→", "C64", "TEXT", "silent completion"))
+			log.Printf("%s", flowLine("LLM", "←", "", "response", "silent completion"))
 			return true, nil
 		}
 
