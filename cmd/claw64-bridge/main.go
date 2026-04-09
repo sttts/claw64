@@ -237,7 +237,7 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 		SymbolPath:  defaultSymbolPath(),
 	}
 
-	// Route streaming progress through the stdin TUI when available.
+	// Route streaming progress through the TUI when available.
 	type streamWriter interface{ StreamWriter() io.Writer }
 	if sw, ok := ch.(streamWriter); ok {
 		rl.StreamOut = sw.StreamWriter()
@@ -420,8 +420,8 @@ func spawnVICE(cfg CLI, loaderPath string) (*exec.Cmd, error) {
 	}
 
 	cmd := exec.Command(cfg.ViceBin, args...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = &lineLogWriter{prefix: "vice: "}
+	cmd.Stderr = &lineLogWriter{prefix: "vice: "}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

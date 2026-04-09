@@ -130,13 +130,13 @@ type consoleOutput interface {
 
 // --- TUI model ---
 //
-// The view shows the prompt line and, when present, one console line above it:
-//   prev   — sticky line above the prompt when no stream is active
+// The view shows the prompt line and, when present, one active live-updating
+// stream line above it:
 //   stream — active live-updating line above the prompt
 //   prompt — input line (always)
 //
-// Scrollback is emitted through tea.Println. Logs go straight to scrollback.
-// The sticky prev line is only used for prompt echo and settled output.
+// Settled output is emitted through tea.Println into scrollback. Only the live
+// stream stays in the view so the prompt remains anchored on the bottom line.
 
 type tuiModel struct {
 	ctx     context.Context
@@ -144,7 +144,6 @@ type tuiModel struct {
 	program *tea.Program
 
 	input       textinput.Model
-	prev        consoleLine
 	stream      consoleLine
 	earlyLines  []string // buffered before program start
 	width       int
@@ -179,11 +178,14 @@ func (o consoleOps) Log(text string) tea.Cmd {
 }
 
 func (o consoleOps) Logln(line string) tea.Cmd {
-	return emit(o.model.printlnPrev(consoleLine{text: line, dim: true}))
+	return emit(o.model.printLog(line))
 }
 
 func (o consoleOps) Println(line string) tea.Cmd {
-	return emit(o.model.printlnPrev(consoleLine{text: line}))
+	if line == "" {
+		return nil
+	}
+	return emit([]consoleLine{{text: line}})
 }
 
 func (m *tuiModel) console() consoleOutput {
@@ -197,31 +199,14 @@ func stripANSI(s string) string {
 	return ansiSeqRE.ReplaceAllString(s, "")
 }
 
-func (m *tuiModel) displayLine() consoleLine {
-	if m.stream.text != "" {
-		return m.stream
-	}
-	return m.prev
-}
-
-func (m *tuiModel) evictPrev() []consoleLine {
-	if m.prev.text == "" {
-		return nil
-	}
-	line := m.prev
-	m.prev = consoleLine{}
-	return []consoleLine{line}
-}
-
 // printStream appends text to the live line. Scrollback only happens on
-// explicit newline or replacement, never on terminal width.
+// explicit newline, never on terminal width.
 func (m *tuiModel) printStream(s string, dim bool) []consoleLine {
 	var lines []consoleLine
 	for _, r := range s {
 		if r == '\n' {
 			if m.stream.text != "" {
-				lines = append(lines, m.evictPrev()...)
-				m.prev = m.stream
+				lines = append(lines, m.stream)
 				m.stream = consoleLine{}
 			}
 			continue
@@ -233,29 +218,18 @@ func (m *tuiModel) printStream(s string, dim bool) []consoleLine {
 	return lines
 }
 
-// printlnPrev flushes the current prev line only when replacement content exists.
-func (m *tuiModel) printlnPrev(line consoleLine) []consoleLine {
-	var lines []consoleLine
-	if line.text != "" && m.prev.text != "" {
-		lines = append(lines, m.prev)
-	}
-	m.prev = line
-	return lines
-}
-
 func (m *tuiModel) printLog(line string) []consoleLine {
-	lines := m.evictPrev()
 	if line != "" {
-		lines = append(lines, consoleLine{text: line, dim: true})
+		return []consoleLine{{text: line, dim: true}}
 	}
-	return lines
+	return nil
 }
 
 func (m *tuiModel) commitStream() []consoleLine {
 	if m.stream.text == "" {
 		return nil
 	}
-	lines := m.printlnPrev(m.stream)
+	lines := []consoleLine{m.stream}
 	m.stream = consoleLine{}
 	return lines
 }
@@ -339,15 +313,15 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *tuiModel) View() tea.View {
-	displayLine := m.displayLine()
-	display := strings.ReplaceAll(strings.ReplaceAll(displayLine.text, "\r", ""), "\n", "")
+	if m.stream.text == "" {
+		return tea.NewView(m.input.View())
+	}
+
+	display := strings.ReplaceAll(strings.ReplaceAll(m.stream.text, "\r", ""), "\n", "")
 	if m.width > 0 {
 		display = xansi.Truncate(display, m.width, "")
 	}
-	if display == "" {
-		return tea.NewView(m.input.View())
-	}
-	if displayLine.dim {
+	if m.stream.dim {
 		display = termstyle.Dim(display)
 	}
 	return tea.NewView(display + "\n" + m.input.View())
