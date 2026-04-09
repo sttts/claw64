@@ -17,12 +17,14 @@
 .const AGENT_TXBUF_LEN = $A0
 
 // Planned protected-RAM reservations.
-// Queue/heartbeat move into guarded high BASIC RAM; durable memory stays out of BASIC RAM.
+// Guarded helper code plus queue/heartbeat live in protected high BASIC RAM.
 .const COLD_CODE_BASE  = $A000
 .const COLD_CODE_LIMIT = $A400
-.const HEARTBEAT_BASE  = BASIC_GUARD_BASE
-.const USERQ_BASE      = $9100
-.const USERQ_LIMIT     = $9400
+.const GUARD_CODE_BASE = BASIC_GUARD_BASE
+.const GUARD_CODE_LIMIT = $9100
+.const HEARTBEAT_BASE  = GUARD_CODE_LIMIT
+.const USERQ_BASE      = $9200
+.const USERQ_LIMIT     = $9500
 .const USERQ_SLOTS     = 3
 .const USERQ_SLOT_SIZE = $100
 .const USERQ_BYTES     = USERQ_LIMIT - USERQ_BASE
