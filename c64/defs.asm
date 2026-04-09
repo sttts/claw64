@@ -15,6 +15,16 @@
 .const AGENT_RXBUF_LEN = 128
 .const AGENT_TXBUF_LEN = $A0
 
+// Planned ROM-shadow reservations for future cold code and durable memory.
+// These are reserved now, but not yet used by runtime behavior.
+.const COLD_CODE_BASE  = $A000
+.const COLD_CODE_LIMIT = $A400
+.const HEARTBEAT_BASE  = $A400
+.const USERQ_BASE      = $A500
+.const USERQ_LIMIT     = $A800
+.const MEM_STAGE_BASE  = $A800
+.const MEM_STAGE_LIMIT = $C000
+
 // KERNAL jump table
 .const SETLFS  = $FFBA
 .const SETNAM  = $FFBD

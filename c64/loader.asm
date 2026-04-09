@@ -464,3 +464,13 @@ startup_hires_bitmap:
 
 startup_hires_screen:
         .import binary "assets/startup-logo-lobster-screen-hires-bottom.bin"
+
+.assert "soul must fit below BASIC ROM shadow", SOUL_BASE + PROMPT_LEN <= COLD_CODE_BASE, true
+.assert "cold code region must end before heartbeat region", COLD_CODE_BASE < COLD_CODE_LIMIT, true
+.assert "heartbeat region must end before user queue region", HEARTBEAT_BASE < USERQ_BASE, true
+.assert "user queue region must end before memory staging", USERQ_BASE < USERQ_LIMIT, true
+.assert "memory staging must stay below resident runtime", MEM_STAGE_BASE < MEM_STAGE_LIMIT, true
+.assert "memory staging must not overlap resident runtime", MEM_STAGE_LIMIT <= AGENT_BASE, true
+.assert "loader runtime must fit below AGENT_RXBUF", agent_end <= AGENT_RXBUF, true
+.assert "AGENT_RXBUF must fit before AGENT_TXBUF", AGENT_RXBUF + AGENT_RXBUF_LEN <= AGENT_TXBUF, true
+.assert "AGENT_TXBUF must stay below $D000", AGENT_TXBUF + AGENT_TXBUF_LEN <= $D000, true

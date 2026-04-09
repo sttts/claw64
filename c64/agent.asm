@@ -2578,3 +2578,11 @@ irq_idle:
         jmp irq_done            // still animate claw
 
 #import "serial.asm"
+
+agent_runtime_end:
+
+#if !LOADER_MODE
+        .assert "resident agent must fit below AGENT_RXBUF", agent_runtime_end <= AGENT_RXBUF, true
+        .assert "AGENT_RXBUF must fit before AGENT_TXBUF", AGENT_RXBUF + AGENT_RXBUF_LEN <= AGENT_TXBUF, true
+        .assert "AGENT_TXBUF must stay below $D000", AGENT_TXBUF + AGENT_TXBUF_LEN <= $D000, true
+#endif
