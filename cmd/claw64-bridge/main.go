@@ -2,15 +2,17 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -23,16 +25,45 @@ import (
 	"github.com/sttts/claw64/bridge/termstyle"
 )
 
+type lineLogWriter struct {
+	prefix string
+	buf    bytes.Buffer
+}
+
+func (w *lineLogWriter) Write(p []byte) (int, error) {
+	for len(p) > 0 {
+		idx := bytes.IndexByte(p, '\n')
+		if idx < 0 {
+			_, _ = w.buf.Write(p)
+			return len(p), nil
+		}
+
+		_, _ = w.buf.Write(p[:idx])
+		w.flush()
+		p = p[idx+1:]
+	}
+	return len(p), nil
+}
+
+func (w *lineLogWriter) flush() {
+	line := strings.TrimRight(w.buf.String(), "\r")
+	w.buf.Reset()
+	if line == "" {
+		return
+	}
+	log.Printf("%s%s", w.prefix, line)
+}
+
 type CLI struct {
 	SerialAddr  string `name:"serial-addr" help:"Serial TCP address VICE connects to. Defaults to the worktree .ports file when present."`
 	MonitorAddr string `name:"monitor-addr" help:"VICE remote monitor address. Defaults to the worktree .ports file when present."`
-	LLM        string `name:"llm" default:"openai" enum:"anthropic,openai,ollama" help:"LLM backend."`
-	Model      string `name:"model" help:"Override the LLM model name."`
-	LLMURL     string `name:"llm-url" help:"Override the OpenAI/Ollama-compatible endpoint URL."`
-	LLMKey     string `name:"llm-key" help:"API key for direct API backends."`
-	SpawnVICE  bool   `name:"spawn-vice" default:"true" help:"Spawn VICE automatically."`
-	ViceBin    string `name:"vice-bin" default:"x64sc" help:"VICE binary to launch when spawning."`
-	LoaderPRG  string `name:"loader-prg" help:"Override the embedded loader PRG path."`
+	LLM         string `name:"llm" default:"openai" enum:"anthropic,openai,ollama" help:"LLM backend."`
+	Model       string `name:"model" help:"Override the LLM model name."`
+	LLMURL      string `name:"llm-url" help:"Override the OpenAI/Ollama-compatible endpoint URL."`
+	LLMKey      string `name:"llm-key" help:"API key for direct API backends."`
+	SpawnVICE   bool   `name:"spawn-vice" default:"true" help:"Spawn VICE automatically."`
+	ViceBin     string `name:"vice-bin" default:"x64sc" help:"VICE binary to launch when spawning."`
+	LoaderPRG   string `name:"loader-prg" help:"Override the embedded loader PRG path."`
 
 	Stdin      StdinCmd      `cmd:"" help:"Chat in the local terminal."`
 	Slack      SlackCmd      `cmd:"" help:"Chat over Slack."`
@@ -97,7 +128,10 @@ func main() {
 
 	switch ctx.Command() {
 	case "stdin":
-		runChatBridge(cli, chat.NewStdin())
+		ch := chat.NewStdin()
+		termstyle.ForceColor()
+		log.SetOutput(termstyle.DimWriter(ch.LogWriter()))
+		runChatBridge(cli, ch)
 	case "slack <target>":
 		runChatBridge(cli, chat.NewSlack(cli.Slack.Workspace, cli.Slack.Target, cli.Slack.Topic))
 	case "whatsapp <target>":
@@ -201,6 +235,12 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 		DebugDir:    "debug",
 		MonitorAddr: cfg.MonitorAddr,
 		SymbolPath:  defaultSymbolPath(),
+	}
+
+	// Route streaming progress through the stdin TUI when available.
+	type streamWriter interface{ StreamWriter() io.Writer }
+	if sw, ok := ch.(streamWriter); ok {
+		rl.StreamOut = sw.StreamWriter()
 	}
 	rl.SetupProgress()
 
@@ -327,7 +367,6 @@ func preflightInfra(ctx context.Context, cfg CLI, ch chat.Channel, llmClient llm
 	}
 	return nil
 }
-
 
 func loaderPRGPath(cfg CLI) (string, func(), error) {
 	if cfg.LoaderPRG != "" {

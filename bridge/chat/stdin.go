@@ -1,114 +1,449 @@
 package chat
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/signal"
+	"regexp"
+	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/sttts/claw64/bridge/termstyle"
 )
 
 var ErrInterrupted = errors.New("stdin interrupted")
 
-// StdinChannel is a terminal-based chat backend for local testing.
-// First Ctrl-C clears the current input line. Second Ctrl-C within
-// 2 seconds quits. Counter resets after 2s or on any input.
+var ansiSeqRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+// StdinChannel is a bubbletea-based terminal chat backend.
 type StdinChannel struct {
-	mu       sync.Mutex
-	sigCount int
-	lastSig  time.Time
+	mu      sync.Mutex
+	program *tea.Program
+	model   *tuiModel
+	early   []string
 }
 
 func NewStdin() *StdinChannel { return &StdinChannel{} }
 
 func (s *StdinChannel) Name() string { return "stdin" }
 
-func (s *StdinChannel) Start(ctx context.Context, handler MessageHandler) error {
-	// intercept SIGINT ourselves
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT)
-	defer signal.Stop(sigCh)
+func (s *StdinChannel) LogWriter() io.Writer    { return &tuiLogWriter{ch: s} }
+func (s *StdinChannel) StreamWriter() io.Writer { return &tuiStreamWriter{ch: s} }
 
-	lineCh := make(chan string)
-	errCh := make(chan error, 1)
-
-	// Read stdin in the background so Ctrl-C can exit without os.Exit.
-	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			lineCh <- scanner.Text()
-		}
-		errCh <- scanner.Err()
-	}()
-
-	// Handle Ctrl-C in a goroutine.
-	quitCh := make(chan struct{}, 1)
-	go func() {
-		for range sigCh {
-			s.mu.Lock()
-			if time.Since(s.lastSig) > 1*time.Second {
-				s.sigCount = 0
-			}
-			s.sigCount++
-			s.lastSig = time.Now()
-			count := s.sigCount
-			s.mu.Unlock()
-
-			if count >= 2 {
-				fmt.Println("\nbye.")
-				select {
-				case quitCh <- struct{}{}:
-				default:
-				}
-				return
-			}
-			fmt.Printf("\n%s ", termstyle.UserPrompt("you>"))
-		}
-	}()
-
-	fmt.Printf("%s ", termstyle.UserPrompt("you>"))
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-
-		case <-quitCh:
-			return ErrInterrupted
-
-		case err := <-errCh:
-			return err
-
-		case text := <-lineCh:
-			// Reset Ctrl-C counter on any input.
-			s.mu.Lock()
-			s.sigCount = 0
-			s.mu.Unlock()
-
-			if text == "" {
-				fmt.Printf("%s ", termstyle.UserPrompt("you>"))
-				continue
-			}
-
-			reply, err := handler(ctx, "local", text)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			} else if reply != "" {
-				fmt.Printf("\n%s %s\n", termstyle.C64Prompt("c64>"), reply)
-			}
-			fmt.Printf("%s ", termstyle.UserPrompt("you>"))
-		}
+func (s *StdinChannel) sendLine(line string) {
+	line = stripANSI(line)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.program != nil {
+		s.program.Send(logLineMsg(line))
+	} else {
+		s.early = append(s.early, line)
+		fmt.Fprintln(os.Stderr, line)
 	}
 }
 
+func (s *StdinChannel) sendStream(text string) {
+	text = stripANSI(text)
+	if text == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.program != nil {
+		s.program.Send(streamMsg(text))
+	}
+}
+
+func (s *StdinChannel) commitStream() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.program != nil {
+		s.program.Send(streamCommitMsg{})
+	}
+}
+
+func (s *StdinChannel) Start(ctx context.Context, handler MessageHandler) error {
+	s.model = newTuiModel(ctx, handler)
+	s.mu.Lock()
+	s.program = tea.NewProgram(s.model, tea.WithContext(ctx))
+	s.model.program = s.program
+	s.model.earlyLines = s.early
+	s.early = nil
+	s.mu.Unlock()
+
+	_, err := s.program.Run()
+	if s.model.interrupted {
+		return ErrInterrupted
+	}
+	return err
+}
+
 func (s *StdinChannel) Send(_ context.Context, _, text string) error {
-	fmt.Printf("\n%s %s\n", termstyle.C64Prompt("c64>"), text)
+	s.mu.Lock()
+	p := s.program
+	s.mu.Unlock()
+	if p != nil {
+		p.Send(c64ReplyMsg(text))
+	}
 	return nil
 }
 
-func (s *StdinChannel) Stop() error { return nil }
+func (s *StdinChannel) Stop() error {
+	s.mu.Lock()
+	p := s.program
+	s.mu.Unlock()
+	if p != nil {
+		p.Quit()
+	}
+	return nil
+}
+
+// --- messages ---
+
+type c64ReplyMsg string
+type logLineMsg string
+type streamMsg string
+type streamCommitMsg struct{}
+type handlerDoneMsg struct {
+	reply string
+	err   error
+}
+
+type consoleLine struct {
+	text string
+	dim  bool
+}
+
+type consoleOutput interface {
+	Print(text string) tea.Cmd
+	Log(text string) tea.Cmd
+	Logln(line string) tea.Cmd
+	Println(line string) tea.Cmd
+}
+
+// --- TUI model ---
+//
+// The view shows the prompt line and, when present, one console line above it:
+//   prev   — sticky line above the prompt when no stream is active
+//   stream — active live-updating line above the prompt
+//   prompt — input line (always)
+//
+// Scrollback is emitted through tea.Println. Logs go straight to scrollback.
+// The sticky prev line is only used for prompt echo and settled output.
+
+type tuiModel struct {
+	ctx     context.Context
+	handler MessageHandler
+	program *tea.Program
+
+	input       textinput.Model
+	prev        consoleLine
+	stream      consoleLine
+	earlyLines  []string // buffered before program start
+	width       int
+	interrupted bool
+	busy        bool
+
+	mu       sync.Mutex
+	sigCount int
+	lastSig  time.Time
+}
+
+func newTuiModel(ctx context.Context, handler MessageHandler) *tuiModel {
+	ti := textinput.New()
+	ti.Prompt = "\033[1;96myou>\033[0m "
+	ti.Focus()
+	ti.CharLimit = 0
+	return &tuiModel{ctx: ctx, handler: handler, input: ti}
+}
+
+// --- helpers ---
+
+type consoleOps struct {
+	model *tuiModel
+}
+
+func (o consoleOps) Print(text string) tea.Cmd {
+	return emit(o.model.printStream(text, false))
+}
+
+func (o consoleOps) Log(text string) tea.Cmd {
+	return emit(o.model.printStream(text, true))
+}
+
+func (o consoleOps) Logln(line string) tea.Cmd {
+	return emit(o.model.printlnPrev(consoleLine{text: line, dim: true}))
+}
+
+func (o consoleOps) Println(line string) tea.Cmd {
+	return emit(o.model.printlnPrev(consoleLine{text: line}))
+}
+
+func (m *tuiModel) console() consoleOutput {
+	return consoleOps{model: m}
+}
+
+func stripANSI(s string) string {
+	if s == "" {
+		return s
+	}
+	return ansiSeqRE.ReplaceAllString(s, "")
+}
+
+func (m *tuiModel) displayLine() consoleLine {
+	if m.stream.text != "" {
+		return m.stream
+	}
+	return m.prev
+}
+
+func (m *tuiModel) evictPrev() []consoleLine {
+	if m.prev.text == "" {
+		return nil
+	}
+	line := m.prev
+	m.prev = consoleLine{}
+	return []consoleLine{line}
+}
+
+// printStream appends text to the live line. Scrollback only happens on
+// explicit newline or replacement, never on terminal width.
+func (m *tuiModel) printStream(s string, dim bool) []consoleLine {
+	var lines []consoleLine
+	for _, r := range s {
+		if r == '\n' {
+			if m.stream.text != "" {
+				lines = append(lines, m.evictPrev()...)
+				m.prev = m.stream
+				m.stream = consoleLine{}
+			}
+			continue
+		}
+
+		m.stream.text += string(r)
+		m.stream.dim = dim
+	}
+	return lines
+}
+
+// printlnPrev flushes the current prev line only when replacement content exists.
+func (m *tuiModel) printlnPrev(line consoleLine) []consoleLine {
+	var lines []consoleLine
+	if line.text != "" && m.prev.text != "" {
+		lines = append(lines, m.prev)
+	}
+	m.prev = line
+	return lines
+}
+
+func (m *tuiModel) printLog(line string) []consoleLine {
+	lines := m.evictPrev()
+	if line != "" {
+		lines = append(lines, consoleLine{text: line, dim: true})
+	}
+	return lines
+}
+
+func (m *tuiModel) commitStream() []consoleLine {
+	if m.stream.text == "" {
+		return nil
+	}
+	lines := m.printlnPrev(m.stream)
+	m.stream = consoleLine{}
+	return lines
+}
+
+// emit sends non-empty lines to scrollback with exactly one tea.Println.
+func emit(lines []consoleLine) tea.Cmd {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line.text != "" {
+			text := line.text
+			if line.dim {
+				text = termstyle.Dim(text)
+			}
+			out = append(out, text)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return tea.Println(strings.Join(out, "\n"))
+}
+
+// --- Init / Update / View ---
+
+func (m *tuiModel) Init() tea.Cmd {
+	var lines []consoleLine
+	for _, line := range m.earlyLines {
+		if xansi.StringWidth(line) > 0 {
+			lines = append(lines, consoleLine{text: line, dim: true})
+		}
+	}
+	m.earlyLines = nil
+	return tea.Batch(emit(lines), m.input.Focus())
+}
+
+func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		return m, nil
+
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			return m.handleCtrlC()
+		case "enter":
+			return m.handleEnter()
+		}
+		m.mu.Lock()
+		m.sigCount = 0
+		m.mu.Unlock()
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+
+	case c64ReplyMsg:
+		line := fmt.Sprintf("\033[1;92mc64>\033[0m %s", string(msg))
+		return m, m.console().Println(line)
+
+	case logLineMsg:
+		return m, m.console().Logln(string(msg))
+
+	case streamMsg:
+		return m, m.console().Log(string(msg))
+
+	case streamCommitMsg:
+		return m, emit(m.commitStream())
+
+	case handlerDoneMsg:
+		m.busy = false
+		if msg.err != nil {
+			return m, m.console().Println(fmt.Sprintf("\033[91merror: %v\033[0m", msg.err))
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+func (m *tuiModel) View() tea.View {
+	displayLine := m.displayLine()
+	display := strings.ReplaceAll(strings.ReplaceAll(displayLine.text, "\r", ""), "\n", "")
+	if m.width > 0 {
+		display = xansi.Truncate(display, m.width, "")
+	}
+	if display == "" {
+		return tea.NewView(m.input.View())
+	}
+	if displayLine.dim {
+		display = termstyle.Dim(display)
+	}
+	return tea.NewView(display + "\n" + m.input.View())
+}
+
+func (m *tuiModel) handleCtrlC() (tea.Model, tea.Cmd) {
+	m.mu.Lock()
+	if time.Since(m.lastSig) > 1*time.Second {
+		m.sigCount = 0
+	}
+	m.sigCount++
+	m.lastSig = time.Now()
+	count := m.sigCount
+	m.mu.Unlock()
+
+	if count >= 2 {
+		m.interrupted = true
+		return m, tea.Batch(m.console().Println("bye."), tea.Quit)
+	}
+	m.input.SetValue("")
+	return m, nil
+}
+
+func (m *tuiModel) handleEnter() (tea.Model, tea.Cmd) {
+	text := m.input.Value()
+	m.input.SetValue("")
+	if text == "" {
+		return m, nil
+	}
+
+	echo := fmt.Sprintf("\033[1;96myou>\033[0m %s", text)
+	m.busy = true
+	return m, tea.Batch(
+		m.console().Println(echo),
+		func() tea.Msg {
+			reply, err := m.handler(m.ctx, "local", text)
+			if err != nil {
+				return handlerDoneMsg{err: err}
+			}
+			return handlerDoneMsg{reply: reply}
+		},
+	)
+}
+
+// --- writers ---
+
+type tuiLogWriter struct {
+	ch  *StdinChannel
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (w *tuiLogWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf = append(w.buf, p...)
+	for {
+		idx := -1
+		for i, b := range w.buf {
+			if b == '\n' {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			break
+		}
+		line := strings.TrimRight(string(w.buf[:idx]), "\r")
+		w.buf = w.buf[idx+1:]
+		w.ch.sendLine(line)
+	}
+	return len(p), nil
+}
+
+type tuiStreamWriter struct {
+	ch *StdinChannel
+	mu sync.Mutex
+}
+
+func (w *tuiStreamWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	s := string(p)
+	for {
+		idx := strings.IndexByte(s, '\n')
+		if idx < 0 {
+			if s != "" {
+				w.ch.sendStream(s)
+			}
+			break
+		}
+		if idx > 0 {
+			w.ch.sendStream(s[:idx])
+		}
+		w.ch.commitStream()
+		s = s[idx+1:]
+	}
+	return len(p), nil
+}

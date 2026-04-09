@@ -8,18 +8,30 @@ import (
 )
 
 const (
-	reset = "\033[0m"
-	dim   = "\033[90m"
-	bold  = "\033[1m"
-	cyan  = "\033[96m"
-	green = "\033[92m"
+	reset  = "\033[0m"
+	dim    = "\033[90m"
+	bold   = "\033[1m"
+	cyan   = "\033[96m"
+	green  = "\033[92m"
 	yellow = "\033[93m"
-	red   = "\033[91m"
+	red    = "\033[91m"
 )
+
+// forceColor bypasses the tty check. Set by ForceColor() when a TUI
+// manages the terminal and isatty would give false negatives on stderr.
+var forceColor bool
+
+// ForceColor makes all style functions emit ANSI codes regardless of
+// whether the underlying fd looks like a terminal. Call this when a
+// TUI (e.g. bubbletea) owns the screen.
+func ForceColor() { forceColor = true }
 
 func enabled(file *os.File) bool {
 	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
 		return false
+	}
+	if forceColor {
+		return true
 	}
 	fd := file.Fd()
 	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
