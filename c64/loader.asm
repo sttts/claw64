@@ -66,9 +66,6 @@ ldr_cp: lda (LDR_SRC_LO),y
         sta LDR_LEN_HI
         jsr copy_block
 
-        // Prove that ROM-shadow helper code can execute and return.
-        jsr cold_entry
-
         lda #%00110111
         sta LDR_PROCPORT
 
@@ -83,18 +80,12 @@ ldr_cp: lda (LDR_SRC_LO),y
         lda #>soul_data
         sta $FC
 
-        // Copy sprite data to cassette buffer area
-        // Frame 1 (claws open) → $0340, frame 2 (claws closed) → $03C0
-        // Dots → $0380
-        ldx #62
-spr_cp: lda spr_claw1,x
-        sta $0340,x
-        lda spr_dots,x
-        sta $0380,x
-        lda spr_claw2,x
-        sta $03C0,x
-        dex
-        bpl spr_cp
+        // Copy sprite data to cassette buffer area via cold helper.
+        lda #%00110101
+        sta LDR_PROCPORT
+        jsr cold_copy_sprites
+        lda #%00110111
+        sta LDR_PROCPORT
 
         // Jump to agent install at $C000
         jmp AGENT_BASE
