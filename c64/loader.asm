@@ -487,6 +487,7 @@ startup_hires_bitmap:
 startup_hires_screen:
         .import binary "assets/startup-logo-lobster-screen-hires-bottom.bin"
 
+.assert "guarded BASIC RAM must stay below soul", BASIC_GUARD_BASE <= SOUL_BASE, true
 .assert "soul must fit below BASIC ROM shadow", SOUL_BASE + PROMPT_LEN <= COLD_CODE_BASE, true
 .assert "cold code region must end before heartbeat region", COLD_CODE_BASE < COLD_CODE_LIMIT, true
 .assert "heartbeat region must end before user queue region", HEARTBEAT_BASE < USERQ_BASE, true

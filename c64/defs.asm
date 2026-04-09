@@ -9,19 +9,20 @@
 // fully encoded reliable outbound frame, including a 120-byte SYSTEM
 // chunk plus framing overhead.
 .const AGENT_BASE      = $C000  // agent code starts here
-.const SOUL_BASE       = $9800  // system prompt at top of BASIC RAM (protected by MEMSIZ)
+.const BASIC_GUARD_BASE = $9000 // top of BASIC RAM exposed to BASIC after install
+.const SOUL_BASE       = $9800  // system prompt inside the protected high BASIC RAM block
 .const AGENT_RXBUF     = $CEE0  // 128-byte receive / tool payload buffer
 .const AGENT_TXBUF     = $CF60  // transmit / inject buffer
 .const AGENT_RXBUF_LEN = 128
 .const AGENT_TXBUF_LEN = $A0
 
-// Planned ROM-shadow reservations for future cold code and durable memory.
-// These are reserved now, but not yet used by runtime behavior.
+// Planned protected-RAM reservations.
+// Queue/heartbeat move into guarded high BASIC RAM; durable memory stays out of BASIC RAM.
 .const COLD_CODE_BASE  = $A000
 .const COLD_CODE_LIMIT = $A400
-.const HEARTBEAT_BASE  = $A400
-.const USERQ_BASE      = $A500
-.const USERQ_LIMIT     = $A800
+.const HEARTBEAT_BASE  = BASIC_GUARD_BASE
+.const USERQ_BASE      = $9100
+.const USERQ_LIMIT     = $9400
 .const USERQ_SLOTS     = 3
 .const USERQ_SLOT_SIZE = $100
 .const USERQ_BYTES     = USERQ_LIMIT - USERQ_BASE

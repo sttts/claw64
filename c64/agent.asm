@@ -352,11 +352,11 @@ soul_cp:
         dex
         bne soul_cp
 
-        // Lower MEMSIZ ($37/$38) to protect soul area from BASIC strings.
-        lda #<SOUL_BASE
+        // Lower MEMSIZ ($37/$38) to protect the reserved high BASIC RAM block.
+        lda #<BASIC_GUARD_BASE
         sta $37
         sta $33                 // string pointer top = MEMSIZ
-        lda #>SOUL_BASE
+        lda #>BASIC_GUARD_BASE
         sta $38
         sta $34
 
