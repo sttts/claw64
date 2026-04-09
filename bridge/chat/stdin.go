@@ -114,8 +114,7 @@ type flushScrollbackMsg struct{}
 type flushEarlyMsg struct{}
 type redrawMsg struct{}
 type handlerDoneMsg struct {
-	reply string
-	err   error
+	err error
 }
 
 type consoleLine struct {
@@ -458,11 +457,11 @@ func (m *tuiModel) handleEnter() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(
 		func() tea.Msg { return settledMsg([]consoleLine{{text: echo}}) },
 		func() tea.Msg {
-			reply, err := m.handler(m.ctx, "local", text)
+			err := m.handler(m.ctx, "local", text)
 			if err != nil {
 				return handlerDoneMsg{err: err}
 			}
-			return handlerDoneMsg{reply: reply}
+			return handlerDoneMsg{}
 		},
 	)
 }

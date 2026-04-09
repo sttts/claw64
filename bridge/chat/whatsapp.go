@@ -154,22 +154,9 @@ func (w *WhatsAppChannel) onEvent(evt interface{}) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	reply, err := w.handler(context.Background(), sender, text)
+	err := w.handler(context.Background(), sender, text)
 	if err != nil {
 		log.Printf("whatsapp: handler error for %s: %v", sender, err)
 		return
-	}
-
-	if reply == "" {
-		return
-	}
-
-	// Send the reply back to the sender.
-	reply = formatJoystickQuote(reply)
-	_, err = w.client.SendMessage(context.Background(), msg.Info.Sender, &waE2E.Message{
-		Conversation: &reply,
-	})
-	if err != nil {
-		log.Printf("whatsapp: send reply to %s: %v", sender, err)
 	}
 }

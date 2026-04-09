@@ -57,16 +57,12 @@ func (s *SignalChannel) Start(ctx context.Context, handler MessageHandler) error
 				continue
 			}
 
-			reply, err := handler(ctx, evt.userID, text)
+			err := handler(ctx, evt.userID, text)
 			if err != nil {
 				log.Printf("signal: handler error for %s: %v", evt.userID, err)
-				reply = fmt.Sprintf("error: %v", err)
-			}
-			if reply == "" {
-				continue
-			}
-			if err := s.Send(ctx, evt.userID, reply); err != nil {
-				log.Printf("signal: send reply to %s: %v", evt.userID, err)
+				if sendErr := s.Send(ctx, evt.userID, fmt.Sprintf("error: %v", err)); sendErr != nil {
+					log.Printf("signal: send reply to %s: %v", evt.userID, sendErr)
+				}
 			}
 		}
 	}

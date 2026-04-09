@@ -246,15 +246,15 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 
 	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, cfg.SerialAddr)
 
-	err = ch.Start(ctx, func(ctx context.Context, userID, text string) (string, error) {
-		reply, err := rl.HandleMessageStream(ctx, userID, text, func(message string) error {
+	err = ch.Start(ctx, func(ctx context.Context, userID, text string) error {
+		_, err := rl.HandleMessageStream(ctx, userID, text, func(message string) error {
 			return ch.Send(ctx, userID, message)
 		})
 		if err != nil {
 			log.Printf("     ! error: %v", err)
-			return "", err
+			return err
 		}
-		return reply, nil
+		return nil
 	})
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, chat.ErrInterrupted) && ctx.Err() == nil {
 		log.Fatalf("chat: %v", err)

@@ -111,19 +111,14 @@ func (s *SlackChannel) handleSlackMessage(ctx context.Context, handler MessageHa
 		return nil
 	}
 
-	reply, err := handler(ctx, userID, text)
+	err := handler(ctx, userID, text)
 	if err != nil {
 		if s.thread != nil {
 			_, _ = s.thread.Post(s.decorateSlackReply(fmt.Sprintf("error: %v", err)))
 		}
 		return err
 	}
-	if reply == "" || s.thread == nil {
-		return nil
-	}
-
-	_, err = s.thread.Post(s.decorateSlackReply(reply))
-	return err
+	return nil
 }
 
 func (s *SlackChannel) decorateSlackReply(text string) string {

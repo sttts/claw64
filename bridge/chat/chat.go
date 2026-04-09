@@ -5,9 +5,9 @@ package chat
 import "context"
 
 // MessageHandler is called when a chat message arrives.
-// It receives the user identifier and message text, and returns the
-// response text to send back (or an error).
-type MessageHandler func(ctx context.Context, userID, text string) (string, error)
+// It receives the user identifier and message text, and returns only an
+// error. Any user-visible output is sent asynchronously via Channel.Send.
+type MessageHandler func(ctx context.Context, userID, text string) error
 
 // Channel is the interface that chat backends implement.
 type Channel interface {
