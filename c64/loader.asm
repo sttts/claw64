@@ -49,6 +49,21 @@ ldr_cp: lda (LDR_SRC_LO),y
         dex
         bne ldr_cp
 
+        // Copy guarded helper code into protected high BASIC RAM at $9000.
+        lda #<guarded_data
+        sta LDR_SRC_LO
+        lda #>guarded_data
+        sta LDR_SRC_HI
+        lda #<GUARD_CODE_BASE
+        sta LDR_DST_LO
+        lda #>GUARD_CODE_BASE
+        sta LDR_DST_HI
+        lda #<(guarded_end - guarded_data)
+        sta LDR_LEN_LO
+        lda #>(guarded_end - guarded_data)
+        sta LDR_LEN_HI
+        jsr copy_block
+
         // Copy cold helper code into RAM under BASIC ROM at $A000.
         lda #%00110101
         sta LDR_PROCPORT
@@ -382,6 +397,13 @@ cold_data:
 }
 cold_end:
 
+// Guarded runtime helper code stored inline — assembled as if at $9000.
+guarded_data:
+.pseudopc GUARD_CODE_BASE {
+        #import "guarded_queue.asm"
+}
+guarded_end:
+
 // System prompt text — copied to SOUL_BASE at boot.
 .encoding "petscii_mixed"
 soul_data:
@@ -488,6 +510,7 @@ startup_hires_screen:
         .import binary "assets/startup-logo-lobster-screen-hires-bottom.bin"
 
 .assert "guarded BASIC RAM must stay below soul", BASIC_GUARD_BASE <= SOUL_BASE, true
+.assert "guarded helper code must fit before heartbeat region", GUARD_CODE_BASE + (guarded_end - guarded_data) <= HEARTBEAT_BASE, true
 .assert "soul must fit below BASIC ROM shadow", SOUL_BASE + PROMPT_LEN <= COLD_CODE_BASE, true
 .assert "cold code region must end before heartbeat region", COLD_CODE_BASE < COLD_CODE_LIMIT, true
 .assert "heartbeat region must end before user queue region", HEARTBEAT_BASE < USERQ_BASE, true
