@@ -19,13 +19,13 @@ guq_have_space:
         sta guq_store_body+2
 
         ldy #0
-        lda frame_len
+        lda userq_stage_len
 guq_store_len:
         sta $9200,y
         iny
         ldx #0
 guq_store_loop:
-        cpx frame_len
+        cpx userq_stage_len
         beq guq_store_done
         lda AGENT_RXBUF+1,x
 guq_store_body:
