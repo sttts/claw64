@@ -2271,10 +2271,6 @@ tx_ack_timer: .byte 0   // frames since last send (for retransmit timeout)
 tx_retries:   .byte 0   // retry count for current outbound frame
 tx_service_busy:.byte 0 // 1 while one context is draining outbound bytes
 prompt_sent:  .byte 0   // 1 = prompt already sent
-userq_stage_len: .byte 0 // staged MSG payload length for guarded queue helpers
-userq_head:   .byte 0   // oldest queued user-message slot
-userq_tail:   .byte 0   // next free queued user-message slot
-userq_count:  .byte 0   // queued user-message count (0..3)
 scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= this)
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte

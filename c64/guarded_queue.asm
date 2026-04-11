@@ -5,13 +5,13 @@
 // runtime call sites are introduced in a later slice.
 
 guard_userq_enqueue_from_rxbuf:
-        lda userq_count
+        lda USERQ_COUNT_PTR
         cmp #USERQ_SLOTS
         bcc guq_have_space
         jsr guard_userq_advance_head
-        dec userq_count
+        dec USERQ_COUNT_PTR
 guq_have_space:
-        ldx userq_tail
+        ldx USERQ_TAIL_PTR
         txa
         clc
         adc #>USERQ_BASE
@@ -19,13 +19,13 @@ guq_have_space:
         sta guq_store_body+2
 
         ldy #0
-        lda userq_stage_len
+        lda USERQ_STAGE_LEN
 guq_store_len:
         sta $9200,y
         iny
         ldx #0
 guq_store_loop:
-        cpx userq_stage_len
+        cpx USERQ_STAGE_LEN
         beq guq_store_done
         lda AGENT_RXBUF+1,x
 guq_store_body:
@@ -35,11 +35,11 @@ guq_store_body:
         bne guq_store_loop
 guq_store_done:
         jsr guard_userq_advance_tail
-        inc userq_count
+        inc USERQ_COUNT_PTR
         rts
 
 guard_userq_load_head_to_rxbuf:
-        ldx userq_head
+        ldx USERQ_HEAD_PTR
         txa
         clc
         adc #>USERQ_BASE
@@ -63,25 +63,25 @@ guq_load_body:
         bne guq_load_loop
 guq_load_done:
         jsr guard_userq_advance_head
-        dec userq_count
+        dec USERQ_COUNT_PTR
         rts
 
 guard_userq_advance_head:
-        inc userq_head
-        lda userq_head
+        inc USERQ_HEAD_PTR
+        lda USERQ_HEAD_PTR
         cmp #USERQ_SLOTS
         bcc guq_head_ok
         lda #0
-        sta userq_head
+        sta USERQ_HEAD_PTR
 guq_head_ok:
         rts
 
 guard_userq_advance_tail:
-        inc userq_tail
-        lda userq_tail
+        inc USERQ_TAIL_PTR
+        lda USERQ_TAIL_PTR
         cmp #USERQ_SLOTS
         bcc guq_tail_ok
         lda #0
-        sta userq_tail
+        sta USERQ_TAIL_PTR
 guq_tail_ok:
         rts
