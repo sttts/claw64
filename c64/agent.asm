@@ -379,6 +379,13 @@ init_tail:
         sta anim_timer,x
         dex
         bpl init_tail
+
+        // Initialize inert queue metadata in guarded BASIC RAM.
+        sta USERQ_STAGE_LEN
+        sta USERQ_HEAD_PTR
+        sta USERQ_TAIL_PTR
+        sta USERQ_COUNT_PTR
+
         lda #5
         sta anim_timer
         lda #1
