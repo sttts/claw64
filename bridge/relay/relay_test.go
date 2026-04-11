@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -135,5 +136,62 @@ func TestAcquireMessageGateHonorsContextWhileBusy(t *testing.T) {
 	err := r.acquireMessageGate(ctx)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("acquire error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestAcquireMessageGateAllowsOnlyOneConcurrentHolder(t *testing.T) {
+	r := &Relay{
+		msgRetryBase: time.Millisecond,
+		msgRetryMax:  2 * time.Millisecond,
+	}
+
+	if err := r.acquireMessageGate(context.Background()); err != nil {
+		t.Fatalf("initial acquire error = %v", err)
+	}
+
+	var maxHolders atomic.Int32
+	var currentHolders atomic.Int32
+	releaseNext := make(chan struct{}, 2)
+	errCh := make(chan error, 2)
+
+	startWaiter := func() {
+		go func() {
+			if err := r.acquireMessageGate(context.Background()); err != nil {
+				errCh <- err
+				return
+			}
+
+			holders := currentHolders.Add(1)
+			for {
+				old := maxHolders.Load()
+				if holders <= old || maxHolders.CompareAndSwap(old, holders) {
+					break
+				}
+			}
+
+			<-releaseNext
+			currentHolders.Add(-1)
+			r.releaseMessageGate()
+			errCh <- nil
+		}()
+	}
+
+	startWaiter()
+	startWaiter()
+
+	time.Sleep(5 * time.Millisecond)
+	r.releaseMessageGate()
+
+	releaseNext <- struct{}{}
+	releaseNext <- struct{}{}
+
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			t.Fatalf("waiter error = %v", err)
+		}
+	}
+
+	if got := maxHolders.Load(); got != 1 {
+		t.Fatalf("max concurrent holders = %d, want 1", got)
 	}
 }
