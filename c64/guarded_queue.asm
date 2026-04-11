@@ -4,6 +4,9 @@
 // This code is staged into protected high BASIC RAM and kept inert until
 // runtime call sites are introduced in a later slice.
 
+guard_userq_noop:
+        rts
+
 guard_userq_enqueue_from_rxbuf:
         lda USERQ_COUNT_PTR
         cmp #USERQ_SLOTS

@@ -2050,6 +2050,7 @@ fd_status_running:
         // Queue one fresh STATUS reply for after the bridge ACK arrives.
         jmp fd_status_queue
 fd_status_queue:
+        jsr GUARD_USERQ_NOOP
         jsr queue_state_running
         rts
 
