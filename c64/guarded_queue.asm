@@ -7,12 +7,19 @@
 guard_userq_noop:
         lda USERQ_STAGE_LEN
         sta USERQ_BASE
-        lda AGENT_RXBUF+1
-        sta USERQ_BASE+1
-        lda AGENT_RXBUF+2
-        sta USERQ_BASE+2
-        lda AGENT_RXBUF+3
-        sta USERQ_BASE+3
+
+        // Copy a small bounded prefix from RXBUF into guarded queue storage.
+        ldx #0
+guq_noop_copy_loop:
+        cpx USERQ_STAGE_LEN
+        beq guq_noop_copy_done
+        cpx #$10
+        beq guq_noop_copy_done
+        lda AGENT_RXBUF+1,x
+        sta USERQ_BASE+1,x
+        inx
+        bne guq_noop_copy_loop
+guq_noop_copy_done:
         inc USERQ_STAGE_LEN
         inc USERQ_COUNT_PTR
         inc USERQ_TAIL_PTR
