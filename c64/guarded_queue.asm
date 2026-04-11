@@ -5,6 +5,7 @@
 // runtime call sites are introduced in a later slice.
 
 guard_userq_noop:
+        lda USERQ_STAGE_LEN
         rts
 
 guard_userq_enqueue_from_rxbuf:
