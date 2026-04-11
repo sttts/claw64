@@ -11,6 +11,8 @@ guard_userq_noop:
         sta USERQ_BASE+1
         lda AGENT_RXBUF+2
         sta USERQ_BASE+2
+        lda AGENT_RXBUF+3
+        sta USERQ_BASE+3
         inc USERQ_STAGE_LEN
         inc USERQ_COUNT_PTR
         inc USERQ_TAIL_PTR
