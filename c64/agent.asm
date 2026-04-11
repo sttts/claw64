@@ -602,7 +602,7 @@ bl_scan_do:
         ldy #0
 bl_rd_loop:
 brf_rd: lda $0400               // address self-modified by setup above
-        cmp ready_codes,y
+        cmp READY_CODES_BASE,y
         bne bl_scan_next        // mismatch → next line
         iny
         cpy #6
@@ -1424,7 +1424,7 @@ sha_do:
         ldy #0
 sha_loop:
 bl_rd:  lda $0400
-        cmp ready_codes,y
+        cmp READY_CODES_BASE,y
         bne sha_next
         iny
         cpy #6
@@ -2249,8 +2249,6 @@ send_total:   .byte 0   // total bytes to send in current burst-send operation
 cur_page:     .byte $A0 // current page during ROM copy, init to $A0
 // saved_border removed — agent never touches the border
 
-// Screen codes for "READY." (used by self-modifying scan loop)
-ready_codes:  .byte $12, $05, $01, $04, $19, $2E
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
 llm_len:      .byte 0   // saved MSG body length for the LLM frame
 prompt_pending: .byte 0 // 1 = system prompt chunks still need sending
