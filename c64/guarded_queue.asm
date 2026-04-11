@@ -7,7 +7,6 @@
 guard_userq_noop:
         lda USERQ_STAGE_LEN
         inc USERQ_STAGE_LEN
-        dec USERQ_STAGE_LEN
         rts
 
 guard_userq_enqueue_from_rxbuf:
