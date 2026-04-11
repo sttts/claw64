@@ -2296,8 +2296,6 @@ running_reported: .byte 0 // 1 once "RUNNING" was already reported
 basic_running: .byte 0  // 1 = BASIC program still running after detach
 stop_requested: .byte 0 // 1 = ask ISTOP to trigger RUN/STOP
 progline_pending: .byte 0 // 1 = current EXEC starts with a BASIC line number
-// color cycle for busy lobster: red → orange → yellow → white
-busy_colors:  .byte 2, 8, 7, 1
 claw_timer:   .byte 30  // frames between claw animation toggles
 
 // System prompt constants — text is in loader.asm, copied to SOUL_BASE at boot.
@@ -2500,7 +2498,7 @@ irq_busy_anim:
         lsr                     // divide by 8 (change every 8 frames)
         and #$03                // 4 phases: 0,1,2,3
         tax
-        lda busy_colors,x
+        lda BUSY_COLORS_BASE,x
         sta $D027               // set lobster sprite color
 
         // Hide dots after ~500ms without serial activity (30 frames).
