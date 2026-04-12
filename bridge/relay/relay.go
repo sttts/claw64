@@ -156,6 +156,19 @@ func (r *Relay) tryAcquireMessageGate() bool {
 	return true
 }
 
+func (r *Relay) canSendOverlappingMessage() bool {
+	if r.SystemPrompt == "" {
+		return false
+	}
+	if r.basicRunning || r.completionDrain {
+		return true
+	}
+	if len(r.textOutQueue) > 0 || len(r.textInFlight) > 0 {
+		return true
+	}
+	return false
+}
+
 func (r *Relay) releaseMessageGate() {
 	r.msgGateMu.Lock()
 	if len(r.msgGateWaiters) > 0 {
@@ -334,7 +347,7 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 	// send user message to C64 (header now, chars stream via callback)
 	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
-	if r.SystemPrompt == "" {
+	if !r.canSendOverlappingMessage() {
 		if err := r.acquireMessageGate(ctx); err != nil {
 			return fmt.Errorf("wait for relay idle: %w", err)
 		}

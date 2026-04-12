@@ -260,6 +260,23 @@ func TestTryAcquireMessageGateReturnsFalseWhileBusy(t *testing.T) {
 	r.releaseMessageGate()
 }
 
+func TestCanSendOverlappingMessageRequiresSteadyStateActivity(t *testing.T) {
+	r := &Relay{}
+	if r.canSendOverlappingMessage() {
+		t.Fatal("canSendOverlappingMessage = true without system prompt")
+	}
+
+	r.SystemPrompt = "ready"
+	if r.canSendOverlappingMessage() {
+		t.Fatal("canSendOverlappingMessage = true without active turn state")
+	}
+
+	r.textOutQueue = []byte("x")
+	if !r.canSendOverlappingMessage() {
+		t.Fatal("canSendOverlappingMessage = false while text is queued")
+	}
+}
+
 func TestDispatchAckWaiterDeliversMatchingAck(t *testing.T) {
 	r := &Relay{}
 	waiter := r.registerAckWaiter(7)
