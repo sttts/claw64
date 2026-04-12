@@ -1242,26 +1242,26 @@ queue_state_ready:
         lda #0
         sta basic_running
         lda #6
-        ldx #<state_ready_text
-        ldy #>state_ready_text
+        ldx #<STATE_READY_TEXT_BASE
+        ldy #>STATE_READY_TEXT_BASE
         jmp queue_state_text
 
 queue_state_running:
         lda #7
-        ldx #<state_running_text
-        ldy #>state_running_text
+        ldx #<STATE_RUNNING_TEXT_BASE
+        ldy #>STATE_RUNNING_TEXT_BASE
         jmp queue_state_text
 
 queue_state_busy:
         lda #4
-        ldx #<state_busy_text
-        ldy #>state_busy_text
+        ldx #<STATE_BUSY_TEXT_BASE
+        ldy #>STATE_BUSY_TEXT_BASE
         jmp queue_state_text
 
 queue_state_stored:
         lda #6
-        ldx #<state_stored_text
-        ldy #>state_stored_text
+        ldx #<STATE_STORED_TEXT_BASE
+        ldy #>STATE_STORED_TEXT_BASE
         jmp queue_state_text
 
 queue_state_stop_requested:
@@ -1388,15 +1388,6 @@ iti_shift:
         sta tx_next_id
 iti_done:
         rts
-
-state_ready_text:
-        .text "READY."
-state_running_text:
-        .text "RUNNING"
-state_busy_text:
-        .text "BUSY"
-state_stored_text:
-        .text "STORED"
 
 // screen_has_ready_anywhere — check the visible screen for READY.
 // Returns carry set and X=line if found, carry clear otherwise.

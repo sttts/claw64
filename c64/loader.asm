@@ -94,18 +94,18 @@ ldr_cp: lda (LDR_SRC_LO),y
         sta LDR_LEN_HI
         jsr copy_block
 
-        // Seed guarded stop-requested status text used by the resident state path.
-        lda #<state_stop_text_data
+        // Seed guarded status text used by the resident state path.
+        lda #<state_text_data
         sta LDR_SRC_LO
-        lda #>state_stop_text_data
+        lda #>state_text_data
         sta LDR_SRC_HI
-        lda #<STATE_STOP_TEXT_BASE
+        lda #<STATE_READY_TEXT_BASE
         sta LDR_DST_LO
-        lda #>STATE_STOP_TEXT_BASE
+        lda #>STATE_READY_TEXT_BASE
         sta LDR_DST_HI
-        lda #<14
+        lda #<37
         sta LDR_LEN_LO
-        lda #>14
+        lda #>37
         sta LDR_LEN_HI
         jsr copy_block
 
@@ -455,7 +455,11 @@ busy_colors_data:
 ready_codes_data:
         .byte $12, $05, $01, $04, $19, $2E
 
-state_stop_text_data:
+state_text_data:
+        .text "READY."
+        .text "RUNNING"
+        .text "BUSY"
+        .text "STORED"
         .text "STOP REQUESTED"
 
 // System prompt text — copied to SOUL_BASE at boot.
