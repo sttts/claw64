@@ -55,6 +55,42 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 		"m c000 cfff",
 	}
 
+	if syms, err := loadMonitorSymbols(symPath); err == nil {
+		if lo, hi, ok := symbolRange(syms,
+			"frame_len",
+			"agent_state",
+			"ready_timer",
+			"send_pos",
+			"send_total",
+			"llm_pending",
+			"llm_len",
+			"prompt_pending",
+			"result_pending",
+			"text_pending",
+			"text_len",
+			"ack_pending",
+			"deferred_ack",
+			"tx_ack_wait",
+			"tx_ack_id",
+			"tx_ack_timer",
+			"tx_retries",
+			"tx_service_busy",
+			"prompt_sent",
+			"busy",
+			"busy_timer",
+		); ok {
+			commands = append(commands, fmt.Sprintf("m %04x %04x", lo, hi))
+		}
+		if lo, hi, ok := symbolRange(syms,
+			"USERQ_STAGE_LEN",
+			"USERQ_HEAD_PTR",
+			"USERQ_TAIL_PTR",
+			"USERQ_COUNT_PTR",
+		); ok {
+			commands = append(commands, fmt.Sprintf("m %04x %04x", lo, hi))
+		}
+	}
+
 	for _, cmd := range commands {
 		fmt.Fprintf(f, ">>> %s\n", cmd)
 		out, err := runMonitorCommand(conn, cmd)
