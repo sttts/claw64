@@ -35,7 +35,10 @@ guq_noop_copy_done:
         inc USERQ_STAGE_LEN
         lda USERQ_COUNT_PTR
         cmp #USERQ_SLOTS
-        bcs guq_noop_count_ok
+        bcc guq_noop_count_inc
+        jsr guard_userq_advance_head
+        jmp guq_noop_count_ok
+guq_noop_count_inc:
         inc USERQ_COUNT_PTR
 guq_noop_count_ok:
         jsr guard_userq_advance_tail
