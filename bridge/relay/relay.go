@@ -59,6 +59,8 @@ type Relay struct {
 	recvCh          chan recvResult
 	ackWaitMu       sync.Mutex
 	ackWaiters      map[byte]chan serial.Frame
+	overlapMu       sync.Mutex
+	overlapBusy     bool
 	msgGateMu       sync.Mutex
 	msgGateBusy     bool
 	msgGateWaiters  []chan struct{}
@@ -180,6 +182,22 @@ func (r *Relay) releaseMessageGate() {
 	}
 	r.msgGateBusy = false
 	r.msgGateMu.Unlock()
+}
+
+func (r *Relay) tryAcquireOverlapSend() bool {
+	r.overlapMu.Lock()
+	defer r.overlapMu.Unlock()
+	if r.overlapBusy {
+		return false
+	}
+	r.overlapBusy = true
+	return true
+}
+
+func (r *Relay) releaseOverlapSend() {
+	r.overlapMu.Lock()
+	r.overlapBusy = false
+	r.overlapMu.Unlock()
 }
 
 // handleSystemFrame assembles SYSTEM prompt chunks from the C64.
@@ -366,12 +384,26 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 		return r.eventLoop(ctx, userID, emit)
 	}
 
+	if !r.tryAcquireOverlapSend() {
+		if err := r.acquireMessageGate(ctx); err != nil {
+			return fmt.Errorf("wait for relay idle: %w", err)
+		}
+		defer r.releaseMessageGate()
+		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
+			return fmt.Errorf("send MSG: %w", err)
+		}
+		return r.eventLoop(ctx, userID, emit)
+	}
+
 	if err := r.sendVerifiedWithAckWaiter(ctx, msgFrame, "MSG"); err != nil {
+		r.releaseOverlapSend()
 		return fmt.Errorf("send overlapping MSG: %w", err)
 	}
 	if err := r.acquireMessageGate(ctx); err != nil {
+		r.releaseOverlapSend()
 		return fmt.Errorf("wait for relay idle: %w", err)
 	}
+	r.releaseOverlapSend()
 	defer r.releaseMessageGate()
 	return r.eventLoop(ctx, userID, emit)
 }
