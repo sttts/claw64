@@ -5,8 +5,18 @@
 // runtime call sites are introduced in a later slice.
 
 guard_userq_noop:
+        ldx USERQ_TAIL_PTR
+        txa
+        clc
+        adc #>USERQ_BASE
+        sta guq_noop_store_len+2
+        sta guq_noop_store_body+2
+
+        ldy #0
         lda USERQ_STAGE_LEN
-        sta USERQ_BASE
+guq_noop_store_len:
+        sta $9200,y
+        iny
 
         // Copy a small bounded prefix from RXBUF into guarded queue storage.
         ldx #0
@@ -16,7 +26,9 @@ guq_noop_copy_loop:
         cpx #$10
         beq guq_noop_copy_done
         lda AGENT_RXBUF+1,x
-        sta USERQ_BASE+1,x
+guq_noop_store_body:
+        sta $9200,y
+        iny
         inx
         bne guq_noop_copy_loop
 guq_noop_copy_done:
