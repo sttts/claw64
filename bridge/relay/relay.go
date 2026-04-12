@@ -55,6 +55,7 @@ type Relay struct {
 	lastAckSentAt   time.Time
 	lastC64FrameAt  time.Time
 	recvOnce        sync.Once
+	ackCh           chan serial.Frame
 	recvCh          chan recvResult
 	msgGateMu       sync.Mutex
 	msgGateBusy     bool
@@ -1033,10 +1034,15 @@ func (r *Relay) appendToolResult(userID, result string) {
 
 func (r *Relay) ensureRecvLoop() {
 	r.recvOnce.Do(func() {
+		r.ackCh = make(chan serial.Frame, 32)
 		r.recvCh = make(chan recvResult, 1)
 		go func() {
 			for {
 				f, err := r.Link.Recv()
+				if err == nil && f.Type == serial.FrameAck {
+					r.ackCh <- f
+					continue
+				}
 				r.recvCh <- recvResult{frame: f, err: err}
 				if err != nil {
 					return
@@ -1076,6 +1082,10 @@ func (r *Relay) recvFromSocketOnly(ctx context.Context, waitingTextAck bool) (se
 		select {
 		case <-ctx.Done():
 			return serial.Frame{}, ctx.Err()
+
+		case f := <-r.ackCh:
+			stallDumped = false
+			return f, nil
 
 		case res := <-r.recvCh:
 			if res.err != nil {
@@ -1152,6 +1162,10 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 		select {
 		case <-ctx.Done():
 			return serial.Frame{}, false, ctx.Err()
+
+		case f := <-r.ackCh:
+			stallDumped = false
+			return f, false, nil
 
 		case res := <-r.recvCh:
 			if res.err != nil {
