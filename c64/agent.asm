@@ -964,7 +964,7 @@ so_chk_ack_wait:
         lda tx_ack_wait
         beq so_ack_clear
         lda tx_ack_timer
-        cmp #240                // 4 seconds at 60Hz before retransmit
+        cmp #60                 // 1 second at 60Hz before retransmit
         bcc so_send_check       // still waiting — don't build next frame
 
         // Timeout — check retry budget (3 retries max).
