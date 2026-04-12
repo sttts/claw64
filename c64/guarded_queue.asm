@@ -33,7 +33,11 @@ guq_noop_store_body:
         bne guq_noop_copy_loop
 guq_noop_copy_done:
         inc USERQ_STAGE_LEN
+        lda USERQ_COUNT_PTR
+        cmp #USERQ_SLOTS
+        bcs guq_noop_count_ok
         inc USERQ_COUNT_PTR
+guq_noop_count_ok:
         jsr guard_userq_advance_tail
         rts
 
