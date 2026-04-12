@@ -57,6 +57,8 @@ type Relay struct {
 	recvOnce        sync.Once
 	ackCh           chan serial.Frame
 	recvCh          chan recvResult
+	ackWaitMu       sync.Mutex
+	ackWaiters      map[byte]chan serial.Frame
 	msgGateMu       sync.Mutex
 	msgGateBusy     bool
 	msgGateWaiters  []chan struct{}
@@ -1050,6 +1052,40 @@ func (r *Relay) ensureRecvLoop() {
 			}
 		}()
 	})
+}
+
+func (r *Relay) registerAckWaiter(id byte) chan serial.Frame {
+	ch := make(chan serial.Frame, 1)
+	r.ackWaitMu.Lock()
+	if r.ackWaiters == nil {
+		r.ackWaiters = make(map[byte]chan serial.Frame)
+	}
+	r.ackWaiters[id] = ch
+	r.ackWaitMu.Unlock()
+	return ch
+}
+
+func (r *Relay) unregisterAckWaiter(id byte) {
+	r.ackWaitMu.Lock()
+	delete(r.ackWaiters, id)
+	r.ackWaitMu.Unlock()
+}
+
+func (r *Relay) dispatchAckWaiter(f serial.Frame) bool {
+	ackID, ok := serial.ExtractAckID(f.Payload)
+	if !ok {
+		return false
+	}
+
+	r.ackWaitMu.Lock()
+	ch, ok := r.ackWaiters[ackID]
+	r.ackWaitMu.Unlock()
+	if !ok {
+		return false
+	}
+
+	ch <- f
+	return true
 }
 
 func (r *Relay) recvFromSocketOnly(ctx context.Context, waitingTextAck bool) (serial.Frame, error) {

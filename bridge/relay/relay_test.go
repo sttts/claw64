@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sttts/claw64/bridge/llm"
+	"github.com/sttts/claw64/bridge/serial"
 )
 
 type stubCompleter struct {
@@ -245,5 +246,34 @@ func TestAcquireMessageGateReleasesWaitersInFIFOOrder(t *testing.T) {
 		if err := <-errCh; err != nil {
 			t.Fatalf("waiter error = %v", err)
 		}
+	}
+}
+
+func TestDispatchAckWaiterDeliversMatchingAck(t *testing.T) {
+	r := &Relay{}
+	waiter := r.registerAckWaiter(7)
+	defer r.unregisterAckWaiter(7)
+
+	f := serial.Frame{Type: serial.FrameAck, Payload: []byte{7}}
+	if !r.dispatchAckWaiter(f) {
+		t.Fatal("dispatchAckWaiter returned false")
+	}
+
+	select {
+	case got := <-waiter:
+		if got.Type != serial.FrameAck || string(got.Payload) != string(f.Payload) {
+			t.Fatalf("got %#v, want %#v", got, f)
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("waiter did not receive ACK")
+	}
+}
+
+func TestDispatchAckWaiterIgnoresUnknownAckID(t *testing.T) {
+	r := &Relay{}
+
+	f := serial.Frame{Type: serial.FrameAck, Payload: []byte{9}}
+	if r.dispatchAckWaiter(f) {
+		t.Fatal("dispatchAckWaiter returned true for unknown ACK id")
 	}
 }
