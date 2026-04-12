@@ -1943,8 +1943,11 @@ fd_dispatch:
         sta prompt_pending
 fd_msg_no_prompt:
         lda frame_len
-        sta llm_len             // save MSG body length for later LLM frame
         sta USERQ_STAGE_LEN     // seed guarded queue staging with the real MSG length
+        lda busy
+        bne fd_msg_queue_busy
+        lda frame_len
+        sta llm_len             // save MSG body length for later LLM frame
         lda #1
         sta busy
         sta llm_pending
@@ -1954,6 +1957,10 @@ fd_msg_no_prompt:
         lda $D015
         ora #%00000010
         sta $D015
+        rts
+
+fd_msg_queue_busy:
+        jsr GUARD_USERQ_NOOP
         rts
 
 fd_not_msg:
