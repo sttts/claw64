@@ -247,6 +247,10 @@ func (s *scriptedBurnin) completeOverlapMsg(messages []llm.Message) (llm.Message
 	lastTool := lastToolMessage(messages)
 	lastUser := strings.ToLower(lastUserMessage(messages))
 
+	if s.step == 0 && strings.TrimSpace(lastUser) == "hi" {
+		return llm.Message{Role: "assistant", Content: "READY FOR OVERLAP."}, nil
+	}
+
 	switch s.step {
 	case 0:
 		if !strings.Contains(lastUser, "program") {
@@ -431,6 +435,14 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay) {
 		err   error
 	}
 
+	err := rl.HandleMessageStream(ctx, "burnin", "Hi", func(message string) error {
+		fmt.Fprintf(os.Stdout, "\n%s %s\n", "c64>", message)
+		return nil
+	})
+	if err != nil {
+		log.Fatalf("burnin warmup: %v", err)
+	}
+
 	runOne := func(input string) <-chan result {
 		ch := make(chan result, 1)
 		go func() {
@@ -446,7 +458,7 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay) {
 	}
 
 	first := runOne("Can you program a tiny overlap demo?")
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(4500 * time.Millisecond)
 	second := runOne("run it")
 
 	waitOne := func(name string, ch <-chan result, want string) {
