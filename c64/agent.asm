@@ -1946,6 +1946,7 @@ fd_dispatch:
 fd_msg_no_prompt:
         lda frame_len
         sta llm_len             // save MSG body length for later LLM frame
+        sta USERQ_STAGE_LEN     // seed guarded queue staging with the real MSG length
         lda #1
         sta busy
         sta llm_pending
