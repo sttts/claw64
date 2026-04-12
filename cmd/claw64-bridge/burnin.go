@@ -26,7 +26,9 @@ func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ [
 	case "direct-exec":
 		return s.completeDirectExec(messages)
 	case "overlap-msg":
-		return s.completeOverlapMsg(messages)
+		return s.completeOverlapQueue(messages, false)
+	case "overlap-queue3":
+		return s.completeOverlapQueue(messages, true)
 	default:
 		return llm.Message{}, fmt.Errorf("unknown burn-in scenario %q", s.scenario)
 	}
@@ -243,7 +245,7 @@ func (s *scriptedBurnin) completeDirectExec(messages []llm.Message) (llm.Message
 	}
 }
 
-func (s *scriptedBurnin) completeOverlapMsg(messages []llm.Message) (llm.Message, error) {
+func (s *scriptedBurnin) completeOverlapQueue(messages []llm.Message, queueThree bool) (llm.Message, error) {
 	lastTool := lastToolMessage(messages)
 	lastUser := strings.ToLower(lastUserMessage(messages))
 
@@ -308,7 +310,44 @@ func (s *scriptedBurnin) completeOverlapMsg(messages []llm.Message) (llm.Message
 			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
 			return llm.Message{}, fmt.Errorf("step %d: expected final screenshot/result, got %q", s.step, lastTool)
 		}
+		if queueThree {
+			s.step++
+			return llm.Message{Role: "assistant", Content: "SECOND RUN COMPLETE."}, nil
+		}
 		return llm.Message{Role: "assistant", Content: "SECOND RUN COMPLETE."}, nil
+	case 8:
+		if !strings.Contains(lastUser, "run") {
+			return llm.Message{}, fmt.Errorf("step %d: expected second queued run request, got %q", s.step, lastUser)
+		}
+		s.step++
+		return execToolCall("RUN", s.step), nil
+	case 9:
+		switch {
+		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
+			return llm.Message{Role: "assistant", Content: "THIRD RUN COMPLETE."}, nil
+		case lastTool == "[C64 BASIC status]: RUNNING":
+			s.step++
+			return simpleToolCall("status", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected second RUN result or RUNNING, got %q", s.step, lastTool)
+		}
+	case 10:
+		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
+		switch status {
+		case "RUNNING", "STOP REQUESTED":
+			return simpleToolCall("status", "{}", s.step), nil
+		case "READY", "READY.":
+			s.step++
+			return simpleToolCall("screen", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining second RUN, got %q", s.step, lastTool)
+		}
+	case 11:
+		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
+			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected final second-run screenshot/result, got %q", s.step, lastTool)
+		}
+		return llm.Message{Role: "assistant", Content: "THIRD RUN COMPLETE."}, nil
 	default:
 		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
 	}
@@ -404,8 +443,8 @@ func runBurnin(cfg CLI, scenario string) {
 	// C64 handshake. Let the serial side settle before the first scripted MSG.
 	time.Sleep(750 * time.Millisecond)
 
-	if scenario == "overlap-msg" {
-		runOverlapBurnin(ctx, rl)
+	if scenario == "overlap-msg" || scenario == "overlap-queue3" {
+		runOverlapBurnin(ctx, rl, scenario == "overlap-queue3")
 		log.Printf("burnin: scenario %s completed", scenario)
 		return
 	}
@@ -429,7 +468,7 @@ func runBurnin(cfg CLI, scenario string) {
 	log.Printf("burnin: scenario %s completed", scenario)
 }
 
-func runOverlapBurnin(ctx context.Context, rl *relay.Relay) {
+func runOverlapBurnin(ctx context.Context, rl *relay.Relay, queueThree bool) {
 	type result struct {
 		texts []string
 		err   error
@@ -460,6 +499,11 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay) {
 	first := runOne("Can you program a tiny overlap demo?")
 	time.Sleep(4500 * time.Millisecond)
 	second := runOne("run it")
+	var third <-chan result
+	if queueThree {
+		time.Sleep(150 * time.Millisecond)
+		third = runOne("run it again")
+	}
 
 	waitOne := func(name string, ch <-chan result, want string) {
 		res := <-ch
@@ -479,6 +523,9 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay) {
 
 	waitOne("first", first, "FIRST PROGRAM STORED.")
 	waitOne("second", second, "SECOND RUN COMPLETE.")
+	if queueThree {
+		waitOne("third", third, "THIRD RUN COMPLETE.")
+	}
 }
 
 func burninInputs(scenario string) []string {
@@ -490,6 +537,8 @@ func burninInputs(scenario string) []string {
 			"run it",
 		}
 	case "overlap-msg":
+		return nil
+	case "overlap-queue3":
 		return nil
 	default:
 		return []string{"Hi"}
