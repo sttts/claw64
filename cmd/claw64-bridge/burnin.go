@@ -29,6 +29,8 @@ func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ [
 		return s.completeOverlapQueue(messages, false)
 	case "overlap-queue3":
 		return s.completeOverlapQueue(messages, true)
+	case "overlap-running2":
+		return s.completeOverlapQueue(messages, false)
 	default:
 		return llm.Message{}, fmt.Errorf("unknown burn-in scenario %q", s.scenario)
 	}
@@ -443,8 +445,8 @@ func runBurnin(cfg CLI, scenario string) {
 	// C64 handshake. Let the serial side settle before the first scripted MSG.
 	time.Sleep(750 * time.Millisecond)
 
-	if scenario == "overlap-msg" || scenario == "overlap-queue3" {
-		runOverlapBurnin(ctx, rl, scenario == "overlap-queue3")
+	if scenario == "overlap-msg" || scenario == "overlap-queue3" || scenario == "overlap-running2" {
+		runOverlapBurnin(ctx, rl, scenario)
 		log.Printf("burnin: scenario %s completed", scenario)
 		return
 	}
@@ -468,11 +470,12 @@ func runBurnin(cfg CLI, scenario string) {
 	log.Printf("burnin: scenario %s completed", scenario)
 }
 
-func runOverlapBurnin(ctx context.Context, rl *relay.Relay, queueThree bool) {
+func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
 	type result struct {
 		texts []string
 		err   error
 	}
+	queueThree := scenario == "overlap-queue3"
 
 	err := rl.HandleMessageStream(ctx, "burnin", "Hi", func(message string) error {
 		fmt.Fprintf(os.Stdout, "\n%s %s\n", "c64>", message)
@@ -498,6 +501,9 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay, queueThree bool) {
 
 	first := runOne("Can you program a tiny overlap demo?")
 	time.Sleep(4500 * time.Millisecond)
+	if scenario == "overlap-running2" {
+		time.Sleep(1000 * time.Millisecond)
+	}
 	second := runOne("run it")
 	var third <-chan result
 	if queueThree {
@@ -539,6 +545,8 @@ func burninInputs(scenario string) []string {
 	case "overlap-msg":
 		return nil
 	case "overlap-queue3":
+		return nil
+	case "overlap-running2":
 		return nil
 	default:
 		return []string{"Hi"}
