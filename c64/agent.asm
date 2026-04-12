@@ -953,6 +953,12 @@ so_build_next:
         sta deferred_ack
         lda #1
         sta ack_pending
+        lda USERQ_COUNT_PTR
+        beq so_chk_ack_wait
+        jsr GUARD_USERQ_LOAD
+        lda #1
+        sta llm_pending
+        jmp so_send_check
 
 so_chk_ack_wait:
         // If waiting for ACK of a reliable outbound frame, check timeout.
