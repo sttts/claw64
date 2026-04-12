@@ -959,6 +959,8 @@ so_build_next:
         lda #1
         sta busy
         sta llm_pending
+        lda #0
+        sta busy_timer
         jmp so_send_check
 
 so_chk_ack_wait:
