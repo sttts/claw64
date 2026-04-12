@@ -1325,6 +1325,7 @@ func (r *Relay) dumpTextAckStall() {
 		r.SymbolPath,
 		"waiting for TEXT ack from C64",
 		r.currentTextChunk(),
+		r.currentRelayState(),
 	)
 	if err != nil {
 		logErrorf("     ! text ack stall; debug dump failed: %v", err)
@@ -1352,6 +1353,7 @@ func (r *Relay) dumpToolAckStall() {
 		r.SymbolPath,
 		reason,
 		r.currentToolPayload(),
+		r.currentRelayState(),
 	)
 	if err != nil {
 		logErrorf("     ! tool stall; debug dump failed: %v", err)
@@ -1367,6 +1369,35 @@ func (r *Relay) currentToolPayload() []byte {
 	return append([]byte(nil), r.toolInFlight...)
 }
 
+func (r *Relay) currentRelayState() []string {
+	r.msgGateMu.Lock()
+	msgGateBusy := r.msgGateBusy
+	msgGateWaiters := len(r.msgGateWaiters)
+	r.msgGateMu.Unlock()
+
+	state := []string{
+		fmt.Sprintf("relay.waiting_tool: %t", r.waitingTool),
+		fmt.Sprintf("relay.basic_running: %t", r.basicRunning),
+		fmt.Sprintf("relay.completion_drain: %t", r.completionDrain),
+		fmt.Sprintf("relay.last_tool: %q", r.lastToolName),
+		fmt.Sprintf("relay.pending_frames: %d", len(r.pendingFrames)),
+		fmt.Sprintf("relay.pending_acks: %d", len(r.pendingAcks)),
+		fmt.Sprintf("relay.text_out_queue: %d", len(r.textOutQueue)),
+		fmt.Sprintf("relay.text_in_flight: %d", len(r.textInFlight)),
+		fmt.Sprintf("relay.msg_gate_busy: %t", msgGateBusy),
+		fmt.Sprintf("relay.msg_gate_waiters: %d", msgGateWaiters),
+	}
+
+	if !r.lastC64FrameAt.IsZero() {
+		state = append(state, fmt.Sprintf("relay.last_c64_frame_ago_ms: %d", time.Since(r.lastC64FrameAt).Milliseconds()))
+	}
+	if !r.toolStartedAt.IsZero() {
+		state = append(state, fmt.Sprintf("relay.tool_started_ago_ms: %d", time.Since(r.toolStartedAt).Milliseconds()))
+	}
+
+	return state
+}
+
 func (r *Relay) dumpC64SilenceStall() {
 	filename, err := writeStallDump(
 		r.DebugDir,
@@ -1374,6 +1405,7 @@ func (r *Relay) dumpC64SilenceStall() {
 		r.SymbolPath,
 		"waiting for any C64 frame",
 		nil,
+		r.currentRelayState(),
 	)
 	if err != nil {
 		logErrorf("     ! c64 silence stall; debug dump failed: %v", err)

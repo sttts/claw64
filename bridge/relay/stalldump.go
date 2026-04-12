@@ -14,7 +14,7 @@ import (
 
 type monitorSymbolTable map[string]uint16
 
-func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk []byte) (string, error) {
+func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk []byte, relayState []string) (string, error) {
 	if debugDir == "" || monitorAddr == "" {
 		return "", fmt.Errorf("debug dump disabled")
 	}
@@ -36,6 +36,9 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 	fmt.Fprintf(f, "pending_chunk_len: %d\n", len(pendingChunk))
 	if len(pendingChunk) > 0 {
 		fmt.Fprintf(f, "pending_chunk_text: %q\n", string(pendingChunk))
+	}
+	for _, line := range relayState {
+		fmt.Fprintln(f, line)
 	}
 	fmt.Fprintln(f)
 
