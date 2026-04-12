@@ -414,6 +414,7 @@ func spawnVICE(cfg CLI, loaderPath string) (*exec.Cmd, error) {
 		"-userportdevice", "2",
 		"-rsuserdev", "0",
 		"-rsuserbaud", "2400",
+		"-autostartprgmode", "1",
 		"-remotemonitor",
 		"-remotemonitoraddress", cfg.MonitorAddr,
 		"-autostart", loaderPath,
