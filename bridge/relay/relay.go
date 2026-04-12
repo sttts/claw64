@@ -58,6 +58,7 @@ type Relay struct {
 	recvCh          chan recvResult
 	msgGateMu       sync.Mutex
 	msgGateBusy     bool
+	msgGateWaiters  []chan struct{}
 	msgRetryBase    time.Duration
 	msgRetryMax     time.Duration
 }
@@ -116,41 +117,41 @@ func (r *Relay) messageRetryMax() time.Duration {
 }
 
 func (r *Relay) acquireMessageGate(ctx context.Context) error {
-	backoff := r.messageRetryBase()
-	maxBackoff := r.messageRetryMax()
+	r.msgGateMu.Lock()
+	if !r.msgGateBusy {
+		r.msgGateBusy = true
+		r.msgGateMu.Unlock()
+		return nil
+	}
+	waiter := make(chan struct{})
+	r.msgGateWaiters = append(r.msgGateWaiters, waiter)
+	r.msgGateMu.Unlock()
 
-	for {
+	select {
+	case <-ctx.Done():
 		r.msgGateMu.Lock()
-		if !r.msgGateBusy {
-			r.msgGateBusy = true
-			r.msgGateMu.Unlock()
-			return nil
+		for i, ch := range r.msgGateWaiters {
+			if ch == waiter {
+				r.msgGateWaiters = append(r.msgGateWaiters[:i], r.msgGateWaiters[i+1:]...)
+				break
+			}
 		}
 		r.msgGateMu.Unlock()
-
-		log.Printf("%s", flowLine("USER", "->", "bridge", "busy", fmt.Sprintf("retry in %s", backoff)))
-
-		timer := time.NewTimer(backoff)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return ctx.Err()
-		case <-timer.C:
-		}
-
-		if backoff < maxBackoff {
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-		}
+		return ctx.Err()
+	case <-waiter:
+		return nil
 	}
 }
 
 func (r *Relay) releaseMessageGate() {
 	r.msgGateMu.Lock()
+	if len(r.msgGateWaiters) > 0 {
+		waiter := r.msgGateWaiters[0]
+		r.msgGateWaiters = r.msgGateWaiters[1:]
+		r.msgGateMu.Unlock()
+		close(waiter)
+		return
+	}
 	r.msgGateBusy = false
 	r.msgGateMu.Unlock()
 }

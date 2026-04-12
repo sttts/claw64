@@ -195,3 +195,55 @@ func TestAcquireMessageGateAllowsOnlyOneConcurrentHolder(t *testing.T) {
 		t.Fatalf("max concurrent holders = %d, want 1", got)
 	}
 }
+
+func TestAcquireMessageGateReleasesWaitersInFIFOOrder(t *testing.T) {
+	r := &Relay{}
+	if err := r.acquireMessageGate(context.Background()); err != nil {
+		t.Fatalf("initial acquire error = %v", err)
+	}
+
+	orderCh := make(chan int, 2)
+	errCh := make(chan error, 2)
+	releaseCh := make(chan struct{}, 2)
+	readyCh := make(chan struct{}, 2)
+
+	startWaiter := func(n int) {
+		go func() {
+			readyCh <- struct{}{}
+			if err := r.acquireMessageGate(context.Background()); err != nil {
+				errCh <- err
+				return
+			}
+			orderCh <- n
+			<-releaseCh
+			r.releaseMessageGate()
+			errCh <- nil
+		}()
+	}
+
+	startWaiter(1)
+	<-readyCh
+	startWaiter(2)
+	<-readyCh
+
+	time.Sleep(5 * time.Millisecond)
+	r.releaseMessageGate()
+
+	first := <-orderCh
+	if first != 1 {
+		t.Fatalf("first waiter = %d, want 1", first)
+	}
+	releaseCh <- struct{}{}
+
+	second := <-orderCh
+	if second != 2 {
+		t.Fatalf("second waiter = %d, want 2", second)
+	}
+	releaseCh <- struct{}{}
+
+	for i := 0; i < 2; i++ {
+		if err := <-errCh; err != nil {
+			t.Fatalf("waiter error = %v", err)
+		}
+	}
+}
