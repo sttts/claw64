@@ -34,8 +34,7 @@ guq_noop_store_body:
 guq_noop_copy_done:
         inc USERQ_STAGE_LEN
         inc USERQ_COUNT_PTR
-        inc USERQ_TAIL_PTR
-        inc USERQ_HEAD_PTR
+        jsr guard_userq_advance_tail
         rts
 
 guard_userq_enqueue_from_rxbuf:
