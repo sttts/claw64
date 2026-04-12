@@ -94,6 +94,21 @@ ldr_cp: lda (LDR_SRC_LO),y
         sta LDR_LEN_HI
         jsr copy_block
 
+        // Seed guarded stop-requested status text used by the resident state path.
+        lda #<state_stop_text_data
+        sta LDR_SRC_LO
+        lda #>state_stop_text_data
+        sta LDR_SRC_HI
+        lda #<STATE_STOP_TEXT_BASE
+        sta LDR_DST_LO
+        lda #>STATE_STOP_TEXT_BASE
+        sta LDR_DST_HI
+        lda #<14
+        sta LDR_LEN_LO
+        lda #>14
+        sta LDR_LEN_HI
+        jsr copy_block
+
         // Copy cold helper code into RAM under BASIC ROM at $A000.
         lda #%00110101
         sta LDR_PROCPORT
@@ -440,6 +455,9 @@ busy_colors_data:
 ready_codes_data:
         .byte $12, $05, $01, $04, $19, $2E
 
+state_stop_text_data:
+        .text "STOP REQUESTED"
+
 // System prompt text — copied to SOUL_BASE at boot.
 .encoding "petscii_mixed"
 soul_data:
@@ -555,6 +573,7 @@ startup_hires_screen:
 .assert "user queue metadata must stay below memory staging", USERQ_META_LIMIT <= MEM_STAGE_BASE, true
 .assert "busy color table must stay below memory staging", BUSY_COLORS_LIMIT <= MEM_STAGE_BASE, true
 .assert "ready code table must stay below memory staging", READY_CODES_LIMIT <= MEM_STAGE_BASE, true
+.assert "guarded stop text must stay below memory staging", STATE_STOP_TEXT_LIMIT <= MEM_STAGE_BASE, true
 .assert "memory staging must stay below resident runtime", MEM_STAGE_BASE < MEM_STAGE_LIMIT, true
 .assert "memory staging must not overlap resident runtime", MEM_STAGE_LIMIT <= AGENT_BASE, true
 .assert "cold code must fit inside reserved region", COLD_CODE_BASE + (cold_end - cold_data) <= COLD_CODE_LIMIT, true

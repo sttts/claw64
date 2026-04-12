@@ -1266,8 +1266,8 @@ queue_state_stored:
 
 queue_state_stop_requested:
         lda #14
-        ldx #<state_stop_requested_text
-        ldy #>state_stop_requested_text
+        ldx #<STATE_STOP_TEXT_BASE
+        ldy #>STATE_STOP_TEXT_BASE
 
 queue_state_text:
         sta state_len
@@ -1397,8 +1397,6 @@ state_busy_text:
         .text "BUSY"
 state_stored_text:
         .text "STORED"
-state_stop_requested_text:
-        .text "STOP REQUESTED"
 
 // screen_has_ready_anywhere — check the visible screen for READY.
 // Returns carry set and X=line if found, carry clear otherwise.
