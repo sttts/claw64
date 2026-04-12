@@ -146,6 +146,16 @@ func (r *Relay) acquireMessageGate(ctx context.Context) error {
 	}
 }
 
+func (r *Relay) tryAcquireMessageGate() bool {
+	r.msgGateMu.Lock()
+	defer r.msgGateMu.Unlock()
+	if r.msgGateBusy {
+		return false
+	}
+	r.msgGateBusy = true
+	return true
+}
+
 func (r *Relay) releaseMessageGate() {
 	r.msgGateMu.Lock()
 	if len(r.msgGateWaiters) > 0 {
@@ -319,20 +329,37 @@ type basicExecArgs struct {
 // message through emit. A relay cycle may also complete without any
 // user-visible text.
 func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text string, emit func(string) error) error {
-	if err := r.acquireMessageGate(ctx); err != nil {
-		return fmt.Errorf("wait for relay idle: %w", err)
-	}
-	defer r.releaseMessageGate()
-
 	text = serial.ToASCII(text)
 
 	// send user message to C64 (header now, chars stream via callback)
 	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
-	if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
-		return fmt.Errorf("send MSG: %w", err)
+	if r.SystemPrompt == "" {
+		if err := r.acquireMessageGate(ctx); err != nil {
+			return fmt.Errorf("wait for relay idle: %w", err)
+		}
+		defer r.releaseMessageGate()
+		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
+			return fmt.Errorf("send MSG: %w", err)
+		}
+		return r.eventLoop(ctx, userID, emit)
 	}
 
+	if r.tryAcquireMessageGate() {
+		defer r.releaseMessageGate()
+		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
+			return fmt.Errorf("send MSG: %w", err)
+		}
+		return r.eventLoop(ctx, userID, emit)
+	}
+
+	if err := r.sendVerifiedWithAckWaiter(ctx, msgFrame, "MSG"); err != nil {
+		return fmt.Errorf("send overlapping MSG: %w", err)
+	}
+	if err := r.acquireMessageGate(ctx); err != nil {
+		return fmt.Errorf("wait for relay idle: %w", err)
+	}
+	defer r.releaseMessageGate()
 	return r.eventLoop(ctx, userID, emit)
 }
 
@@ -794,6 +821,50 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 		}
 	}
 	return fmt.Errorf("%s delivery could not be verified after %d attempts", name, len(retryDelays))
+}
+
+func (r *Relay) sendVerifiedWithAckWaiter(ctx context.Context, frame serial.Frame, name string) error {
+	id := r.allocID()
+	frame.Payload = serial.PrependID(id, frame.Payload)
+	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
+	waiter := r.registerAckWaiter(id)
+	defer r.unregisterAckWaiter(id)
+
+	for attempt := 0; attempt < len(retryDelays); attempt++ {
+		r.settlePendingAcks()
+
+		if err := r.Link.Send(frame); err != nil {
+			return err
+		}
+
+		waitCtx, cancel := context.WithTimeout(ctx, ackTimeout)
+		err := r.waitForAckWaiter(waitCtx, waiter, id)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		logWarnf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
+		if attempt+1 < len(retryDelays) {
+			time.Sleep(retryDelays[attempt])
+		}
+	}
+	return fmt.Errorf("%s delivery could not be verified after %d attempts", name, len(retryDelays))
+}
+
+func (r *Relay) waitForAckWaiter(ctx context.Context, waiter <-chan serial.Frame, id byte) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case f := <-waiter:
+			ackID, ok := serial.ExtractAckID(f.Payload)
+			if !ok || ackID != id {
+				continue
+			}
+			fmt.Fprintln(r.streamOut())
+			return nil
+		}
+	}
 }
 
 func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, name string) error {

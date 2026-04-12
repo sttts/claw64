@@ -249,6 +249,17 @@ func TestAcquireMessageGateReleasesWaitersInFIFOOrder(t *testing.T) {
 	}
 }
 
+func TestTryAcquireMessageGateReturnsFalseWhileBusy(t *testing.T) {
+	r := &Relay{}
+	if !r.tryAcquireMessageGate() {
+		t.Fatal("first tryAcquireMessageGate returned false")
+	}
+	if r.tryAcquireMessageGate() {
+		t.Fatal("second tryAcquireMessageGate returned true while busy")
+	}
+	r.releaseMessageGate()
+}
+
 func TestDispatchAckWaiterDeliversMatchingAck(t *testing.T) {
 	r := &Relay{}
 	waiter := r.registerAckWaiter(7)
@@ -275,5 +286,18 @@ func TestDispatchAckWaiterIgnoresUnknownAckID(t *testing.T) {
 	f := serial.Frame{Type: serial.FrameAck, Payload: []byte{9}}
 	if r.dispatchAckWaiter(f) {
 		t.Fatal("dispatchAckWaiter returned true for unknown ACK id")
+	}
+}
+
+func TestWaitForAckWaiterAcceptsMatchingAck(t *testing.T) {
+	r := &Relay{}
+	waiter := make(chan serial.Frame, 1)
+	waiter <- serial.Frame{Type: serial.FrameAck, Payload: []byte{3}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := r.waitForAckWaiter(ctx, waiter, 3); err != nil {
+		t.Fatalf("waitForAckWaiter error = %v", err)
 	}
 }
