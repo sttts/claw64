@@ -957,6 +957,7 @@ so_build_next:
         beq so_chk_ack_wait
         jsr GUARD_USERQ_LOAD
         lda #1
+        sta busy
         sta llm_pending
         jmp so_send_check
 
