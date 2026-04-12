@@ -956,12 +956,6 @@ so_build_next:
         lda USERQ_COUNT_PTR
         beq so_chk_ack_wait
         jsr GUARD_USERQ_LOAD
-        lda #1
-        sta busy
-        sta llm_pending
-        sta dot_dir
-        lda #0
-        sta busy_timer
         jmp so_send_check
 
 so_chk_ack_wait:

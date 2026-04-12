@@ -67,6 +67,12 @@ guq_load_body:
 guq_load_done:
         jsr guard_userq_advance_head
         dec USERQ_COUNT_PTR
+        lda #1
+        sta busy
+        sta llm_pending
+        sta dot_dir
+        lda #0
+        sta busy_timer
         rts
 
 guard_userq_advance_head:
