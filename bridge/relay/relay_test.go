@@ -281,6 +281,18 @@ func TestCanSendOverlappingMessageRequiresSteadyStateActivity(t *testing.T) {
 	if !r.canSendOverlappingMessage() {
 		t.Fatal("canSendOverlappingMessage = false during completion drain")
 	}
+
+	r.completionDrain = false
+	r.textOutQueue = []byte("queued")
+	if r.canSendOverlappingMessage() {
+		t.Fatal("canSendOverlappingMessage = true with only bridge text queue activity")
+	}
+
+	r.textOutQueue = nil
+	r.textInFlight = []byte("chunk")
+	if r.canSendOverlappingMessage() {
+		t.Fatal("canSendOverlappingMessage = true with only bridge text in-flight activity")
+	}
 }
 
 func TestDispatchAckWaiterDeliversMatchingAck(t *testing.T) {
