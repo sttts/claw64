@@ -271,9 +271,15 @@ func TestCanSendOverlappingMessageRequiresSteadyStateActivity(t *testing.T) {
 		t.Fatal("canSendOverlappingMessage = true without active turn state")
 	}
 
-	r.textOutQueue = []byte("x")
+	r.basicRunning = true
 	if !r.canSendOverlappingMessage() {
-		t.Fatal("canSendOverlappingMessage = false while text is queued")
+		t.Fatal("canSendOverlappingMessage = false while BASIC is running")
+	}
+
+	r.basicRunning = false
+	r.completionDrain = true
+	if !r.canSendOverlappingMessage() {
+		t.Fatal("canSendOverlappingMessage = false during completion drain")
 	}
 }
 

@@ -162,13 +162,7 @@ func (r *Relay) canSendOverlappingMessage() bool {
 	if r.SystemPrompt == "" {
 		return false
 	}
-	if r.basicRunning || r.completionDrain {
-		return true
-	}
-	if len(r.textOutQueue) > 0 || len(r.textInFlight) > 0 {
-		return true
-	}
-	return false
+	return r.basicRunning || r.completionDrain
 }
 
 func (r *Relay) releaseMessageGate() {
