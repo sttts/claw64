@@ -402,4 +402,10 @@ func TestMessageGateHandoffDelayUsesRecentTraffic(t *testing.T) {
 	if got := r.messageGateHandoffDelay(); got <= 0 || got > gateHandoffQuietWindow {
 		t.Fatalf("messageGateHandoffDelay with recent c64 frame = %v, want (0,%v]", got, gateHandoffQuietWindow)
 	}
+
+	r.msgGateWaiters = []chan struct{}{make(chan struct{})}
+	r.lastC64FrameAt = time.Now()
+	if got := r.messageGateHandoffDelay(); got <= gateHandoffQuietWindow || got > queuedGateHandoffQuietWindow {
+		t.Fatalf("messageGateHandoffDelay with queued waiters = %v, want (%v,%v]", got, gateHandoffQuietWindow, queuedGateHandoffQuietWindow)
+	}
 }

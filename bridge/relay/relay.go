@@ -89,6 +89,7 @@ const ackQuietWindow = 150 * time.Millisecond
 const runningAckQuietWindow = 3 * time.Second
 const runningRecvQuietWindow = 1 * time.Second
 const gateHandoffQuietWindow = 250 * time.Millisecond
+const queuedGateHandoffQuietWindow = 500 * time.Millisecond
 
 // textAckTimeout allows one inbound TEXT chunk, the resulting USER frame,
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
@@ -628,6 +629,15 @@ func (r *Relay) messageGateHandoffDelay() time.Duration {
 	}
 	if !r.lastC64FrameAt.IsZero() {
 		if remain := gateHandoffQuietWindow - time.Since(r.lastC64FrameAt); remain > delay {
+			delay = remain
+		}
+	}
+
+	r.msgGateMu.Lock()
+	hasQueuedWaiters := len(r.msgGateWaiters) > 0
+	r.msgGateMu.Unlock()
+	if hasQueuedWaiters && !r.lastC64FrameAt.IsZero() {
+		if remain := queuedGateHandoffQuietWindow - time.Since(r.lastC64FrameAt); remain > delay {
 			delay = remain
 		}
 	}
