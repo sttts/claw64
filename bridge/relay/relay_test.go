@@ -385,3 +385,21 @@ func TestCompletionGraceWindowExtendsForPendingOverlapSend(t *testing.T) {
 		t.Fatalf("completionGraceWindow while waitingTool = %v, want 0", got)
 	}
 }
+
+func TestMessageGateHandoffDelayUsesRecentTraffic(t *testing.T) {
+	r := &Relay{}
+	if got := r.messageGateHandoffDelay(); got != 0 {
+		t.Fatalf("messageGateHandoffDelay = %v, want 0", got)
+	}
+
+	r.lastAckSentAt = time.Now()
+	if got := r.messageGateHandoffDelay(); got <= 0 || got > ackQuietWindow {
+		t.Fatalf("messageGateHandoffDelay with recent ack = %v, want (0,%v]", got, ackQuietWindow)
+	}
+
+	r.lastAckSentAt = time.Time{}
+	r.lastC64FrameAt = time.Now()
+	if got := r.messageGateHandoffDelay(); got <= 0 || got > gateHandoffQuietWindow {
+		t.Fatalf("messageGateHandoffDelay with recent c64 frame = %v, want (0,%v]", got, gateHandoffQuietWindow)
+	}
+}

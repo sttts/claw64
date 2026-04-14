@@ -88,6 +88,7 @@ const ackTimeout = 3 * time.Second
 const ackQuietWindow = 150 * time.Millisecond
 const runningAckQuietWindow = 3 * time.Second
 const runningRecvQuietWindow = 1 * time.Second
+const gateHandoffQuietWindow = 250 * time.Millisecond
 
 // textAckTimeout allows one inbound TEXT chunk, the resulting USER frame,
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
@@ -145,6 +146,9 @@ func (r *Relay) acquireMessageGate(ctx context.Context) error {
 		r.msgGateMu.Unlock()
 		return ctx.Err()
 	case <-waiter:
+		if delay := r.messageGateHandoffDelay(); delay > 0 {
+			time.Sleep(delay)
+		}
 		return nil
 	}
 }
@@ -612,6 +616,26 @@ func (r *Relay) hasPendingOverlapSend() bool {
 	defer r.overlapMu.Unlock()
 
 	return r.overlapBusy
+}
+
+func (r *Relay) messageGateHandoffDelay() time.Duration {
+	delay := time.Duration(0)
+
+	if !r.lastAckSentAt.IsZero() {
+		if remain := ackQuietWindow - time.Since(r.lastAckSentAt); remain > delay {
+			delay = remain
+		}
+	}
+	if !r.lastC64FrameAt.IsZero() {
+		if remain := gateHandoffQuietWindow - time.Since(r.lastC64FrameAt); remain > delay {
+			delay = remain
+		}
+	}
+
+	if delay < 0 {
+		return 0
+	}
+	return delay
 }
 
 func (r *Relay) drainTrailingAfterUserText() {
