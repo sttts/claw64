@@ -43,29 +43,29 @@ func TestCallAndDispatchSilentCompletionIsIdleWithoutHistoryMutation(t *testing.
 	}
 }
 
-func TestShouldUseCompletionGraceWindow(t *testing.T) {
+func TestCompletionGraceWindow(t *testing.T) {
 	r := &Relay{}
-	if r.shouldUseCompletionGraceWindow(false, false) {
+	if got := r.completionGraceWindow(false, false); got != 0 {
 		t.Fatalf("grace window enabled without completion")
 	}
-	if !r.shouldUseCompletionGraceWindow(false, true) {
+	if got := r.completionGraceWindow(false, true); got != 250*time.Millisecond {
 		t.Fatalf("grace window disabled after silent completion")
 	}
 
 	r.textOutQueue = []byte("x")
-	if r.shouldUseCompletionGraceWindow(false, true) {
+	if got := r.completionGraceWindow(false, true); got != 0 {
 		t.Fatalf("grace window enabled while text is queued")
 	}
 
 	r.textOutQueue = nil
 	r.waitingTool = true
-	if r.shouldUseCompletionGraceWindow(true, false) {
+	if got := r.completionGraceWindow(true, false); got != 0 {
 		t.Fatalf("grace window enabled while tool is in flight")
 	}
 
 	r.waitingTool = false
 	r.basicRunning = true
-	if r.shouldUseCompletionGraceWindow(true, false) {
+	if got := r.completionGraceWindow(true, false); got != 0 {
 		t.Fatalf("grace window enabled while BASIC is still running")
 	}
 }
@@ -365,5 +365,24 @@ func TestWaitForAckWaiterAcceptsMatchingAck(t *testing.T) {
 
 	if err := r.waitForAckWaiter(ctx, waiter, 3); err != nil {
 		t.Fatalf("waitForAckWaiter error = %v", err)
+	}
+}
+
+func TestCompletionGraceWindowExtendsForQueuedWaiters(t *testing.T) {
+	r := &Relay{}
+
+	if got := r.completionGraceWindow(true, false); got != 250*time.Millisecond {
+		t.Fatalf("completionGraceWindow = %v, want %v", got, 250*time.Millisecond)
+	}
+
+	r.msgGateBusy = true
+	r.msgGateWaiters = append(r.msgGateWaiters, make(chan struct{}))
+	if got := r.completionGraceWindow(true, false); got != time.Second {
+		t.Fatalf("completionGraceWindow with queued waiters = %v, want %v", got, time.Second)
+	}
+
+	r.waitingTool = true
+	if got := r.completionGraceWindow(true, false); got != 0 {
+		t.Fatalf("completionGraceWindow while waitingTool = %v, want 0", got)
 	}
 }

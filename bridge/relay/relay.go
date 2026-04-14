@@ -436,8 +436,8 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 	for {
 		recvCtx := ctx
 		recvCancel := func() {}
-		if r.shouldUseCompletionGraceWindow(deliveredUserText, completedWithoutText) {
-			graceCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		if grace := r.completionGraceWindow(deliveredUserText, completedWithoutText); grace > 0 {
+			graceCtx, cancel := context.WithTimeout(ctx, grace)
 			recvCtx = graceCtx
 			recvCancel = cancel
 		}
@@ -594,11 +594,24 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 	}
 }
 
-func (r *Relay) shouldUseCompletionGraceWindow(deliveredUserText, completedWithoutText bool) bool {
+func (r *Relay) completionGraceWindow(deliveredUserText, completedWithoutText bool) time.Duration {
 	if !deliveredUserText && !completedWithoutText {
-		return false
+		return 0
 	}
-	return len(r.textOutQueue) == 0 && !r.waitingTool && !r.basicRunning
+	if len(r.textOutQueue) != 0 || r.waitingTool || r.basicRunning {
+		return 0
+	}
+	if r.hasQueuedMessageWaiters() {
+		return 1 * time.Second
+	}
+	return 250 * time.Millisecond
+}
+
+func (r *Relay) hasQueuedMessageWaiters() bool {
+	r.msgGateMu.Lock()
+	defer r.msgGateMu.Unlock()
+
+	return r.msgGateBusy || len(r.msgGateWaiters) > 0
 }
 
 func (r *Relay) drainTrailingAfterUserText() {
