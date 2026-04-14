@@ -295,6 +295,37 @@ func TestCanSendOverlappingMessageRequiresSteadyStateActivity(t *testing.T) {
 	}
 }
 
+func TestCanStartRunningOverlapAllowsOnlySingleQueuedRunningSender(t *testing.T) {
+	r := &Relay{}
+	if r.canStartRunningOverlap() {
+		t.Fatal("canStartRunningOverlap = true without running state")
+	}
+
+	r.basicRunning = true
+	r.msgGateBusy = true
+	if !r.canStartRunningOverlap() {
+		t.Fatal("canStartRunningOverlap = false for first running overlap sender")
+	}
+
+	r.msgGateWaiters = append(r.msgGateWaiters, make(chan struct{}))
+	if r.canStartRunningOverlap() {
+		t.Fatal("canStartRunningOverlap = true with queued running waiters")
+	}
+
+	r.msgGateWaiters = nil
+	r.waitingTool = true
+	if r.canStartRunningOverlap() {
+		t.Fatal("canStartRunningOverlap = true while tool wait is active")
+	}
+
+	r.waitingTool = false
+	r.basicRunning = false
+	r.completionDrain = true
+	if r.canStartRunningOverlap() {
+		t.Fatal("canStartRunningOverlap = true during completion drain")
+	}
+}
+
 func TestDispatchAckWaiterDeliversMatchingAck(t *testing.T) {
 	r := &Relay{}
 	waiter := r.registerAckWaiter(7)

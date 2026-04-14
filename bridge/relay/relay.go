@@ -169,6 +169,17 @@ func (r *Relay) canSendOverlappingMessage() bool {
 	return r.basicRunning && !r.waitingTool
 }
 
+func (r *Relay) canStartRunningOverlap() bool {
+	if !r.basicRunning || r.waitingTool {
+		return false
+	}
+
+	r.msgGateMu.Lock()
+	defer r.msgGateMu.Unlock()
+
+	return r.msgGateBusy && len(r.msgGateWaiters) == 0
+}
+
 func (r *Relay) releaseMessageGate() {
 	r.msgGateMu.Lock()
 	if len(r.msgGateWaiters) > 0 {
@@ -375,6 +386,17 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 	}
 
 	if r.tryAcquireMessageGate() {
+		defer r.releaseMessageGate()
+		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
+			return fmt.Errorf("send MSG: %w", err)
+		}
+		return r.eventLoop(ctx, userID, emit)
+	}
+
+	if r.basicRunning && !r.canStartRunningOverlap() {
+		if err := r.acquireMessageGate(ctx); err != nil {
+			return fmt.Errorf("wait for relay idle: %w", err)
+		}
 		defer r.releaseMessageGate()
 		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
 			return fmt.Errorf("send MSG: %w", err)
