@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1405,8 +1406,11 @@ func (r *Relay) currentRelayState() []string {
 	r.overlapMu.Unlock()
 	r.ackWaitMu.Lock()
 	ackWaiters := len(r.ackWaiters)
+	ackWaiterIDs := sortedAckWaiterIDs(r.ackWaiters)
 	r.ackWaitMu.Unlock()
 	lateAcks := len(r.lateAckIDs)
+	lateAckIDs := sortedByteSet(r.lateAckIDs)
+	pendingAckIDs := sortedByteSlice(r.pendingAcks)
 
 	state := []string{
 		fmt.Sprintf("relay.waiting_tool: %t", r.waitingTool),
@@ -1421,7 +1425,10 @@ func (r *Relay) currentRelayState() []string {
 		fmt.Sprintf("relay.msg_gate_busy: %t", msgGateBusy),
 		fmt.Sprintf("relay.msg_gate_waiters: %d", msgGateWaiters),
 		fmt.Sprintf("relay.ack_waiters: %d", ackWaiters),
+		fmt.Sprintf("relay.ack_waiter_ids: %v", ackWaiterIDs),
 		fmt.Sprintf("relay.late_acks: %d", lateAcks),
+		fmt.Sprintf("relay.late_ack_ids: %v", lateAckIDs),
+		fmt.Sprintf("relay.pending_ack_ids: %v", pendingAckIDs),
 	}
 
 	if !r.lastC64FrameAt.IsZero() {
@@ -1432,6 +1439,36 @@ func (r *Relay) currentRelayState() []string {
 	}
 
 	return state
+}
+
+func sortedAckWaiterIDs(waiters map[byte]chan serial.Frame) []byte {
+	ids := make([]byte, 0, len(waiters))
+	for id := range waiters {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i] < ids[j]
+	})
+	return ids
+}
+
+func sortedByteSet(ids map[byte]struct{}) []byte {
+	values := make([]byte, 0, len(ids))
+	for id := range ids {
+		values = append(values, id)
+	}
+	sort.Slice(values, func(i, j int) bool {
+		return values[i] < values[j]
+	})
+	return values
+}
+
+func sortedByteSlice(ids []byte) []byte {
+	values := append([]byte(nil), ids...)
+	sort.Slice(values, func(i, j int) bool {
+		return values[i] < values[j]
+	})
+	return values
 }
 
 func (r *Relay) dumpC64SilenceStall() {
