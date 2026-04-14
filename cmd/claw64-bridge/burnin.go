@@ -15,6 +15,25 @@ import (
 type scriptedBurnin struct {
 	scenario string
 	step     int
+	signals  map[string]chan struct{}
+}
+
+func (s *scriptedBurnin) signal(name string) {
+	if s.signals == nil {
+		return
+	}
+
+	ch, ok := s.signals[name]
+	if !ok || ch == nil {
+		return
+	}
+
+	select {
+	case <-ch:
+		return
+	default:
+		close(ch)
+	}
 }
 
 func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ []llm.Tool) (llm.Message, error) {
@@ -293,6 +312,7 @@ func (s *scriptedBurnin) completeOverlapQueue(messages []llm.Message, queueThree
 		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
 			return llm.Message{Role: "assistant", Content: "SECOND RUN COMPLETE."}, nil
 		case lastTool == "[C64 BASIC status]: RUNNING":
+			s.signal("overlap-first-running")
 			s.step++
 			return simpleToolCall("status", "{}", s.step), nil
 		default:
