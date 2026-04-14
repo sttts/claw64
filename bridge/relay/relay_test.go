@@ -368,17 +368,16 @@ func TestWaitForAckWaiterAcceptsMatchingAck(t *testing.T) {
 	}
 }
 
-func TestCompletionGraceWindowExtendsForQueuedWaiters(t *testing.T) {
+func TestCompletionGraceWindowExtendsForPendingOverlapSend(t *testing.T) {
 	r := &Relay{}
 
 	if got := r.completionGraceWindow(true, false); got != 250*time.Millisecond {
 		t.Fatalf("completionGraceWindow = %v, want %v", got, 250*time.Millisecond)
 	}
 
-	r.msgGateBusy = true
-	r.msgGateWaiters = append(r.msgGateWaiters, make(chan struct{}))
+	r.overlapBusy = true
 	if got := r.completionGraceWindow(true, false); got != time.Second {
-		t.Fatalf("completionGraceWindow with queued waiters = %v, want %v", got, time.Second)
+		t.Fatalf("completionGraceWindow with overlapBusy = %v, want %v", got, time.Second)
 	}
 
 	r.waitingTool = true

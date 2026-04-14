@@ -601,17 +601,17 @@ func (r *Relay) completionGraceWindow(deliveredUserText, completedWithoutText bo
 	if len(r.textOutQueue) != 0 || r.waitingTool || r.basicRunning {
 		return 0
 	}
-	if r.hasQueuedMessageWaiters() {
+	if r.hasPendingOverlapSend() {
 		return 1 * time.Second
 	}
 	return 250 * time.Millisecond
 }
 
-func (r *Relay) hasQueuedMessageWaiters() bool {
-	r.msgGateMu.Lock()
-	defer r.msgGateMu.Unlock()
+func (r *Relay) hasPendingOverlapSend() bool {
+	r.overlapMu.Lock()
+	defer r.overlapMu.Unlock()
 
-	return r.msgGateBusy || len(r.msgGateWaiters) > 0
+	return r.overlapBusy
 }
 
 func (r *Relay) drainTrailingAfterUserText() {
