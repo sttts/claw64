@@ -89,7 +89,7 @@ const ackQuietWindow = 150 * time.Millisecond
 const runningAckQuietWindow = 3 * time.Second
 const runningRecvQuietWindow = 1 * time.Second
 const gateHandoffQuietWindow = 250 * time.Millisecond
-const queuedGateHandoffQuietWindow = 500 * time.Millisecond
+const queuedGateHandoffQuietWindow = runningRecvQuietWindow
 
 // textAckTimeout allows one inbound TEXT chunk, the resulting USER frame,
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
