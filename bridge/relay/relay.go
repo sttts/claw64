@@ -1403,6 +1403,10 @@ func (r *Relay) currentRelayState() []string {
 	r.overlapMu.Lock()
 	overlapBusy := r.overlapBusy
 	r.overlapMu.Unlock()
+	r.ackWaitMu.Lock()
+	ackWaiters := len(r.ackWaiters)
+	r.ackWaitMu.Unlock()
+	lateAcks := len(r.lateAckIDs)
 
 	state := []string{
 		fmt.Sprintf("relay.waiting_tool: %t", r.waitingTool),
@@ -1416,6 +1420,8 @@ func (r *Relay) currentRelayState() []string {
 		fmt.Sprintf("relay.overlap_busy: %t", overlapBusy),
 		fmt.Sprintf("relay.msg_gate_busy: %t", msgGateBusy),
 		fmt.Sprintf("relay.msg_gate_waiters: %d", msgGateWaiters),
+		fmt.Sprintf("relay.ack_waiters: %d", ackWaiters),
+		fmt.Sprintf("relay.late_acks: %d", lateAcks),
 	}
 
 	if !r.lastC64FrameAt.IsZero() {
