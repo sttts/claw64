@@ -92,6 +92,22 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 		); ok {
 			commands = append(commands, fmt.Sprintf("m %04x %04x", lo, hi))
 		}
+		if lo, hi, ok := symbolRange(syms,
+			"USERQ_BASE",
+			"USERQ_LIMIT",
+		); ok && hi > lo {
+			slotSize := (hi - lo) / 3
+			if slotSize > 0 {
+				for i := uint16(0); i < 3; i++ {
+					slotLo := lo + i*slotSize
+					slotHi := slotLo + 0x1f
+					if max := lo + (i+1)*slotSize - 1; slotHi > max {
+						slotHi = max
+					}
+					commands = append(commands, fmt.Sprintf("m %04x %04x", slotLo, slotHi))
+				}
+			}
+		}
 	}
 
 	for _, cmd := range commands {
