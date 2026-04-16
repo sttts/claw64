@@ -198,6 +198,13 @@ func (r *Relay) releaseMessageGate() {
 	r.msgGateMu.Unlock()
 }
 
+func (r *Relay) hasQueuedMessageWaiter() bool {
+	r.msgGateMu.Lock()
+	defer r.msgGateMu.Unlock()
+
+	return len(r.msgGateWaiters) > 0
+}
+
 func (r *Relay) tryAcquireOverlapSend() bool {
 	r.overlapMu.Lock()
 	defer r.overlapMu.Unlock()
@@ -474,6 +481,10 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 		if f.Type == serial.FrameUser {
 			log.Printf("%s", flowLine("USER", "←", "C64", "TEXT", fmt.Sprintf("len=%d text=%q", len(f.Payload), truncate(string(f.Payload), 60))))
 		}
+		if deliveredUserText && r.hasQueuedMessageWaiter() && shouldHandOffSemanticFrameAfterUserText(f.Type) {
+			r.pendingFrames = append([]queuedFrame{{frame: f, accepted: accepted}}, r.pendingFrames...)
+			return nil
+		}
 
 		switch f.Type {
 		case serial.FrameLLM:
@@ -596,6 +607,15 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 		default:
 			log.Printf("%s", flowLine("", "←", "C64", "malformed", fmt.Sprintf("unknown frame 0x%02X", f.Type)))
 		}
+	}
+}
+
+func shouldHandOffSemanticFrameAfterUserText(frameType byte) bool {
+	switch frameType {
+	case serial.FrameLLM, serial.FrameStatus, serial.FrameResult, serial.FrameError:
+		return true
+	default:
+		return false
 	}
 }
 

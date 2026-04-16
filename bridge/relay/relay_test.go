@@ -326,6 +326,30 @@ func TestCanStartRunningOverlapAllowsOnlySingleQueuedRunningSender(t *testing.T)
 	}
 }
 
+func TestShouldHandOffSemanticFrameAfterUserText(t *testing.T) {
+	if !shouldHandOffSemanticFrameAfterUserText(serial.FrameLLM) {
+		t.Fatal("LLM frame should hand off after user text")
+	}
+	if !shouldHandOffSemanticFrameAfterUserText(serial.FrameStatus) {
+		t.Fatal("STATUS frame should hand off after user text")
+	}
+	if !shouldHandOffSemanticFrameAfterUserText(serial.FrameResult) {
+		t.Fatal("RESULT frame should hand off after user text")
+	}
+	if !shouldHandOffSemanticFrameAfterUserText(serial.FrameError) {
+		t.Fatal("ERROR frame should hand off after user text")
+	}
+	if shouldHandOffSemanticFrameAfterUserText(serial.FrameUser) {
+		t.Fatal("USER frame should not hand off after user text")
+	}
+	if shouldHandOffSemanticFrameAfterUserText(serial.FrameSystem) {
+		t.Fatal("SYSTEM frame should not hand off after user text")
+	}
+	if shouldHandOffSemanticFrameAfterUserText(serial.FrameAck) {
+		t.Fatal("ACK frame should not hand off after user text")
+	}
+}
+
 func TestDispatchAckWaiterDeliversMatchingAck(t *testing.T) {
 	r := &Relay{}
 	waiter := r.registerAckWaiter(7)
