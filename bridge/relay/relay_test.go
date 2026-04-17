@@ -350,6 +350,34 @@ func TestShouldHandOffSemanticFrameAfterUserText(t *testing.T) {
 	}
 }
 
+func TestOverlapQueueDepthCountsActiveHolderWaitersAndOverlapSend(t *testing.T) {
+	r := &Relay{}
+	if got := r.overlapQueueDepth(); got != 0 {
+		t.Fatalf("overlapQueueDepth = %d, want 0", got)
+	}
+
+	r.msgGateBusy = true
+	if got := r.overlapQueueDepth(); got != 1 {
+		t.Fatalf("overlapQueueDepth with active holder = %d, want 1", got)
+	}
+
+	r.msgGateWaiters = []chan struct{}{make(chan struct{}), make(chan struct{})}
+	if got := r.overlapQueueDepth(); got != 3 {
+		t.Fatalf("overlapQueueDepth with holder+waiters = %d, want 3", got)
+	}
+	if r.overlapQueueAtCapacity() {
+		t.Fatal("overlapQueueAtCapacity = true at exactly 3, want false")
+	}
+
+	r.overlapBusy = true
+	if got := r.overlapQueueDepth(); got != 4 {
+		t.Fatalf("overlapQueueDepth with speculative sender = %d, want 4", got)
+	}
+	if !r.overlapQueueAtCapacity() {
+		t.Fatal("overlapQueueAtCapacity = false above 3, want true")
+	}
+}
+
 func TestDispatchAckWaiterDeliversMatchingAck(t *testing.T) {
 	r := &Relay{}
 	waiter := r.registerAckWaiter(7)

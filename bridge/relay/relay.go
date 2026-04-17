@@ -90,6 +90,7 @@ const runningAckQuietWindow = 3 * time.Second
 const runningRecvQuietWindow = 1 * time.Second
 const gateHandoffQuietWindow = 250 * time.Millisecond
 const queuedGateHandoffQuietWindow = runningRecvQuietWindow
+const c64UserQueueSlots = 3
 
 // textAckTimeout allows one inbound TEXT chunk, the resulting USER frame,
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
@@ -203,6 +204,27 @@ func (r *Relay) hasQueuedMessageWaiter() bool {
 	defer r.msgGateMu.Unlock()
 
 	return len(r.msgGateWaiters) > 0
+}
+
+func (r *Relay) overlapQueueDepth() int {
+	r.msgGateMu.Lock()
+	depth := len(r.msgGateWaiters)
+	if r.msgGateBusy {
+		depth++
+	}
+	r.msgGateMu.Unlock()
+
+	r.overlapMu.Lock()
+	if r.overlapBusy {
+		depth++
+	}
+	r.overlapMu.Unlock()
+
+	return depth
+}
+
+func (r *Relay) overlapQueueAtCapacity() bool {
+	return r.overlapQueueDepth() > c64UserQueueSlots
 }
 
 func (r *Relay) tryAcquireOverlapSend() bool {
@@ -386,6 +408,16 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 	// send user message to C64 (header now, chars stream via callback)
 	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
+	if r.canSendOverlappingMessage() && r.overlapQueueAtCapacity() {
+		if err := r.acquireMessageGate(ctx); err != nil {
+			return fmt.Errorf("wait for relay idle: %w", err)
+		}
+		defer r.releaseMessageGate()
+		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
+			return fmt.Errorf("send MSG: %w", err)
+		}
+		return r.eventLoop(ctx, userID, emit)
+	}
 	if !r.canSendOverlappingMessage() {
 		if err := r.acquireMessageGate(ctx); err != nil {
 			return fmt.Errorf("wait for relay idle: %w", err)
