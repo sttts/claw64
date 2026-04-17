@@ -47,10 +47,10 @@
 // Located at $C900 (AGENT_TXBUF), above the receive buffer.
 .const send_buf = AGENT_TXBUF
 
-// EXEC payloads only need durable storage until injection finishes.
-// Reuse send_buf for that window instead of reserving a separate 128-byte
-// variable inside the resident image.
-.const exec_buf = AGENT_TXBUF
+// Keep EXEC staging separate from the reliable outbound frame buffer.
+// Otherwise a new command can overwrite an in-flight STATUS/RESULT frame
+// before its transport ACK arrives.
+.const exec_buf = EXEC_STAGE_BASE
 
 // Agent state machine constants.
 // The agent cycles through these states as it processes commands:
