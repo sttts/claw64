@@ -378,6 +378,36 @@ func TestOverlapQueueDepthCountsActiveHolderWaitersAndOverlapSend(t *testing.T) 
 	}
 }
 
+func TestOverlapQueueFreshTurnReadyRequiresIdleBridgeState(t *testing.T) {
+	r := &Relay{SystemPrompt: "ready"}
+	if !r.overlapQueueFreshTurnReady() {
+		t.Fatal("overlapQueueFreshTurnReady = false on idle relay")
+	}
+
+	r.basicRunning = true
+	if r.overlapQueueFreshTurnReady() {
+		t.Fatal("overlapQueueFreshTurnReady = true while basicRunning")
+	}
+
+	r.basicRunning = false
+	r.msgGateBusy = true
+	if r.overlapQueueFreshTurnReady() {
+		t.Fatal("overlapQueueFreshTurnReady = true while msg gate busy")
+	}
+
+	r.msgGateBusy = false
+	r.msgGateWaiters = []chan struct{}{make(chan struct{})}
+	if r.overlapQueueFreshTurnReady() {
+		t.Fatal("overlapQueueFreshTurnReady = true with queued waiters")
+	}
+
+	r.msgGateWaiters = nil
+	r.overlapBusy = true
+	if r.overlapQueueFreshTurnReady() {
+		t.Fatal("overlapQueueFreshTurnReady = true while overlap send active")
+	}
+}
+
 func TestDispatchAckWaiterDeliversMatchingAck(t *testing.T) {
 	r := &Relay{}
 	waiter := r.registerAckWaiter(7)

@@ -227,6 +227,43 @@ func (r *Relay) overlapQueueAtCapacity() bool {
 	return r.overlapQueueDepth() > c64UserQueueSlots
 }
 
+func (r *Relay) overlapQueueFreshTurnReady() bool {
+	if r.canSendOverlappingMessage() {
+		return false
+	}
+
+	r.msgGateMu.Lock()
+	msgGateBusy := r.msgGateBusy
+	waiters := len(r.msgGateWaiters)
+	r.msgGateMu.Unlock()
+
+	r.overlapMu.Lock()
+	overlapBusy := r.overlapBusy
+	r.overlapMu.Unlock()
+
+	return !msgGateBusy && !overlapBusy && waiters == 0
+}
+
+func (r *Relay) waitForFreshTurn(ctx context.Context) error {
+	if r.overlapQueueFreshTurnReady() {
+		return nil
+	}
+
+	ticker := time.NewTicker(r.messageRetryBase())
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if r.overlapQueueFreshTurnReady() {
+				return nil
+			}
+		}
+	}
+}
+
 func (r *Relay) tryAcquireOverlapSend() bool {
 	r.overlapMu.Lock()
 	defer r.overlapMu.Unlock()
@@ -409,6 +446,9 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
 	if r.canSendOverlappingMessage() && r.overlapQueueAtCapacity() {
+		if err := r.waitForFreshTurn(ctx); err != nil {
+			return fmt.Errorf("wait for fresh relay turn: %w", err)
+		}
 		if err := r.acquireMessageGate(ctx); err != nil {
 			return fmt.Errorf("wait for relay idle: %w", err)
 		}
