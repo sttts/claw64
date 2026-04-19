@@ -110,6 +110,17 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 		}
 	}
 
+	if !hasMonitorCommand(commands, "m 9500 9503") {
+		commands = append(commands, "m 9500 9503")
+	}
+	if !hasGuardedQueueSlotDumps(commands) {
+		commands = append(commands,
+			"m 9200 921f",
+			"m 9300 931f",
+			"m 9400 941f",
+		)
+	}
+
 	for _, cmd := range commands {
 		fmt.Fprintf(f, ">>> %s\n", cmd)
 		out, err := runMonitorCommand(conn, cmd)
@@ -197,4 +208,19 @@ func symbolRange(syms monitorSymbolTable, names ...string) (uint16, uint16, bool
 	}
 	slices.Sort(addrs)
 	return addrs[0], addrs[len(addrs)-1], true
+}
+
+func hasMonitorCommand(commands []string, want string) bool {
+	for _, cmd := range commands {
+		if cmd == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasGuardedQueueSlotDumps(commands []string) bool {
+	return hasMonitorCommand(commands, "m 9200 921f") &&
+		hasMonitorCommand(commands, "m 9300 931f") &&
+		hasMonitorCommand(commands, "m 9400 941f")
 }
