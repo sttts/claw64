@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -513,5 +514,20 @@ func TestMessageGateHandoffDelayUsesRecentTraffic(t *testing.T) {
 	r.lastC64FrameAt = time.Now()
 	if got := r.messageGateHandoffDelay(); got <= gateHandoffQuietWindow || got > queuedGateHandoffQuietWindow {
 		t.Fatalf("messageGateHandoffDelay with queued waiters = %v, want (%v,%v]", got, gateHandoffQuietWindow, queuedGateHandoffQuietWindow)
+	}
+}
+
+func TestCurrentRelayStateIncludesOverlapQueueSummary(t *testing.T) {
+	r := &Relay{}
+	r.msgGateBusy = true
+	r.msgGateWaiters = []chan struct{}{make(chan struct{}), make(chan struct{})}
+	r.overlapBusy = true
+
+	state := strings.Join(r.currentRelayState(), "\n")
+	if !strings.Contains(state, "relay.overlap_queue_depth: 4") {
+		t.Fatalf("currentRelayState missing overlap queue depth: %q", state)
+	}
+	if !strings.Contains(state, "relay.overlap_queue_at_capacity: true") {
+		t.Fatalf("currentRelayState missing overlap queue capacity flag: %q", state)
 	}
 }

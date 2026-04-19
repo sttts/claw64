@@ -1591,6 +1591,8 @@ func (r *Relay) currentRelayState() []string {
 		fmt.Sprintf("relay.overlap_busy: %t", overlapBusy),
 		fmt.Sprintf("relay.msg_gate_busy: %t", msgGateBusy),
 		fmt.Sprintf("relay.msg_gate_waiters: %d", msgGateWaiters),
+		fmt.Sprintf("relay.overlap_queue_depth: %d", r.overlapQueueDepth()),
+		fmt.Sprintf("relay.overlap_queue_at_capacity: %t", r.overlapQueueAtCapacity()),
 		fmt.Sprintf("relay.ack_waiters: %d", ackWaiters),
 		fmt.Sprintf("relay.ack_waiter_ids: %v", ackWaiterIDs),
 		fmt.Sprintf("relay.late_acks: %d", lateAcks),
