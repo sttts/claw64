@@ -85,6 +85,7 @@ const textChunkMax = 62
 // With ID-based delivery, ACKs always arrive promptly regardless of
 // whether BASIC is running — the C64 ACKs at transport level.
 const ackTimeout = 3 * time.Second
+const toolFrameTimeout = 5 * time.Second
 const ackQuietWindow = 150 * time.Millisecond
 const runningAckQuietWindow = 3 * time.Second
 const runningRecvQuietWindow = 1 * time.Second
@@ -1379,7 +1380,7 @@ func (r *Relay) recvFromSocketOnly(ctx context.Context, waitingTextAck bool) (se
 		if waitingTextAck {
 			timeout = time.After(textAckTimeout)
 		} else if r.waitingTool {
-			timeout = time.After(ackTimeout)
+			timeout = time.After(toolFrameTimeout)
 		} else if r.basicRunning {
 			timeout = nil
 		} else {
@@ -1451,7 +1452,7 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 		if waitingTextAck {
 			timeout = time.After(textAckTimeout)
 		} else if r.waitingTool {
-			timeout = time.After(ackTimeout)
+			timeout = time.After(toolFrameTimeout)
 		} else if r.basicRunning {
 			timeout = nil
 		} else {
