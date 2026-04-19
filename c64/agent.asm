@@ -1958,6 +1958,17 @@ fd_msg_queue_busy:
         jsr GUARD_USERQ_NOOP
         rts
 
+clear_llm_ack_wait:
+        lda tx_ack_wait
+        beq claw_done
+        lda send_buf+1
+        cmp #FRAME_LLM
+        bne claw_done
+        lda #0
+        sta tx_ack_wait
+claw_done:
+        rts
+
 fd_not_msg:
         // ---- Check for TEXT frame ($54 = 'T') ----
         cmp #FRAME_TEXT         // is it a TEXT frame (LLM's final answer)?
@@ -1967,8 +1978,7 @@ fd_not_msg:
         lda agent_state
         cmp #AG_WAITING
         beq fd_text_busy
-        lda #0
-        sta tx_ack_wait         // TEXT proves the bridge already received our prior LLM frame
+        jsr clear_llm_ack_wait  // TEXT only proves receipt of an in-flight LLM frame
         lda frame_len
         sta text_len            // save TEXT body length for USER frame
         lda #0
@@ -1980,8 +1990,7 @@ fd_not_msg:
         rts
 
 fd_text_running:
-        lda #0
-        sta tx_ack_wait
+        jsr clear_llm_ack_wait
         lda frame_len
         sta text_len
         lda #1
