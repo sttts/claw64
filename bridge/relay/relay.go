@@ -101,6 +101,19 @@ const textAckTimeout = 7 * time.Second
 // the completed command result rather than a quick RUNNING/STORED transition.
 const execAckTimeout = 8 * time.Second
 
+func (r *Relay) frameWaitTimeout(waitingTextAck bool) time.Duration {
+	if waitingTextAck {
+		return textAckTimeout
+	}
+	if r.waitingTool {
+		return toolFrameTimeout
+	}
+	if r.basicRunning {
+		return 0
+	}
+	return c64FrameTimeout
+}
+
 // c64FrameTimeout is how long the bridge waits for any C64 frame
 // before triggering a stall dump.
 const c64FrameTimeout = 8 * time.Second
@@ -1377,14 +1390,8 @@ func (r *Relay) recvFromSocketOnly(ctx context.Context, waitingTextAck bool) (se
 		}
 
 		var timeout <-chan time.Time
-		if waitingTextAck {
-			timeout = time.After(textAckTimeout)
-		} else if r.waitingTool {
-			timeout = time.After(toolFrameTimeout)
-		} else if r.basicRunning {
-			timeout = nil
-		} else {
-			timeout = time.After(c64FrameTimeout)
+		if wait := r.frameWaitTimeout(waitingTextAck); wait > 0 {
+			timeout = time.After(wait)
 		}
 
 		if !waitingTextAck {
@@ -1449,14 +1456,8 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 		}
 
 		var timeout <-chan time.Time
-		if waitingTextAck {
-			timeout = time.After(textAckTimeout)
-		} else if r.waitingTool {
-			timeout = time.After(toolFrameTimeout)
-		} else if r.basicRunning {
-			timeout = nil
-		} else {
-			timeout = time.After(c64FrameTimeout)
+		if wait := r.frameWaitTimeout(waitingTextAck); wait > 0 {
+			timeout = time.After(wait)
 		}
 
 		// While waiting for a bridge→C64 TEXT ACK, do not inject queued

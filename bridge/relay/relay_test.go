@@ -71,6 +71,28 @@ func TestCompletionGraceWindow(t *testing.T) {
 	}
 }
 
+func TestFrameWaitTimeout(t *testing.T) {
+	r := &Relay{}
+
+	if got := r.frameWaitTimeout(false); got != c64FrameTimeout {
+		t.Fatalf("frameWaitTimeout idle = %v, want %v", got, c64FrameTimeout)
+	}
+	if got := r.frameWaitTimeout(true); got != textAckTimeout {
+		t.Fatalf("frameWaitTimeout text ack = %v, want %v", got, textAckTimeout)
+	}
+
+	r.waitingTool = true
+	if got := r.frameWaitTimeout(false); got != toolFrameTimeout {
+		t.Fatalf("frameWaitTimeout tool wait = %v, want %v", got, toolFrameTimeout)
+	}
+
+	r.waitingTool = false
+	r.basicRunning = true
+	if got := r.frameWaitTimeout(false); got != 0 {
+		t.Fatalf("frameWaitTimeout running = %v, want 0", got)
+	}
+}
+
 func TestAppendC64LLMEventUsesBackendCompatibleUserRole(t *testing.T) {
 	r := &Relay{History: NewHistory()}
 
