@@ -231,6 +231,9 @@ func (r *Relay) overlapQueueFreshTurnReady() bool {
 	if r.canSendOverlappingMessage() {
 		return false
 	}
+	if r.waitingTool || len(r.pendingFrames) > 0 || len(r.textOutQueue) > 0 || len(r.textInFlight) > 0 {
+		return false
+	}
 
 	r.msgGateMu.Lock()
 	msgGateBusy := r.msgGateBusy

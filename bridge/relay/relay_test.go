@@ -406,6 +406,30 @@ func TestOverlapQueueFreshTurnReadyRequiresIdleBridgeState(t *testing.T) {
 	if r.overlapQueueFreshTurnReady() {
 		t.Fatal("overlapQueueFreshTurnReady = true while overlap send active")
 	}
+
+	r.overlapBusy = false
+	r.waitingTool = true
+	if r.overlapQueueFreshTurnReady() {
+		t.Fatal("overlapQueueFreshTurnReady = true while waitingTool")
+	}
+
+	r.waitingTool = false
+	r.pendingFrames = []queuedFrame{{frame: serial.Frame{Type: serial.FrameLLM}}}
+	if r.overlapQueueFreshTurnReady() {
+		t.Fatal("overlapQueueFreshTurnReady = true with pending semantic frames")
+	}
+
+	r.pendingFrames = nil
+	r.textOutQueue = []byte("queued")
+	if r.overlapQueueFreshTurnReady() {
+		t.Fatal("overlapQueueFreshTurnReady = true with pending text out queue")
+	}
+
+	r.textOutQueue = nil
+	r.textInFlight = []byte("chunk")
+	if r.overlapQueueFreshTurnReady() {
+		t.Fatal("overlapQueueFreshTurnReady = true with text in flight")
+	}
 }
 
 func TestDispatchAckWaiterDeliversMatchingAck(t *testing.T) {
