@@ -1122,16 +1122,18 @@ func (r *Relay) sendVerifiedOrSemanticWith(ctx context.Context, frame serial.Fra
 }
 
 // allocID returns the next transport ID and advances the counter.
-// IDs start at 1; 0 is reserved for "unset".
+// IDs start at 1; 0 is reserved for "unset"; transport is 7-bit clean.
 func (r *Relay) allocID() byte {
 	id := r.nextTxID
-	if id == 0 {
+	if id == 0 || id > 0x7f {
 		id = 1
 	}
-	r.nextTxID = id + 1
-	if r.nextTxID == 0 {
-		r.nextTxID = 1 // skip 0 on wraparound
+
+	next := id + 1
+	if next == 0 || next > 0x7f {
+		next = 1
 	}
+	r.nextTxID = next
 	return id
 }
 

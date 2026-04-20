@@ -1376,9 +1376,11 @@ iti_shift:
         sta tx_ack_timer
         sta tx_retries
 
-        // advance tx_next_id, skip 0
+        // advance tx_next_id in the 7-bit transport id range 1..127
         inc tx_next_id
-        bne iti_done
+        lda tx_next_id
+        cmp #$80
+        bcc iti_done
         lda #1
         sta tx_next_id
 iti_done:
