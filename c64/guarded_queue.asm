@@ -94,3 +94,68 @@ guard_userq_advance_tail:
         sta USERQ_TAIL_PTR
 guq_tail_ok:
         rts
+
+// Guarded BSOUT drain helper.
+// Writes ACK/STATUS bytes straight into the KERNAL RS232 TX ring so the
+// screen-output hook does not need to flip the current output device.
+guard_bsout_drain:
+        lda ack_pending
+        beq gbd_ack_ready
+        lda ack_pos
+        cmp ack_total
+        bne gbd_ack_ready
+        lda #0
+        sta ack_pending
+        jsr build_ack_frame
+gbd_ack_ready:
+        lda ack_pos
+        cmp ack_total
+        beq gbd_status_prep
+        ldx ack_pos
+        lda ack_buf,x
+        jsr guard_ring_write_byte
+        bcs gbd_done
+        inc ack_pos
+        rts
+
+gbd_status_prep:
+        lda send_pos
+        cmp send_total
+        bne gbd_status_send
+        lda tx_ack_wait
+        bne gbd_done
+        jsr build_reliable_outbound
+gbd_status_send:
+        lda send_pos
+        cmp send_total
+        beq gbd_done
+        lda send_buf+1
+        cmp #FRAME_STATUS
+        bne gbd_done
+        ldx send_pos
+        lda send_buf,x
+        jsr guard_ring_write_byte
+        bcs gbd_done
+        inc send_pos
+gbd_done:
+        rts
+
+guard_ring_write_byte:
+        pha
+        ldy RODBE
+        tya
+        clc
+        adc #1
+        tax
+        cpx RODBS
+        beq grwb_full
+        pla
+        sta (ROBUF_LO),y
+        txa
+        sta RODBE
+        clc
+        rts
+grwb_full:
+        pla
+        sec
+        rts

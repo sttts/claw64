@@ -819,7 +819,7 @@ bsout_call_old:
 
 // drain_running_control_outbound — keep running-mode control replies moving
 // while BASIC is actively printing, without driving the full outbound state
-// machine from inside BSOUT.
+// machine through CHKOUT/CHROUT from inside BSOUT.
 drain_running_control_outbound:
         lda state_pending
         bne drco_service
@@ -836,16 +836,7 @@ drain_running_control_outbound:
         bne drco_done
 
 drco_service:
-        lda ack_pending
-        bne drco_do_service
-        lda ack_pos
-        cmp ack_total
-        bne drco_do_service
-        jsr service_outbound
-        jmp drco_done
-
-drco_do_service:
-        jsr service_outbound
+        jsr GUARD_BSOUT_DRAIN
 
 drco_done:
         rts
