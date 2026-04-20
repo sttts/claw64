@@ -94,7 +94,7 @@ type SignalCmd struct {
 }
 
 type BurninCmd struct {
-	Scenario string `arg:"" default:"stop-screen" enum:"stop-screen,screen-repeat,direct-exec,overlap-msg,overlap-queue3,overlap-running2,overlap-running3,overlap-running4,overlap-running5,overlap-running6,overlap-running7,overlap-running8,overlap-running10" help:"Deterministic protocol scenario to run."`
+	Scenario string `arg:"" default:"stop-screen" enum:"stop-screen,screen-repeat,direct-exec,overlap-msg,overlap-queue3,overlap-running2,overlap-running3,overlap-running4,overlap-running5,overlap-running6,overlap-running7,overlap-running8,overlap-running10,overlap-running12" help:"Deterministic protocol scenario to run."`
 }
 
 type AuthCmd struct {

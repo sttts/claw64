@@ -64,6 +64,8 @@ func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ [
 		return s.completeOverlapQueue(messages, 8)
 	case "overlap-running10":
 		return s.completeOverlapQueue(messages, 10)
+	case "overlap-running12":
+		return s.completeOverlapQueue(messages, 12)
 	default:
 		return llm.Message{}, fmt.Errorf("unknown burn-in scenario %q", s.scenario)
 	}
@@ -642,7 +644,81 @@ func (s *scriptedBurnin) completeOverlapQueue(messages []llm.Message, totalRuns 
 			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
 			return llm.Message{}, fmt.Errorf("step %d: expected final ninth-run screenshot/result, got %q", s.step, lastTool)
 		}
+		if totalRuns > 10 {
+			s.step++
+			return llm.Message{Role: "assistant", Content: "TENTH RUN COMPLETE."}, nil
+		}
 		return llm.Message{Role: "assistant", Content: "TENTH RUN COMPLETE."}, nil
+	case 40:
+		if !strings.Contains(lastUser, "run") {
+			return llm.Message{}, fmt.Errorf("step %d: expected tenth queued run request, got %q", s.step, lastUser)
+		}
+		s.step++
+		return execToolCall("RUN", s.step), nil
+	case 41:
+		switch {
+		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
+			return llm.Message{Role: "assistant", Content: "ELEVENTH RUN COMPLETE."}, nil
+		case lastTool == "[C64 BASIC status]: RUNNING":
+			s.step++
+			return simpleToolCall("status", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected tenth RUN result or RUNNING, got %q", s.step, lastTool)
+		}
+	case 42:
+		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
+		switch status {
+		case "RUNNING", "STOP REQUESTED":
+			return simpleToolCall("status", "{}", s.step), nil
+		case "READY", "READY.":
+			s.step++
+			return simpleToolCall("screen", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining tenth RUN, got %q", s.step, lastTool)
+		}
+	case 43:
+		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
+			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected final tenth-run screenshot/result, got %q", s.step, lastTool)
+		}
+		if totalRuns > 11 {
+			s.step++
+			return llm.Message{Role: "assistant", Content: "ELEVENTH RUN COMPLETE."}, nil
+		}
+		return llm.Message{Role: "assistant", Content: "ELEVENTH RUN COMPLETE."}, nil
+	case 44:
+		if !strings.Contains(lastUser, "run") {
+			return llm.Message{}, fmt.Errorf("step %d: expected eleventh queued run request, got %q", s.step, lastUser)
+		}
+		s.step++
+		return execToolCall("RUN", s.step), nil
+	case 45:
+		switch {
+		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
+			return llm.Message{Role: "assistant", Content: "TWELFTH RUN COMPLETE."}, nil
+		case lastTool == "[C64 BASIC status]: RUNNING":
+			s.step++
+			return simpleToolCall("status", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected eleventh RUN result or RUNNING, got %q", s.step, lastTool)
+		}
+	case 46:
+		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
+		switch status {
+		case "RUNNING", "STOP REQUESTED":
+			return simpleToolCall("status", "{}", s.step), nil
+		case "READY", "READY.":
+			s.step++
+			return simpleToolCall("screen", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining eleventh RUN, got %q", s.step, lastTool)
+		}
+	case 47:
+		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
+			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected final eleventh-run screenshot/result, got %q", s.step, lastTool)
+		}
+		return llm.Message{Role: "assistant", Content: "TWELFTH RUN COMPLETE."}, nil
 	default:
 		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
 	}
@@ -738,7 +814,7 @@ func runBurnin(cfg CLI, scenario string) {
 	// C64 handshake. Let the serial side settle before the first scripted MSG.
 	time.Sleep(750 * time.Millisecond)
 
-	if scenario == "overlap-msg" || scenario == "overlap-queue3" || scenario == "overlap-running2" || scenario == "overlap-running3" || scenario == "overlap-running4" || scenario == "overlap-running5" || scenario == "overlap-running6" || scenario == "overlap-running7" || scenario == "overlap-running8" || scenario == "overlap-running10" {
+	if scenario == "overlap-msg" || scenario == "overlap-queue3" || scenario == "overlap-running2" || scenario == "overlap-running3" || scenario == "overlap-running4" || scenario == "overlap-running5" || scenario == "overlap-running6" || scenario == "overlap-running7" || scenario == "overlap-running8" || scenario == "overlap-running10" || scenario == "overlap-running12" {
 		runOverlapBurnin(ctx, rl, scenario)
 		log.Printf("burnin: scenario %s completed", scenario)
 		return
@@ -768,7 +844,7 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
 		texts []string
 		err   error
 	}
-	queueThree := scenario == "overlap-queue3" || scenario == "overlap-running3" || scenario == "overlap-running4" || scenario == "overlap-running5" || scenario == "overlap-running6" || scenario == "overlap-running7" || scenario == "overlap-running8" || scenario == "overlap-running10"
+	queueThree := scenario == "overlap-queue3" || scenario == "overlap-running3" || scenario == "overlap-running4" || scenario == "overlap-running5" || scenario == "overlap-running6" || scenario == "overlap-running7" || scenario == "overlap-running8" || scenario == "overlap-running10" || scenario == "overlap-running12"
 
 	err := rl.HandleMessageStream(ctx, "burnin", "Hi", func(message string) error {
 		fmt.Fprintf(os.Stdout, "\n%s %s\n", "c64>", message)
@@ -806,6 +882,8 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
 	var eighth <-chan result
 	var ninth <-chan result
 	var tenth <-chan result
+	var eleventh <-chan result
+	var twelfth <-chan result
 	if queueThree {
 		delay := 150 * time.Millisecond
 		if scenario == "overlap-running3" {
@@ -870,6 +948,28 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
 		time.Sleep(150 * time.Millisecond)
 		tenth = runOne("run it a tenth time")
 	}
+	if scenario == "overlap-running12" {
+		if tenth == nil {
+			time.Sleep(150 * time.Millisecond)
+			fourth = runOne("run it once more")
+			time.Sleep(150 * time.Millisecond)
+			fifth = runOne("run it a fifth time")
+			time.Sleep(150 * time.Millisecond)
+			sixth = runOne("run it a sixth time")
+			time.Sleep(150 * time.Millisecond)
+			seventh = runOne("run it a seventh time")
+			time.Sleep(150 * time.Millisecond)
+			eighth = runOne("run it an eighth time")
+			time.Sleep(150 * time.Millisecond)
+			ninth = runOne("run it a ninth time")
+			time.Sleep(150 * time.Millisecond)
+			tenth = runOne("run it a tenth time")
+		}
+		time.Sleep(150 * time.Millisecond)
+		eleventh = runOne("run it an eleventh time")
+		time.Sleep(150 * time.Millisecond)
+		twelfth = runOne("run it a twelfth time")
+	}
 
 	waitOne := func(name string, ch <-chan result, want string) {
 		res := <-ch
@@ -925,6 +1025,17 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
 		waitOne("eighth", eighth, "EIGHTH RUN COMPLETE.")
 		waitOne("ninth", ninth, "NINTH RUN COMPLETE.")
 		waitOne("tenth", tenth, "TENTH RUN COMPLETE.")
+	}
+	if scenario == "overlap-running12" {
+		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
+		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
+		waitOne("sixth", sixth, "SIXTH RUN COMPLETE.")
+		waitOne("seventh", seventh, "SEVENTH RUN COMPLETE.")
+		waitOne("eighth", eighth, "EIGHTH RUN COMPLETE.")
+		waitOne("ninth", ninth, "NINTH RUN COMPLETE.")
+		waitOne("tenth", tenth, "TENTH RUN COMPLETE.")
+		waitOne("eleventh", eleventh, "ELEVENTH RUN COMPLETE.")
+		waitOne("twelfth", twelfth, "TWELFTH RUN COMPLETE.")
 	}
 }
 
