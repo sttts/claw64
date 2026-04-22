@@ -373,6 +373,25 @@ func TestShouldHandOffSemanticFrameAfterUserText(t *testing.T) {
 	}
 }
 
+func TestAllocIDWrapsWithin7BitRange(t *testing.T) {
+	r := &Relay{nextTxID: 0x7e}
+
+	if got := r.allocID(); got != 0x7e {
+		t.Fatalf("first allocID = %d, want 126", got)
+	}
+	if got := r.allocID(); got != 0x7f {
+		t.Fatalf("second allocID = %d, want 127", got)
+	}
+	if got := r.allocID(); got != 0x01 {
+		t.Fatalf("third allocID = %d, want 1 after wrap", got)
+	}
+
+	r.nextTxID = 0x80
+	if got := r.allocID(); got != 0x01 {
+		t.Fatalf("allocID from out-of-range nextTxID = %d, want 1", got)
+	}
+}
+
 func TestOverlapQueueDepthCountsActiveHolderWaitersAndOverlapSend(t *testing.T) {
 	r := &Relay{}
 	if got := r.overlapQueueDepth(); got != 0 {
