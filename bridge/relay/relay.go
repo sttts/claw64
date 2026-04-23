@@ -114,6 +114,14 @@ func (r *Relay) frameWaitTimeout(waitingTextAck bool) time.Duration {
 	return c64FrameTimeout
 }
 
+func isExpectedStatus(status string) bool {
+	switch status {
+	case "RUNNING", "READY", "READY.", "STORED", "BUSY", "STOP REQUESTED", "UNKNOWN":
+		return true
+	}
+	return false
+}
+
 // c64FrameTimeout is how long the bridge waits for any C64 frame
 // before triggering a stall dump.
 const c64FrameTimeout = 8 * time.Second
@@ -634,7 +642,11 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 				r.basicRunning = false
 			}
 
-			log.Printf("%s", flowLine("LLM", "←", "C64", "STATUS!", status))
+			if isExpectedStatus(status) {
+				log.Printf("%s", flowLine("LLM", "←", "C64", "STATUS!", status))
+			} else {
+				log.Printf("%s", flowLine("LLM", "←", "C64", "STATUS!", fmt.Sprintf("%s payload=%s", status, hex.EncodeToString(f.Payload))))
+			}
 			r.appendToolResult(userID, "[C64 BASIC status]: "+status)
 			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
