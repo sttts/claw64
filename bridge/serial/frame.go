@@ -137,7 +137,7 @@ readType:
 		typ != FrameAck && typ != FrameResult && typ != FrameStatus && typ != FrameUser &&
 		typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat &&
 		typ != FrameSystem {
-		log.Printf("  bad type 0x%02X, resync", typ)
+		log.Printf("  bad type 0x%02X len=0x%02X, resync", typ, length)
 		return Decode(r)
 	}
 
