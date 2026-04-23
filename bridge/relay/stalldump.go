@@ -53,6 +53,7 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 		"m 029b 029e",
 		"m 00f7 00fa",
 		"m 0400 07ff",
+		"m cee0 cef0",
 		"m cf60 cf9f",
 		"m cf00 cfff",
 		"m cbcc cc05",
@@ -61,7 +62,10 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 
 	if syms, err := loadMonitorSymbols(symPath); err == nil {
 		if lo, hi, ok := symbolRange(syms,
+			"parse_state",
+			"frame_sub",
 			"frame_len",
+			"fd_cur_id",
 			"agent_state",
 			"ready_timer",
 			"send_pos",
@@ -72,6 +76,8 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 			"state_len",
 			"state_src_lo",
 			"state_src_hi",
+			"rx_last_id",
+			"rx_last_type",
 			"llm_pending",
 			"llm_len",
 			"prompt_pending",
