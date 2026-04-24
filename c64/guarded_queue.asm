@@ -132,11 +132,18 @@ gbd_status_send:
         lda send_buf+1
         cmp #FRAME_STATUS
         bne gbd_done
+        lda tx_service_busy
+        bne gbd_done
+        lda #1
+        sta tx_service_busy
         ldx send_pos
         lda send_buf,x
         jsr guard_ring_write_byte
-        bcs gbd_done
+        bcs gbd_status_release
         inc send_pos
+gbd_status_release:
+        lda #0
+        sta tx_service_busy
 gbd_done:
         rts
 
