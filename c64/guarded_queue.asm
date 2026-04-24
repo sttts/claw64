@@ -141,6 +141,8 @@ gbd_done:
         rts
 
 guard_ring_write_byte:
+        php
+        sei
         pha
         ldy RODBE
         tya
@@ -153,9 +155,11 @@ guard_ring_write_byte:
         sta (ROBUF_LO),y
         txa
         sta RODBE
+        plp
         clc
         rts
 grwb_full:
         pla
+        plp
         sec
         rts
