@@ -445,10 +445,22 @@ bl_rx_done:
         bne bl_idle_state_done
         jsr screen_has_ready_anywhere
         bcc bl_idle_state_done
+
+        // If prompt-idle notices READY after a detached RUNNING state,
+        // finish the same semantic handoff as the IRQ-side READY path:
+        // clear running state, queue RESULT once, and release any
+        // deferred EXEC acknowledgment.
         lda #0
         sta basic_running
         sta running_reported
         sta stop_requested
+        sta busy
+        lda #AG_IDLE
+        sta agent_state
+        lda result_pending
+        bne bl_idle_state_done
+        jsr commit_exec_ack_if_pending
+        jsr prepare_result_chunks
 bl_idle_state_done:
         jsr service_outbound
 
