@@ -646,6 +646,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 				log.Printf("%s", flowLine("LLM", "←", "C64", "STATUS!", status))
 			} else {
 				log.Printf("%s", flowLine("LLM", "←", "C64", "STATUS!", fmt.Sprintf("%s payload=%s", status, hex.EncodeToString(f.Payload))))
+				r.dumpMalformedStatus(status, f.Payload)
 			}
 			r.appendToolResult(userID, "[C64 BASIC status]: "+status)
 			idle, err := r.callAndDispatch(ctx, userID)
@@ -1570,6 +1571,23 @@ func (r *Relay) dumpToolAckStall() {
 		return
 	}
 	logErrorf("     ! tool stall; wrote debug dump to %s", filename)
+}
+
+func (r *Relay) dumpMalformedStatus(status string, payload []byte) {
+	reason := fmt.Sprintf("malformed status from C64: %q", status)
+	filename, err := writeStallDump(
+		r.DebugDir,
+		r.MonitorAddr,
+		r.SymbolPath,
+		reason,
+		append([]byte(nil), payload...),
+		r.currentRelayState(),
+	)
+	if err != nil {
+		logErrorf("     ! malformed status; debug dump failed: %v", err)
+		return
+	}
+	logErrorf("     ! malformed status; wrote debug dump to %s", filename)
 }
 
 func (r *Relay) currentToolPayload() []byte {

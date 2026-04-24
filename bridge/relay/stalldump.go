@@ -99,6 +99,24 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 			commands = append(commands, fmt.Sprintf("m %04x %04x", lo, hi))
 		}
 		if lo, hi, ok := symbolRange(syms,
+			"BUSY_COLORS_BASE",
+			"BUSY_COLORS_LIMIT",
+			"READY_CODES_BASE",
+			"READY_CODES_LIMIT",
+			"STATE_READY_TEXT_BASE",
+			"STATE_READY_TEXT_LIMIT",
+			"STATE_RUNNING_TEXT_BASE",
+			"STATE_RUNNING_TEXT_LIMIT",
+			"STATE_BUSY_TEXT_BASE",
+			"STATE_BUSY_TEXT_LIMIT",
+			"STATE_STORED_TEXT_BASE",
+			"STATE_STORED_TEXT_LIMIT",
+			"STATE_STOP_TEXT_BASE",
+			"STATE_STOP_TEXT_LIMIT",
+		); ok {
+			commands = append(commands, fmt.Sprintf("m %04x %04x", lo, hi))
+		}
+		if lo, hi, ok := symbolRange(syms,
 			"USERQ_STAGE_LEN",
 			"USERQ_HEAD_PTR",
 			"USERQ_TAIL_PTR",
@@ -126,6 +144,9 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 
 	if !hasMonitorCommand(commands, "m 9500 9503") {
 		commands = append(commands, "m 9500 9503")
+	}
+	if !hasStateTextDumps(commands) {
+		commands = append(commands, "m 9504 9522")
 	}
 	if !hasGuardedQueueSlotDumps(commands) {
 		commands = append(commands,
@@ -237,4 +258,8 @@ func hasGuardedQueueSlotDumps(commands []string) bool {
 	return hasMonitorCommand(commands, "m 9200 921f") &&
 		hasMonitorCommand(commands, "m 9300 931f") &&
 		hasMonitorCommand(commands, "m 9400 941f")
+}
+
+func hasStateTextDumps(commands []string) bool {
+	return hasMonitorCommand(commands, "m 9504 9522")
 }
