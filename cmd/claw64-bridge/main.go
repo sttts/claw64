@@ -421,8 +421,8 @@ func spawnVICE(cfg CLI, loaderPath string) (*exec.Cmd, error) {
 	}
 
 	cmd := exec.Command(cfg.ViceBin, args...)
-	cmd.Stdout = &lineLogWriter{prefix: "vice: "}
-	cmd.Stderr = &lineLogWriter{prefix: "vice: "}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
