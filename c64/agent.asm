@@ -1273,6 +1273,10 @@ queue_state_text:
         rts
 
 build_state_frame:
+        // Build the small status frame atomically so IRQ-side scratch or
+        // KERNAL activity cannot clobber the source pointer mid-copy.
+        php
+        sei
         lda #SYNC_BYTE
         sta send_buf+0
         lda #FRAME_STATUS
@@ -1305,6 +1309,7 @@ bsf_done:
         sta send_total
         lda #0
         sta send_pos
+        plp
         rts
 
 // build_ack_frame — build a 5-byte ACK frame in ack_buf for paced send.
