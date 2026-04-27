@@ -4,9 +4,6 @@
 // This code is staged into protected high BASIC RAM and kept inert until
 // runtime call sites are introduced in a later slice.
 
-guard_userq_noop:
-        jmp guard_userq_enqueue_from_rxbuf
-
 guard_userq_enqueue_from_rxbuf:
         lda USERQ_COUNT_PTR
         cmp #USERQ_SLOTS
@@ -169,4 +166,18 @@ grwb_full:
         pla
         plp
         sec
+        rts
+
+guard_clear_stale_status_wait:
+        lda tx_ack_wait
+        beq gcsw_done
+        lda send_pos
+        cmp send_total
+        bne gcsw_done
+        lda RODBE
+        cmp RODBS
+        bne gcsw_done
+        lda #0
+        sta tx_ack_wait
+gcsw_done:
         rts

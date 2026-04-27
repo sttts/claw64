@@ -446,6 +446,10 @@ bl_rx_done:
         jsr screen_has_ready_anywhere
         bcc bl_idle_state_done
 
+        // Once a detached RUNNING status has fully drained and the KERNAL
+        // TX ring is empty again, it no longer owns completion handoff.
+        jsr GUARD_CLEAR_STALE_STATUS_WAIT
+
         // If prompt-idle notices READY after a detached RUNNING state,
         // finish the same semantic handoff as the IRQ-side READY path:
         // clear running state, queue RESULT once, and release any
@@ -728,10 +732,8 @@ reenter:
         beq reenter_idle
         jsr screen_has_ready_anywhere
         bcc reenter_idle
-        lda #0
-        sta basic_running
-        sta running_reported
-        sta stop_requested
+        // Let the prompt-idle loop own detached READY handoff so the
+        // stale-status check and RESULT transition stay single-sourced.
 reenter_idle:
         jsr service_outbound    // prompt-idle after KERNAL processed a line
         jmp bloop               // empty → run agent loop
@@ -1965,7 +1967,7 @@ fd_msg_no_prompt:
         rts
 
 fd_msg_queue_busy:
-        jsr GUARD_USERQ_NOOP
+        jsr GUARD_USERQ_ENQUEUE
         rts
 
 clear_llm_ack_wait:
