@@ -50,6 +50,8 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 
 	commands := []string{
 		"r",
+		"m 00c6 00d6",
+		"m 0277 0281",
 		"m 029b 029e",
 		"m 00f7 00fa",
 		"m 0400 07ff",
@@ -93,8 +95,12 @@ func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk 
 			"tx_retries",
 			"tx_service_busy",
 			"prompt_sent",
+			"scan_start",
 			"busy",
 			"busy_timer",
+			"exec_len",
+			"exec_ack_pending",
+			"progline_pending",
 		); ok {
 			commands = append(commands, fmt.Sprintf("m %04x %04x", lo, hi))
 		}
