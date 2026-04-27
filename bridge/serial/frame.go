@@ -12,9 +12,9 @@
 package serial
 
 import (
+	"io"
 	"fmt"
 	"log"
-	"io"
 )
 
 // Sync byte marks the start of a frame.
@@ -82,6 +82,14 @@ func readFiltered(r io.Reader) (byte, error) {
 	return b[0], nil
 }
 
+func isKnownType(typ byte) bool {
+	return typ == FrameMsg || typ == FrameExec || typ == FrameStop ||
+		typ == FrameStatusReq || typ == FrameText || typ == FrameScreenshot ||
+		typ == FrameAck || typ == FrameResult || typ == FrameStatus || typ == FrameUser ||
+		typ == FrameLLM || typ == FrameError || typ == FrameHeartbeat ||
+		typ == FrameSystem
+}
+
 // Decode reads one frame from r. Hunts for SYNC, then reads
 // type/length/payload/checksum.
 func Decode(r io.Reader, onPayloadByte ...func(byte, int, byte)) (Frame, error) {
@@ -106,6 +114,7 @@ func Decode(r io.Reader, onPayloadByte ...func(byte, int, byte)) (Frame, error) 
 
 readType:
 	// read subtype (skip more SYNCs too)
+	var rawType byte
 	var typ byte
 	for {
 		b, err := readFiltered(r)
@@ -115,6 +124,7 @@ readType:
 		if b == SyncByte {
 			continue
 		}
+		rawType = b
 		typ = b & 0x7F
 		break
 	}
@@ -132,12 +142,8 @@ readType:
 	chk ^= length
 
 	// sanity check: reject unrecognized frame types
-	if typ != FrameMsg && typ != FrameExec && typ != FrameStop &&
-		typ != FrameStatusReq && typ != FrameText && typ != FrameScreenshot &&
-		typ != FrameAck && typ != FrameResult && typ != FrameStatus && typ != FrameUser &&
-		typ != FrameLLM && typ != FrameError && typ != FrameHeartbeat &&
-		typ != FrameSystem {
-		log.Printf("  bad type 0x%02X len=0x%02X, resync", typ, length)
+	if !isKnownType(typ) {
+		log.Printf("  bad type raw=0x%02X masked=0x%02X rawLen=0x%02X len=0x%02X, resync", rawType, typ, rawLen, length)
 		return Decode(r)
 	}
 
@@ -162,7 +168,8 @@ readType:
 	}
 	cb := rawCb & 0x7F
 	if cb != chk {
-		// debug: log.Printf("  checksum fail: got 0x%02X want 0x%02X (raw 0x%02X)", cb, chk, rawCb)
+		log.Printf("  checksum fail: rawType=0x%02X type=0x%02X rawLen=0x%02X len=0x%02X rawChk=0x%02X chk=0x%02X",
+			rawType, typ, rawLen, length, rawCb, chk)
 		if rawCb == SyncByte {
 			// the "checksum" byte was actually a SYNC — start of next frame
 			// don't consume it; instead, read TYPE directly
