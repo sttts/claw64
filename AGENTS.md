@@ -115,6 +115,7 @@ allocation and `make kill` to stop processes without starting new ones.
   - `go run ./cmd/claw64-bridge burnin overlap-running10`
   - `go run ./cmd/claw64-bridge burnin overlap-running12`
   - `go run ./cmd/claw64-bridge burnin overlap-running14`
+  - `go run ./cmd/claw64-bridge burnin overlap-running16`
 - If the full gate fails, stop and fix that failure before adding more behavior.
 
 ### Usual loop
