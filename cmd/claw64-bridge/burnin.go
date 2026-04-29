@@ -37,6 +37,10 @@ func (s *scriptedBurnin) signal(name string) {
 }
 
 func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ []llm.Tool) (llm.Message, error) {
+	if totalRuns, ok := overlapScenarioRuns(s.scenario); ok {
+		return s.completeOverlapQueue(messages, totalRuns)
+	}
+
 	switch s.scenario {
 	case "stop-screen":
 		return s.completeStopScreen(messages)
@@ -44,38 +48,41 @@ func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ [
 		return s.completeScreenRepeat(messages)
 	case "direct-exec":
 		return s.completeDirectExec(messages)
-	case "overlap-msg":
-		return s.completeOverlapQueue(messages, 2)
-	case "overlap-queue3":
-		return s.completeOverlapQueue(messages, 3)
-	case "overlap-running2":
-		return s.completeOverlapQueue(messages, 2)
-	case "overlap-running3":
-		return s.completeOverlapQueue(messages, 3)
-	case "overlap-running4":
-		return s.completeOverlapQueue(messages, 4)
-	case "overlap-running5":
-		return s.completeOverlapQueue(messages, 5)
-	case "overlap-running6":
-		return s.completeOverlapQueue(messages, 6)
-	case "overlap-running7":
-		return s.completeOverlapQueue(messages, 7)
-	case "overlap-running8":
-		return s.completeOverlapQueue(messages, 8)
-	case "overlap-running10":
-		return s.completeOverlapQueue(messages, 10)
-	case "overlap-running12":
-		return s.completeOverlapQueue(messages, 12)
-	case "overlap-running14":
-		return s.completeOverlapQueue(messages, 14)
-	case "overlap-running16":
-		return s.completeOverlapQueue(messages, 16)
-	case "overlap-running20":
-		return s.completeOverlapQueue(messages, 20)
-	case "overlap-running24":
-		return s.completeOverlapQueue(messages, 24)
 	default:
 		return llm.Message{}, fmt.Errorf("unknown burn-in scenario %q", s.scenario)
+	}
+}
+
+func overlapScenarioRuns(scenario string) (int, bool) {
+	switch scenario {
+	case "overlap-msg", "overlap-running2":
+		return 2, true
+	case "overlap-queue3", "overlap-running3":
+		return 3, true
+	case "overlap-running4":
+		return 4, true
+	case "overlap-running5":
+		return 5, true
+	case "overlap-running6":
+		return 6, true
+	case "overlap-running7":
+		return 7, true
+	case "overlap-running8":
+		return 8, true
+	case "overlap-running10":
+		return 10, true
+	case "overlap-running12":
+		return 12, true
+	case "overlap-running14":
+		return 14, true
+	case "overlap-running16":
+		return 16, true
+	case "overlap-running20":
+		return 20, true
+	case "overlap-running24":
+		return 24, true
+	default:
+		return 0, false
 	}
 }
 
@@ -515,6 +522,21 @@ func overlapRunCompleteText(run int) string {
 	return fmt.Sprintf("RUN %d COMPLETE.", run)
 }
 
+func overlapRunPrompt(run int) string {
+	switch run {
+	case 2:
+		return "run it"
+	case 3:
+		return "run it again"
+	case 4:
+		return "run it once more"
+	case 8, 11, 18:
+		return fmt.Sprintf("run it an %s time", overlapOrdinal(run))
+	default:
+		return fmt.Sprintf("run it a %s time", overlapOrdinal(run))
+	}
+}
+
 func overlapDirectRunResultLooksClean(result string) bool {
 	const prefix = "[C64 screen output]: "
 	if !strings.HasPrefix(result, prefix) {
@@ -594,7 +616,7 @@ func runBurnin(cfg CLI, scenario string) {
 	// C64 handshake. Let the serial side settle before the first scripted MSG.
 	time.Sleep(750 * time.Millisecond)
 
-	if scenario == "overlap-msg" || scenario == "overlap-queue3" || scenario == "overlap-running2" || scenario == "overlap-running3" || scenario == "overlap-running4" || scenario == "overlap-running5" || scenario == "overlap-running6" || scenario == "overlap-running7" || scenario == "overlap-running8" || scenario == "overlap-running10" || scenario == "overlap-running12" || scenario == "overlap-running14" || scenario == "overlap-running16" || scenario == "overlap-running20" || scenario == "overlap-running24" {
+	if _, ok := overlapScenarioRuns(scenario); ok {
 		runOverlapBurnin(ctx, rl, scenario)
 		log.Printf("burnin: scenario %s completed", scenario)
 		return
@@ -624,7 +646,10 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
 		texts []string
 		err   error
 	}
-	queueThree := scenario == "overlap-queue3" || scenario == "overlap-running3" || scenario == "overlap-running4" || scenario == "overlap-running5" || scenario == "overlap-running6" || scenario == "overlap-running7" || scenario == "overlap-running8" || scenario == "overlap-running10" || scenario == "overlap-running12" || scenario == "overlap-running14" || scenario == "overlap-running16" || scenario == "overlap-running20" || scenario == "overlap-running24"
+	totalRuns, ok := overlapScenarioRuns(scenario)
+	if !ok {
+		log.Fatalf("burnin: %s is not an overlap scenario", scenario)
+	}
 
 	err := rl.HandleMessageStream(ctx, "burnin", "Hi", func(message string) error {
 		fmt.Fprintf(os.Stdout, "\n%s %s\n", "c64>", message)
@@ -648,259 +673,21 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
 		return ch
 	}
 
-	first := runOne("Can you program a tiny overlap demo?")
+	programming := runOne("Can you program a tiny overlap demo?")
 	time.Sleep(4500 * time.Millisecond)
 	if scenario == "overlap-running2" {
 		time.Sleep(1000 * time.Millisecond)
 	}
-	second := runOne("run it")
-	var third <-chan result
-	var fourth <-chan result
-	var fifth <-chan result
-	var sixth <-chan result
-	var seventh <-chan result
-	var eighth <-chan result
-	var ninth <-chan result
-	var tenth <-chan result
-	var eleventh <-chan result
-	var twelfth <-chan result
-	var thirteenth <-chan result
-	var fourteenth <-chan result
-	var fifteenth <-chan result
-	var sixteenth <-chan result
-	var seventeenth <-chan result
-	var eighteenth <-chan result
-	var nineteenth <-chan result
-	var twentieth <-chan result
-	var twentyFirst <-chan result
-	var twentySecond <-chan result
-	var twentyThird <-chan result
-	var twentyFourth <-chan result
-	if queueThree {
+
+	runs := make([]<-chan result, totalRuns+1)
+	runs[2] = runOne(overlapRunPrompt(2))
+	for run := 3; run <= totalRuns; run++ {
 		delay := 150 * time.Millisecond
-		if scenario == "overlap-running3" {
+		if scenario == "overlap-running3" && run == 3 {
 			delay = 1500 * time.Millisecond
 		}
 		time.Sleep(delay)
-		third = runOne("run it again")
-	}
-	if scenario == "overlap-running4" {
-		time.Sleep(150 * time.Millisecond)
-		fourth = runOne("run it once more")
-	}
-	if scenario == "overlap-running5" {
-		time.Sleep(150 * time.Millisecond)
-		fourth = runOne("run it once more")
-		time.Sleep(150 * time.Millisecond)
-		fifth = runOne("run it a fifth time")
-	}
-	if scenario == "overlap-running6" {
-		time.Sleep(150 * time.Millisecond)
-		fourth = runOne("run it once more")
-		time.Sleep(150 * time.Millisecond)
-		fifth = runOne("run it a fifth time")
-		time.Sleep(150 * time.Millisecond)
-		sixth = runOne("run it a sixth time")
-	}
-	if scenario == "overlap-running7" {
-		time.Sleep(150 * time.Millisecond)
-		fourth = runOne("run it once more")
-		time.Sleep(150 * time.Millisecond)
-		fifth = runOne("run it a fifth time")
-		time.Sleep(150 * time.Millisecond)
-		sixth = runOne("run it a sixth time")
-		time.Sleep(150 * time.Millisecond)
-		seventh = runOne("run it a seventh time")
-	}
-	if scenario == "overlap-running8" {
-		time.Sleep(150 * time.Millisecond)
-		fourth = runOne("run it once more")
-		time.Sleep(150 * time.Millisecond)
-		fifth = runOne("run it a fifth time")
-		time.Sleep(150 * time.Millisecond)
-		sixth = runOne("run it a sixth time")
-		time.Sleep(150 * time.Millisecond)
-		seventh = runOne("run it a seventh time")
-		time.Sleep(150 * time.Millisecond)
-		eighth = runOne("run it an eighth time")
-	}
-	if scenario == "overlap-running10" {
-		time.Sleep(150 * time.Millisecond)
-		fourth = runOne("run it once more")
-		time.Sleep(150 * time.Millisecond)
-		fifth = runOne("run it a fifth time")
-		time.Sleep(150 * time.Millisecond)
-		sixth = runOne("run it a sixth time")
-		time.Sleep(150 * time.Millisecond)
-		seventh = runOne("run it a seventh time")
-		time.Sleep(150 * time.Millisecond)
-		eighth = runOne("run it an eighth time")
-		time.Sleep(150 * time.Millisecond)
-		ninth = runOne("run it a ninth time")
-		time.Sleep(150 * time.Millisecond)
-		tenth = runOne("run it a tenth time")
-	}
-	if scenario == "overlap-running12" {
-		if tenth == nil {
-			time.Sleep(150 * time.Millisecond)
-			fourth = runOne("run it once more")
-			time.Sleep(150 * time.Millisecond)
-			fifth = runOne("run it a fifth time")
-			time.Sleep(150 * time.Millisecond)
-			sixth = runOne("run it a sixth time")
-			time.Sleep(150 * time.Millisecond)
-			seventh = runOne("run it a seventh time")
-			time.Sleep(150 * time.Millisecond)
-			eighth = runOne("run it an eighth time")
-			time.Sleep(150 * time.Millisecond)
-			ninth = runOne("run it a ninth time")
-			time.Sleep(150 * time.Millisecond)
-			tenth = runOne("run it a tenth time")
-		}
-		time.Sleep(150 * time.Millisecond)
-		eleventh = runOne("run it an eleventh time")
-		time.Sleep(150 * time.Millisecond)
-		twelfth = runOne("run it a twelfth time")
-	}
-	if scenario == "overlap-running14" {
-		if tenth == nil {
-			time.Sleep(150 * time.Millisecond)
-			fourth = runOne("run it once more")
-			time.Sleep(150 * time.Millisecond)
-			fifth = runOne("run it a fifth time")
-			time.Sleep(150 * time.Millisecond)
-			sixth = runOne("run it a sixth time")
-			time.Sleep(150 * time.Millisecond)
-			seventh = runOne("run it a seventh time")
-			time.Sleep(150 * time.Millisecond)
-			eighth = runOne("run it an eighth time")
-			time.Sleep(150 * time.Millisecond)
-			ninth = runOne("run it a ninth time")
-			time.Sleep(150 * time.Millisecond)
-			tenth = runOne("run it a tenth time")
-		}
-		time.Sleep(150 * time.Millisecond)
-		eleventh = runOne("run it an eleventh time")
-		time.Sleep(150 * time.Millisecond)
-		twelfth = runOne("run it a twelfth time")
-		time.Sleep(150 * time.Millisecond)
-		thirteenth = runOne("run it a thirteenth time")
-		time.Sleep(150 * time.Millisecond)
-		fourteenth = runOne("run it a fourteenth time")
-	}
-	if scenario == "overlap-running16" {
-		if tenth == nil {
-			time.Sleep(150 * time.Millisecond)
-			fourth = runOne("run it once more")
-			time.Sleep(150 * time.Millisecond)
-			fifth = runOne("run it a fifth time")
-			time.Sleep(150 * time.Millisecond)
-			sixth = runOne("run it a sixth time")
-			time.Sleep(150 * time.Millisecond)
-			seventh = runOne("run it a seventh time")
-			time.Sleep(150 * time.Millisecond)
-			eighth = runOne("run it an eighth time")
-			time.Sleep(150 * time.Millisecond)
-			ninth = runOne("run it a ninth time")
-			time.Sleep(150 * time.Millisecond)
-			tenth = runOne("run it a tenth time")
-		}
-		time.Sleep(150 * time.Millisecond)
-		eleventh = runOne("run it an eleventh time")
-		time.Sleep(150 * time.Millisecond)
-		twelfth = runOne("run it a twelfth time")
-		time.Sleep(150 * time.Millisecond)
-		thirteenth = runOne("run it a thirteenth time")
-		time.Sleep(150 * time.Millisecond)
-		fourteenth = runOne("run it a fourteenth time")
-		time.Sleep(150 * time.Millisecond)
-		fifteenth = runOne("run it a fifteenth time")
-		time.Sleep(150 * time.Millisecond)
-		sixteenth = runOne("run it a sixteenth time")
-	}
-	if scenario == "overlap-running20" {
-		if tenth == nil {
-			time.Sleep(150 * time.Millisecond)
-			fourth = runOne("run it once more")
-			time.Sleep(150 * time.Millisecond)
-			fifth = runOne("run it a fifth time")
-			time.Sleep(150 * time.Millisecond)
-			sixth = runOne("run it a sixth time")
-			time.Sleep(150 * time.Millisecond)
-			seventh = runOne("run it a seventh time")
-			time.Sleep(150 * time.Millisecond)
-			eighth = runOne("run it an eighth time")
-			time.Sleep(150 * time.Millisecond)
-			ninth = runOne("run it a ninth time")
-			time.Sleep(150 * time.Millisecond)
-			tenth = runOne("run it a tenth time")
-		}
-		time.Sleep(150 * time.Millisecond)
-		eleventh = runOne("run it an eleventh time")
-		time.Sleep(150 * time.Millisecond)
-		twelfth = runOne("run it a twelfth time")
-		time.Sleep(150 * time.Millisecond)
-		thirteenth = runOne("run it a thirteenth time")
-		time.Sleep(150 * time.Millisecond)
-		fourteenth = runOne("run it a fourteenth time")
-		time.Sleep(150 * time.Millisecond)
-		fifteenth = runOne("run it a fifteenth time")
-		time.Sleep(150 * time.Millisecond)
-		sixteenth = runOne("run it a sixteenth time")
-		time.Sleep(150 * time.Millisecond)
-		seventeenth = runOne("run it a seventeenth time")
-		time.Sleep(150 * time.Millisecond)
-		eighteenth = runOne("run it an eighteenth time")
-		time.Sleep(150 * time.Millisecond)
-		nineteenth = runOne("run it a nineteenth time")
-		time.Sleep(150 * time.Millisecond)
-		twentieth = runOne("run it a twentieth time")
-	}
-	if scenario == "overlap-running24" {
-		if twentieth == nil {
-			time.Sleep(150 * time.Millisecond)
-			fourth = runOne("run it once more")
-			time.Sleep(150 * time.Millisecond)
-			fifth = runOne("run it a fifth time")
-			time.Sleep(150 * time.Millisecond)
-			sixth = runOne("run it a sixth time")
-			time.Sleep(150 * time.Millisecond)
-			seventh = runOne("run it a seventh time")
-			time.Sleep(150 * time.Millisecond)
-			eighth = runOne("run it an eighth time")
-			time.Sleep(150 * time.Millisecond)
-			ninth = runOne("run it a ninth time")
-			time.Sleep(150 * time.Millisecond)
-			tenth = runOne("run it a tenth time")
-			time.Sleep(150 * time.Millisecond)
-			eleventh = runOne("run it an eleventh time")
-			time.Sleep(150 * time.Millisecond)
-			twelfth = runOne("run it a twelfth time")
-			time.Sleep(150 * time.Millisecond)
-			thirteenth = runOne("run it a thirteenth time")
-			time.Sleep(150 * time.Millisecond)
-			fourteenth = runOne("run it a fourteenth time")
-			time.Sleep(150 * time.Millisecond)
-			fifteenth = runOne("run it a fifteenth time")
-			time.Sleep(150 * time.Millisecond)
-			sixteenth = runOne("run it a sixteenth time")
-			time.Sleep(150 * time.Millisecond)
-			seventeenth = runOne("run it a seventeenth time")
-			time.Sleep(150 * time.Millisecond)
-			eighteenth = runOne("run it an eighteenth time")
-			time.Sleep(150 * time.Millisecond)
-			nineteenth = runOne("run it a nineteenth time")
-			time.Sleep(150 * time.Millisecond)
-			twentieth = runOne("run it a twentieth time")
-		}
-		time.Sleep(150 * time.Millisecond)
-		twentyFirst = runOne("run it a twenty-first time")
-		time.Sleep(150 * time.Millisecond)
-		twentySecond = runOne("run it a twenty-second time")
-		time.Sleep(150 * time.Millisecond)
-		twentyThird = runOne("run it a twenty-third time")
-		time.Sleep(150 * time.Millisecond)
-		twentyFourth = runOne("run it a twenty-fourth time")
+		runs[run] = runOne(overlapRunPrompt(run))
 	}
 
 	waitOne := func(name string, ch <-chan result, want string) {
@@ -919,129 +706,17 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
 		log.Fatalf("burnin %s: expected text containing %q, got %q", name, want, res.texts)
 	}
 
-	waitOne("first", first, "FIRST PROGRAM STORED.")
-	waitOne("second", second, "SECOND RUN COMPLETE.")
-	if queueThree {
-		waitOne("third", third, "THIRD RUN COMPLETE.")
-	}
-	if scenario == "overlap-running4" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-	}
-	if scenario == "overlap-running5" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
-	}
-	if scenario == "overlap-running6" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
-		waitOne("sixth", sixth, "SIXTH RUN COMPLETE.")
-	}
-	if scenario == "overlap-running7" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
-		waitOne("sixth", sixth, "SIXTH RUN COMPLETE.")
-		waitOne("seventh", seventh, "SEVENTH RUN COMPLETE.")
-	}
-	if scenario == "overlap-running8" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
-		waitOne("sixth", sixth, "SIXTH RUN COMPLETE.")
-		waitOne("seventh", seventh, "SEVENTH RUN COMPLETE.")
-		waitOne("eighth", eighth, "EIGHTH RUN COMPLETE.")
-	}
-	if scenario == "overlap-running10" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
-		waitOne("sixth", sixth, "SIXTH RUN COMPLETE.")
-		waitOne("seventh", seventh, "SEVENTH RUN COMPLETE.")
-		waitOne("eighth", eighth, "EIGHTH RUN COMPLETE.")
-		waitOne("ninth", ninth, "NINTH RUN COMPLETE.")
-		waitOne("tenth", tenth, "TENTH RUN COMPLETE.")
-	}
-	if scenario == "overlap-running12" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
-		waitOne("sixth", sixth, "SIXTH RUN COMPLETE.")
-		waitOne("seventh", seventh, "SEVENTH RUN COMPLETE.")
-		waitOne("eighth", eighth, "EIGHTH RUN COMPLETE.")
-		waitOne("ninth", ninth, "NINTH RUN COMPLETE.")
-		waitOne("tenth", tenth, "TENTH RUN COMPLETE.")
-		waitOne("eleventh", eleventh, "ELEVENTH RUN COMPLETE.")
-		waitOne("twelfth", twelfth, "TWELFTH RUN COMPLETE.")
-	}
-	if scenario == "overlap-running14" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
-		waitOne("sixth", sixth, "SIXTH RUN COMPLETE.")
-		waitOne("seventh", seventh, "SEVENTH RUN COMPLETE.")
-		waitOne("eighth", eighth, "EIGHTH RUN COMPLETE.")
-		waitOne("ninth", ninth, "NINTH RUN COMPLETE.")
-		waitOne("tenth", tenth, "TENTH RUN COMPLETE.")
-		waitOne("eleventh", eleventh, "ELEVENTH RUN COMPLETE.")
-		waitOne("twelfth", twelfth, "TWELFTH RUN COMPLETE.")
-		waitOne("thirteenth", thirteenth, "THIRTEENTH RUN COMPLETE.")
-		waitOne("fourteenth", fourteenth, "FOURTEENTH RUN COMPLETE.")
-	}
-	if scenario == "overlap-running16" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
-		waitOne("sixth", sixth, "SIXTH RUN COMPLETE.")
-		waitOne("seventh", seventh, "SEVENTH RUN COMPLETE.")
-		waitOne("eighth", eighth, "EIGHTH RUN COMPLETE.")
-		waitOne("ninth", ninth, "NINTH RUN COMPLETE.")
-		waitOne("tenth", tenth, "TENTH RUN COMPLETE.")
-		waitOne("eleventh", eleventh, "ELEVENTH RUN COMPLETE.")
-		waitOne("twelfth", twelfth, "TWELFTH RUN COMPLETE.")
-		waitOne("thirteenth", thirteenth, "THIRTEENTH RUN COMPLETE.")
-		waitOne("fourteenth", fourteenth, "FOURTEENTH RUN COMPLETE.")
-		waitOne("fifteenth", fifteenth, "FIFTEENTH RUN COMPLETE.")
-		waitOne("sixteenth", sixteenth, "SIXTEENTH RUN COMPLETE.")
-	}
-	if scenario == "overlap-running20" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
-		waitOne("sixth", sixth, "SIXTH RUN COMPLETE.")
-		waitOne("seventh", seventh, "SEVENTH RUN COMPLETE.")
-		waitOne("eighth", eighth, "EIGHTH RUN COMPLETE.")
-		waitOne("ninth", ninth, "NINTH RUN COMPLETE.")
-		waitOne("tenth", tenth, "TENTH RUN COMPLETE.")
-		waitOne("eleventh", eleventh, "ELEVENTH RUN COMPLETE.")
-		waitOne("twelfth", twelfth, "TWELFTH RUN COMPLETE.")
-		waitOne("thirteenth", thirteenth, "THIRTEENTH RUN COMPLETE.")
-		waitOne("fourteenth", fourteenth, "FOURTEENTH RUN COMPLETE.")
-		waitOne("fifteenth", fifteenth, "FIFTEENTH RUN COMPLETE.")
-		waitOne("sixteenth", sixteenth, "SIXTEENTH RUN COMPLETE.")
-		waitOne("seventeenth", seventeenth, "SEVENTEENTH RUN COMPLETE.")
-		waitOne("eighteenth", eighteenth, "EIGHTEENTH RUN COMPLETE.")
-		waitOne("nineteenth", nineteenth, "NINETEENTH RUN COMPLETE.")
-		waitOne("twentieth", twentieth, "TWENTIETH RUN COMPLETE.")
-	}
-	if scenario == "overlap-running24" {
-		waitOne("fourth", fourth, "FOURTH RUN COMPLETE.")
-		waitOne("fifth", fifth, "FIFTH RUN COMPLETE.")
-		waitOne("sixth", sixth, "SIXTH RUN COMPLETE.")
-		waitOne("seventh", seventh, "SEVENTH RUN COMPLETE.")
-		waitOne("eighth", eighth, "EIGHTH RUN COMPLETE.")
-		waitOne("ninth", ninth, "NINTH RUN COMPLETE.")
-		waitOne("tenth", tenth, "TENTH RUN COMPLETE.")
-		waitOne("eleventh", eleventh, "ELEVENTH RUN COMPLETE.")
-		waitOne("twelfth", twelfth, "TWELFTH RUN COMPLETE.")
-		waitOne("thirteenth", thirteenth, "THIRTEENTH RUN COMPLETE.")
-		waitOne("fourteenth", fourteenth, "FOURTEENTH RUN COMPLETE.")
-		waitOne("fifteenth", fifteenth, "FIFTEENTH RUN COMPLETE.")
-		waitOne("sixteenth", sixteenth, "SIXTEENTH RUN COMPLETE.")
-		waitOne("seventeenth", seventeenth, "SEVENTEENTH RUN COMPLETE.")
-		waitOne("eighteenth", eighteenth, "EIGHTEENTH RUN COMPLETE.")
-		waitOne("nineteenth", nineteenth, "NINETEENTH RUN COMPLETE.")
-		waitOne("twentieth", twentieth, "TWENTIETH RUN COMPLETE.")
-		waitOne("twenty-first", twentyFirst, "TWENTY-FIRST RUN COMPLETE.")
-		waitOne("twenty-second", twentySecond, "TWENTY-SECOND RUN COMPLETE.")
-		waitOne("twenty-third", twentyThird, "TWENTY-THIRD RUN COMPLETE.")
-		waitOne("twenty-fourth", twentyFourth, "TWENTY-FOURTH RUN COMPLETE.")
+	waitOne("first", programming, "FIRST PROGRAM STORED.")
+	for run := 2; run <= totalRuns; run++ {
+		waitOne(overlapOrdinal(run), runs[run], overlapRunCompleteText(run))
 	}
 }
 
 func burninInputs(scenario string) []string {
+	if _, ok := overlapScenarioRuns(scenario); ok {
+		return nil
+	}
+
 	switch scenario {
 	case "direct-exec":
 		return []string{
@@ -1049,36 +724,6 @@ func burninInputs(scenario string) []string {
 			"Can you program a sum of 1 to 100 ?",
 			"run it",
 		}
-	case "overlap-msg":
-		return nil
-	case "overlap-queue3":
-		return nil
-	case "overlap-running2":
-		return nil
-	case "overlap-running3":
-		return nil
-	case "overlap-running4":
-		return nil
-	case "overlap-running5":
-		return nil
-	case "overlap-running6":
-		return nil
-	case "overlap-running7":
-		return nil
-	case "overlap-running8":
-		return nil
-	case "overlap-running10":
-		return nil
-	case "overlap-running12":
-		return nil
-	case "overlap-running14":
-		return nil
-	case "overlap-running16":
-		return nil
-	case "overlap-running20":
-		return nil
-	case "overlap-running24":
-		return nil
 	default:
 		return []string{"Hi"}
 	}
