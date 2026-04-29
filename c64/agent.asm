@@ -923,8 +923,7 @@ csr_done:
 service_outbound:
         lda tx_service_busy
         bne so_guard_done
-        lda #1
-        sta tx_service_busy
+        inc tx_service_busy
         jsr service_outbound_inner
         lda #0
         sta tx_service_busy
@@ -1042,7 +1041,15 @@ so_send_check:
         bne so_send_check
 
 so_send_main:
-        lda send_pos
+        // Once a STATUS frame has started on the guarded BSOUT path,
+        // don't resume it via CHROUT mid-frame.
+        ldx send_pos
+        beq so_send_main_ready
+        lda send_buf+1
+        cmp #FRAME_STATUS
+        beq so_done
+so_send_main_ready:
+        txa
         cmp send_total
         beq so_done
 
