@@ -835,20 +835,12 @@ bsout_call_old:
 // while BASIC is actively printing, without driving the full outbound state
 // machine through CHKOUT/CHROUT from inside BSOUT.
 drain_running_control_outbound:
-        lda state_pending
-        bne drco_service
-
         lda ack_pos
         cmp ack_total
         bne drco_service
 
-        lda send_pos
-        cmp send_total
+        lda ack_pending
         beq drco_done
-        lda send_buf+1
-        cmp #FRAME_STATUS
-        bne drco_done
-
 drco_service:
         jsr GUARD_BSOUT_DRAIN
 
@@ -886,12 +878,12 @@ sr_tick_ok:
         lda running_reported
         bne sr_done
 
-        // Report RUNNING quickly once BASIC is clearly no longer an
-        // immediate command. The bridge should not synthesize this state.
+        // Report RUNNING only after BASIC has stayed away from READY for a
+        // few RUN/STOP polls. Tiny programs should finish via READY/result.
         lda running_ticks_hi
         bne sr_report
         lda running_ticks_lo
-        cmp #1
+        cmp #10
         bcc sr_done
 sr_report:
         jsr queue_state_running
@@ -1045,20 +1037,21 @@ so_chk_text:
 so_send_check:
         // ACKs use their own buffer and can drain even while send_buf is
         // waiting on a reliable outbound frame.
+        ldx send_pos
+        beq so_drain_ack
+        cpx send_total
+        beq so_drain_ack
+        lda send_buf+1
+        cmp #FRAME_STATUS
+        beq so_send_main
+so_drain_ack:
         jsr drain_ack_outbound
         lda ack_pos
         cmp ack_total
         bne so_send_check
 
 so_send_main:
-        // Once a STATUS frame has started on the guarded BSOUT path,
-        // don't resume it via CHROUT mid-frame.
         ldx send_pos
-        beq so_send_main_ready
-        lda send_buf+1
-        cmp #FRAME_STATUS
-        beq so_done
-so_send_main_ready:
         txa
         cmp send_total
         beq so_done
@@ -2065,16 +2058,6 @@ fd_status_now_ready:
         sta running_reported
         jmp fd_status_ready
 fd_status_running:
-        lda tx_ack_wait
-        beq fd_status_queue
-        lda send_buf+1
-        cmp #FRAME_STATUS
-        bne fd_status_queue
-        // A STATUS reply is already in flight. Do not restart it while
-        // the KERNAL TX ring may still be draining the current copy.
-        // Queue one fresh STATUS reply for after the bridge ACK arrives.
-        jmp fd_status_queue
-fd_status_queue:
         jsr queue_state_running
         rts
 

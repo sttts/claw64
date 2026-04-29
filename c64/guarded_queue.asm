@@ -107,40 +107,25 @@ guard_bsout_drain:
 gbd_ack_ready:
         lda ack_pos
         cmp ack_total
-        beq gbd_status_prep
+        beq gbd_done
         ldx ack_pos
+        beq gbd_ack_claim
+        lda tx_service_busy
+        cmp #2
+        bne gbd_done
+gbd_ack_claim:
+        lda #2
+        sta tx_service_busy
         lda ack_buf,x
         jsr guard_ring_write_byte
         bcs gbd_done
         inc ack_pos
-        rts
-
-gbd_status_prep:
-        lda send_pos
-        cmp send_total
-        bne gbd_status_send
-        lda tx_ack_wait
+        lda ack_pos
+        cmp ack_total
         bne gbd_done
-        jsr build_reliable_outbound
-gbd_status_send:
-        lda send_pos
-        cmp send_total
-        beq gbd_done
-        lda send_buf+1
-        cmp #FRAME_STATUS
-        bne gbd_done
-        lda tx_service_busy
-        bne gbd_done
-        lda #2
-        sta tx_service_busy
-        ldx send_pos
-        lda send_buf,x
-        jsr guard_ring_write_byte
-        bcs gbd_status_release
-        inc send_pos
-gbd_status_release:
         lda #0
         sta tx_service_busy
+        rts
 gbd_done:
         rts
 

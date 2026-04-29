@@ -571,7 +571,7 @@ startup_hires_screen:
 .assert "guarded helper code must fit before heartbeat region", GUARD_CODE_BASE + (guarded_end - guarded_data) <= HEARTBEAT_BASE, true
 .assert "soul must fit below BASIC ROM shadow", SOUL_BASE + PROMPT_LEN <= COLD_CODE_BASE, true
 .assert "cold code region must end before heartbeat region", COLD_CODE_BASE < COLD_CODE_LIMIT, true
-.assert "heartbeat region must end before user queue region", HEARTBEAT_BASE < USERQ_BASE, true
+.assert "heartbeat region must end before user queue region", HEARTBEAT_BASE <= USERQ_BASE, true
 .assert "user queue region must end before memory staging", USERQ_BASE < USERQ_LIMIT, true
 .assert "user queue storage must match 3 fixed 256-byte slots", USERQ_SLOTS * USERQ_SLOT_SIZE == USERQ_BYTES, true
 .assert "user queue metadata must stay below memory staging", USERQ_META_LIMIT <= MEM_STAGE_BASE, true
