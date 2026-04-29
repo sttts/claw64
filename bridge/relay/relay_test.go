@@ -503,6 +503,33 @@ func TestDispatchAckWaiterIgnoresUnknownAckID(t *testing.T) {
 	}
 }
 
+func TestUnwrapAcceptedFrameMarksReliableFrameAccepted(t *testing.T) {
+	r := &Relay{}
+	f := serial.Frame{Type: serial.FrameResult, Payload: serial.PrependID(7, []byte("abc"))}
+
+	consumed, accepted := r.unwrapAcceptedFrame(&f, false, false)
+	if consumed {
+		t.Fatal("unwrapAcceptedFrame consumed first reliable frame")
+	}
+	if !accepted {
+		t.Fatal("unwrapAcceptedFrame did not mark frame accepted")
+	}
+	if got := string(f.Payload); got != "abc" {
+		t.Fatalf("frame payload after unwrap = %q, want %q", got, "abc")
+	}
+
+	consumed, accepted = r.unwrapAcceptedFrame(&f, accepted, false)
+	if consumed {
+		t.Fatal("already accepted frame should not be consumed on replay")
+	}
+	if !accepted {
+		t.Fatal("accepted replay frame lost accepted state")
+	}
+	if got := string(f.Payload); got != "abc" {
+		t.Fatalf("frame payload after replay = %q, want %q", got, "abc")
+	}
+}
+
 func TestWaitForAckWaiterAcceptsMatchingAck(t *testing.T) {
 	r := &Relay{}
 	waiter := make(chan serial.Frame, 1)

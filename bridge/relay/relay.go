@@ -563,10 +563,10 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 
 		// Strip transport ID from reliable C64→bridge frames, queue ACK,
 		// and suppress duplicate semantic processing.
-		if !accepted {
-			if r.unwrapC64Frame(&f) {
-				continue
-			}
+		if consumed, unwrapped := r.unwrapAcceptedFrame(&f, accepted, true); consumed {
+			continue
+		} else {
+			accepted = unwrapped
 		}
 
 		// Post-unwrap semantic log — clean payload after id strip.
@@ -780,10 +780,10 @@ func (r *Relay) drainTrailingAfterUserText() {
 		}
 
 		// Unwrap reliable C64→bridge frames (strip ID, queue ACK, dedup).
-		if !accepted {
-			if r.unwrapC64Frame(&f) {
-				continue
-			}
+		if consumed, unwrapped := r.unwrapAcceptedFrame(&f, accepted, true); consumed {
+			continue
+		} else {
+			accepted = unwrapped
 		}
 
 		switch f.Type {
@@ -796,7 +796,7 @@ func (r *Relay) drainTrailingAfterUserText() {
 			fmt.Fprintln(r.streamOut())
 			r.handleSystemFrame(f)
 		default:
-			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f})
+			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: accepted})
 			return
 		}
 	}
@@ -811,10 +811,10 @@ func (r *Relay) drainTrailingLLMMessages(userID string) {
 			return
 		}
 
-		if !accepted {
-			if r.unwrapC64Frame(&f) {
-				continue
-			}
+		if consumed, unwrapped := r.unwrapAcceptedFrame(&f, accepted, true); consumed {
+			continue
+		} else {
+			accepted = unwrapped
 		}
 
 		switch f.Type {
@@ -1253,6 +1253,16 @@ func (r *Relay) settlePendingAcks() {
 // queues ACK, and returns (frame with stripped payload, isDuplicate).
 func (r *Relay) unwrapC64Frame(f *serial.Frame) bool {
 	return r.acceptC64Frame(f, true)
+}
+
+func (r *Relay) unwrapAcceptedFrame(f *serial.Frame, accepted bool, ackNow bool) (bool, bool) {
+	if accepted {
+		return false, true
+	}
+	if r.acceptC64Frame(f, ackNow) {
+		return true, false
+	}
+	return false, true
 }
 
 func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) (serial.Frame, error) {
