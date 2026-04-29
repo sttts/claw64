@@ -922,11 +922,7 @@ csr_done:
 // context at a time.
 service_outbound:
         lda tx_service_busy
-        beq so_guard_enter
-        jsr GUARD_CLEAR_STALE_STATUS_WAIT
-        lda tx_service_busy
         bne so_guard_done
-so_guard_enter:
         inc tx_service_busy
         jsr service_outbound_inner
         lda #0
@@ -968,9 +964,16 @@ so_build_next:
 
 so_chk_ack_wait:
         // If waiting for ACK of a reliable outbound frame, check timeout.
-        // Timer is incremented by the IRQ handler at 60Hz.
+        // Age the retransmit timer from the KERNAL jiffy clock so prompt-idle
+        // overlap still advances even when the IRQ-side path is not servicing it.
         lda tx_ack_wait
         beq so_ack_clear
+        lda $A2
+        cmp tx_ack_tick
+        beq so_ack_tick_same
+        sta tx_ack_tick
+        inc tx_ack_timer
+so_ack_tick_same:
         lda tx_ack_timer
         cmp #60                 // 1 second at 60Hz before retransmit
         bcs so_ack_retry
@@ -1244,14 +1247,7 @@ irq_mark_running:
         sta busy
 
 irq_tx_check:
-        // ACK bytes must be able to leave immediately once committed,
-        // even when there is no reliable outbound frame in flight.
         jsr service_outbound
-
-        // Advance retransmit timer at 60Hz (not main loop speed).
-        lda tx_ack_wait
-        beq irq_done_io
-        inc tx_ack_timer
 
 irq_done_io:
         rts
@@ -1403,6 +1399,8 @@ iti_shift:
         lda #0
         sta tx_ack_timer
         sta tx_retries
+        lda $A2
+        sta tx_ack_tick
 
         // advance tx_next_id in the 7-bit transport id range 1..127
         inc tx_next_id
@@ -2281,7 +2279,7 @@ llm_len:      .byte 0   // saved MSG body length for the LLM frame
 prompt_pending: .byte 0 // 1 = system prompt chunks still need sending
 result_pending: .byte 0 // 1 = RESULT chunks still need sending
 text_pending: .byte 0   // 1 = forward TEXT to user via drip-send
-text_len:     .byte 0   // saved TEXT body length for the USER frame
+tx_ack_tick:  .byte 0   // last seen KERNAL jiffy low byte while waiting ACK
 exec_len:      .byte 0  // saved EXEC payload length in exec_buf
 exec_ack_pending: .byte 0 // 1 = delay EXEC ACK until first semantic boundary
 ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
