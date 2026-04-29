@@ -131,7 +131,7 @@ gbd_status_send:
         bne gbd_done
         lda tx_service_busy
         bne gbd_done
-        lda #1
+        lda #2
         sta tx_service_busy
         ldx send_pos
         lda send_buf,x
@@ -170,14 +170,41 @@ grwb_full:
 
 guard_clear_stale_status_wait:
         lda tx_ack_wait
+        beq gcsw_busy
+        lda send_pos
+        cmp send_total
+        bne gcsw_busy
+        lda RODBE
+        cmp RODBS
+        bne gcsw_busy
+        lda #0
+        sta tx_ack_wait
+gcsw_busy:
+        lda tx_service_busy
         beq gcsw_done
         lda send_pos
         cmp send_total
         bne gcsw_done
-        lda RODBE
-        cmp RODBS
+        lda ack_pos
+        cmp ack_total
+        bne gcsw_done
+        lda tx_ack_wait
         bne gcsw_done
         lda #0
-        sta tx_ack_wait
+        sta tx_service_busy
 gcsw_done:
+        rts
+
+guard_set_brf_src_exec:
+        lda #<exec_buf
+        sta brf_src+1
+        lda #>exec_buf
+        sta brf_src+2
+        rts
+
+guard_set_brf_src_rxbuf:
+        lda #<(AGENT_RXBUF+1)
+        sta brf_src+1
+        lda #>(AGENT_RXBUF+1)
+        sta brf_src+2
         rts

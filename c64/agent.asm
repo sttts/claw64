@@ -922,7 +922,11 @@ csr_done:
 // context at a time.
 service_outbound:
         lda tx_service_busy
+        beq so_guard_enter
+        jsr GUARD_CLEAR_STALE_STATUS_WAIT
+        lda tx_service_busy
         bne so_guard_done
+so_guard_enter:
         inc tx_service_busy
         jsr service_outbound_inner
         lda #0
@@ -969,9 +973,11 @@ so_chk_ack_wait:
         beq so_ack_clear
         lda tx_ack_timer
         cmp #60                 // 1 second at 60Hz before retransmit
-        bcc so_send_check       // still waiting — don't build next frame
+        bcs so_ack_retry
+        jmp so_send_check       // still waiting — don't build next frame
 
         // Timeout — check retry budget (3 retries max).
+so_ack_retry:
         lda tx_retries
         cmp #3
         bcs so_ack_give_up
@@ -1023,14 +1029,15 @@ so_chk_llm:
 so_chk_text:
         lda text_pending
         beq so_send_check
-        lda #0
-        sta text_pending
-        lda text_len
+        jsr GUARD_SET_BRF_SRC_EXEC
+        lda exec_len
         sta frame_len           // restore saved TEXT body length
         lda #FRAME_USER
         jsr build_rxbuf_frame
+        jsr GUARD_SET_BRF_SRC_RXBUF
+        lda #0
+        sta text_pending
         jsr inject_tx_id
-        jmp so_send_check
 
 so_send_check:
         // ACKs use their own buffer and can drain even while send_buf is
@@ -1141,12 +1148,6 @@ bro_done:
         rts
 
 irq_service_io:
-        // Don't parse while RXBUF holds TEXT body for USER frame build.
-        // Without this, a fast second TEXT chunk from the bridge would
-        // overwrite RXBUF before service_outbound builds the USER frame.
-        lda text_pending
-        bne irq_rx_done
-
         // Keep RS232 selected on the IRQ-side receive path too.
         ldx #RS232_DEV
         jsr CHKIN
@@ -1166,6 +1167,7 @@ irq_rx_loop:
         jsr frame_rx_byte
         dex
         bne irq_rx_loop
+
 irq_rx_done:
         jsr CLRCHN
 
@@ -1998,20 +2000,16 @@ fd_not_msg:
         cmp #AG_WAITING
         beq fd_text_busy
         jsr clear_llm_ack_wait  // TEXT only proves receipt of an in-flight LLM frame
-        lda frame_len
-        sta text_len            // save TEXT body length for USER frame
         lda #0
         sta busy                // conversation done — stop border animation
-        lda #1
-        sta deferred_ack        // ACK only after the USER frame is safely handed off
-        lda #1
-        sta text_pending        // forward text to user via drip-send
-        rts
+        beq fd_text_accept
 
 fd_text_running:
         jsr clear_llm_ack_wait
+fd_text_accept:
         lda frame_len
-        sta text_len
+        sta exec_len
+        jsr copy_exec_from_rxbuf
         lda #1
         sta deferred_ack
         lda #1
@@ -2211,7 +2209,7 @@ build_rxbuf_frame:
         ldx #0
 brf_cp: cpx frame_len
         beq brf_done
-        lda AGENT_RXBUF+1,x
+brf_src: lda AGENT_RXBUF+1,x
         sta send_buf+3,x
         eor frame_chk
         sta frame_chk
