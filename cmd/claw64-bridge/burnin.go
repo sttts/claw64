@@ -298,12 +298,8 @@ func (s *scriptedBurnin) completeOverlapQueue(messages []llm.Message, totalRuns 
 		return llm.Message{Role: "assistant", Content: "READY FOR OVERLAP."}, nil
 	}
 
-	if isOverlapRunResultStep(s.step) && overlapDirectRunResultLooksClean(lastTool) {
-		completedRun := (s.step + 3) / 4
-		if totalRuns > completedRun {
-			s.step += 3
-		}
-		return llm.Message{Role: "assistant", Content: overlapRunCompleteText(completedRun)}, nil
+	if s.step >= 4 {
+		return s.completeOverlapRunStep(lastUser, lastTool, totalRuns)
 	}
 
 	switch s.step {
@@ -331,854 +327,6 @@ func (s *scriptedBurnin) completeOverlapQueue(messages []llm.Message, totalRuns 
 		}
 		s.step++
 		return llm.Message{Role: "assistant", Content: "FIRST PROGRAM STORED."}, nil
-	case 4:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 5:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "SECOND RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.signal("overlap-first-running")
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 6:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining RUN, got %q", s.step, lastTool)
-		}
-	case 7:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 2 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "SECOND RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "SECOND RUN COMPLETE."}, nil
-	case 8:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected second queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 9:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "THIRD RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected second RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 10:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining second RUN, got %q", s.step, lastTool)
-		}
-	case 11:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final second-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 3 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "THIRD RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "THIRD RUN COMPLETE."}, nil
-	case 12:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected third queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 13:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "FOURTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected third RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 14:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining third RUN, got %q", s.step, lastTool)
-		}
-	case 15:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final third-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 4 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "FOURTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "FOURTH RUN COMPLETE."}, nil
-	case 16:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected fourth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 17:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "FIFTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected fourth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 18:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining fourth RUN, got %q", s.step, lastTool)
-		}
-	case 19:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final fourth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 5 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "FIFTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "FIFTH RUN COMPLETE."}, nil
-	case 20:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected fifth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 21:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "SIXTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected fifth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 22:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining fifth RUN, got %q", s.step, lastTool)
-		}
-	case 23:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final fifth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 6 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "SIXTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "SIXTH RUN COMPLETE."}, nil
-	case 24:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected sixth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 25:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "SEVENTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected sixth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 26:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining sixth RUN, got %q", s.step, lastTool)
-		}
-	case 27:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final sixth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 7 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "SEVENTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "SEVENTH RUN COMPLETE."}, nil
-	case 28:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected seventh queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 29:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "EIGHTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected seventh RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 30:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining seventh RUN, got %q", s.step, lastTool)
-		}
-	case 31:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final seventh-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 8 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "EIGHTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "EIGHTH RUN COMPLETE."}, nil
-	case 32:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected eighth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 33:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "NINTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected eighth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 34:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining eighth RUN, got %q", s.step, lastTool)
-		}
-	case 35:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final eighth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 9 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "NINTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "NINTH RUN COMPLETE."}, nil
-	case 36:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected ninth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 37:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "TENTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected ninth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 38:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining ninth RUN, got %q", s.step, lastTool)
-		}
-	case 39:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final ninth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 10 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "TENTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "TENTH RUN COMPLETE."}, nil
-	case 40:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected tenth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 41:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "ELEVENTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected tenth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 42:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining tenth RUN, got %q", s.step, lastTool)
-		}
-	case 43:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final tenth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 11 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "ELEVENTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "ELEVENTH RUN COMPLETE."}, nil
-	case 44:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected eleventh queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 45:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "TWELFTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected eleventh RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 46:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining eleventh RUN, got %q", s.step, lastTool)
-		}
-	case 47:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final eleventh-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 12 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "TWELFTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "TWELFTH RUN COMPLETE."}, nil
-	case 48:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected twelfth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 49:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "THIRTEENTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected twelfth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 50:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining twelfth RUN, got %q", s.step, lastTool)
-		}
-	case 51:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final twelfth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 13 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "THIRTEENTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "THIRTEENTH RUN COMPLETE."}, nil
-	case 52:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected thirteenth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 53:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "FOURTEENTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected thirteenth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 54:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining thirteenth RUN, got %q", s.step, lastTool)
-		}
-	case 55:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final thirteenth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 14 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "FOURTEENTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "FOURTEENTH RUN COMPLETE."}, nil
-	case 56:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected fourteenth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 57:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "FIFTEENTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected fourteenth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 58:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining fourteenth RUN, got %q", s.step, lastTool)
-		}
-	case 59:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final fourteenth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 15 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "FIFTEENTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "FIFTEENTH RUN COMPLETE."}, nil
-	case 60:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected fifteenth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 61:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "SIXTEENTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected fifteenth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 62:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining fifteenth RUN, got %q", s.step, lastTool)
-		}
-	case 63:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final fifteenth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 16 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "SIXTEENTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "SIXTEENTH RUN COMPLETE."}, nil
-	case 64:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected sixteenth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 65:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "SEVENTEENTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected sixteenth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 66:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining sixteenth RUN, got %q", s.step, lastTool)
-		}
-	case 67:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final sixteenth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 17 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "SEVENTEENTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "SEVENTEENTH RUN COMPLETE."}, nil
-	case 68:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected seventeenth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 69:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "EIGHTEENTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected seventeenth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 70:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining seventeenth RUN, got %q", s.step, lastTool)
-		}
-	case 71:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final seventeenth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 18 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "EIGHTEENTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "EIGHTEENTH RUN COMPLETE."}, nil
-	case 72:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected eighteenth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 73:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "NINETEENTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected eighteenth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 74:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining eighteenth RUN, got %q", s.step, lastTool)
-		}
-	case 75:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final eighteenth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 19 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "NINETEENTH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "NINETEENTH RUN COMPLETE."}, nil
-	case 76:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected nineteenth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 77:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "TWENTIETH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected nineteenth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 78:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining nineteenth RUN, got %q", s.step, lastTool)
-		}
-	case 79:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final nineteenth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 20 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "TWENTIETH RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "TWENTIETH RUN COMPLETE."}, nil
-	case 80:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected twentieth queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 81:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "TWENTY-FIRST RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected twentieth RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 82:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining twentieth RUN, got %q", s.step, lastTool)
-		}
-	case 83:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final twentieth-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 21 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "TWENTY-FIRST RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "TWENTY-FIRST RUN COMPLETE."}, nil
-	case 84:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected twenty-first queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 85:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "TWENTY-SECOND RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected twenty-first RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 86:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining twenty-first RUN, got %q", s.step, lastTool)
-		}
-	case 87:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final twenty-first-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 22 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "TWENTY-SECOND RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "TWENTY-SECOND RUN COMPLETE."}, nil
-	case 88:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected twenty-second queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 89:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "TWENTY-THIRD RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected twenty-second RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 90:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining twenty-second RUN, got %q", s.step, lastTool)
-		}
-	case 91:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final twenty-second-run screenshot/result, got %q", s.step, lastTool)
-		}
-		if totalRuns > 23 {
-			s.step++
-			return llm.Message{Role: "assistant", Content: "TWENTY-THIRD RUN COMPLETE."}, nil
-		}
-		return llm.Message{Role: "assistant", Content: "TWENTY-THIRD RUN COMPLETE."}, nil
-	case 92:
-		if !strings.Contains(lastUser, "run") {
-			return llm.Message{}, fmt.Errorf("step %d: expected twenty-third queued run request, got %q", s.step, lastUser)
-		}
-		s.step++
-		return execToolCall("RUN", s.step), nil
-	case 93:
-		switch {
-		case toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY."):
-			return llm.Message{Role: "assistant", Content: "TWENTY-FOURTH RUN COMPLETE."}, nil
-		case lastTool == "[C64 BASIC status]: RUNNING":
-			s.step++
-			return simpleToolCall("status", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected twenty-third RUN result or RUNNING, got %q", s.step, lastTool)
-		}
-	case 94:
-		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		switch status {
-		case "RUNNING", "STOP REQUESTED":
-			return simpleToolCall("status", "{}", s.step), nil
-		case "READY", "READY.":
-			s.step++
-			return simpleToolCall("screen", "{}", s.step), nil
-		default:
-			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining twenty-third RUN, got %q", s.step, lastTool)
-		}
-	case 95:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
-			return llm.Message{}, fmt.Errorf("step %d: expected final twenty-third-run screenshot/result, got %q", s.step, lastTool)
-		}
-		return llm.Message{Role: "assistant", Content: "TWENTY-FOURTH RUN COMPLETE."}, nil
 	default:
 		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
 	}
@@ -1186,6 +334,62 @@ func (s *scriptedBurnin) completeOverlapQueue(messages []llm.Message, totalRuns 
 
 func execToolCall(command string, n int) llm.Message {
 	return simpleToolCall("exec", fmt.Sprintf("{\"command\":%q}", command), n)
+}
+
+func (s *scriptedBurnin) completeOverlapRunStep(lastUser, lastTool string, totalRuns int) (llm.Message, error) {
+	completedRun := ((s.step - 4) / 4) + 2
+	phase := (s.step - 4) % 4
+	if completedRun > totalRuns {
+		return llm.Message{}, fmt.Errorf("unexpected scripted step %d after %d overlap runs", s.step, totalRuns)
+	}
+
+	switch phase {
+	case 0:
+		if !strings.Contains(lastUser, "run") {
+			return llm.Message{}, fmt.Errorf("step %d: expected %s queued run request, got %q", s.step, overlapOrdinal(completedRun-1), lastUser)
+		}
+		s.step++
+		return execToolCall("RUN", s.step), nil
+	case 1:
+		switch {
+		case overlapDirectRunResultLooksClean(lastTool):
+			return s.completeOverlapRun(completedRun, totalRuns), nil
+		case lastTool == "[C64 BASIC status]: RUNNING":
+			if completedRun == 2 {
+				s.signal("overlap-first-running")
+			}
+			s.step++
+			return simpleToolCall("status", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected %s RUN result or RUNNING, got %q", s.step, overlapOrdinal(completedRun-1), lastTool)
+		}
+	case 2:
+		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
+		switch status {
+		case "RUNNING", "STOP REQUESTED":
+			return simpleToolCall("status", "{}", s.step), nil
+		case "READY", "READY.":
+			s.step++
+			return simpleToolCall("screen", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining %s RUN, got %q", s.step, overlapOrdinal(completedRun-1), lastTool)
+		}
+	case 3:
+		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") &&
+			!toolResultContains(lastTool, "[C64 screen output]: ", "OVERLAP ONE", "OVERLAP TWO", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected final %s-run screenshot/result, got %q", s.step, overlapOrdinal(completedRun-1), lastTool)
+		}
+		return s.completeOverlapRun(completedRun, totalRuns), nil
+	default:
+		return llm.Message{}, fmt.Errorf("unexpected overlap run phase %d", phase)
+	}
+}
+
+func (s *scriptedBurnin) completeOverlapRun(completedRun, totalRuns int) llm.Message {
+	if totalRuns > completedRun {
+		s.step = 4 + (completedRun-1)*4
+	}
+	return llm.Message{Role: "assistant", Content: overlapRunCompleteText(completedRun)}
 }
 
 func simpleToolCall(name, args string, n int) llm.Message {
@@ -1243,8 +447,38 @@ func toolResultContains(result, prefix string, parts ...string) bool {
 	return true
 }
 
-func isOverlapRunResultStep(step int) bool {
-	return step >= 5 && step <= 93 && (step-1)%4 == 0
+func overlapOrdinal(run int) string {
+	names := []string{
+		"",
+		"first",
+		"second",
+		"third",
+		"fourth",
+		"fifth",
+		"sixth",
+		"seventh",
+		"eighth",
+		"ninth",
+		"tenth",
+		"eleventh",
+		"twelfth",
+		"thirteenth",
+		"fourteenth",
+		"fifteenth",
+		"sixteenth",
+		"seventeenth",
+		"eighteenth",
+		"nineteenth",
+		"twentieth",
+		"twenty-first",
+		"twenty-second",
+		"twenty-third",
+		"twenty-fourth",
+	}
+	if run > 0 && run < len(names) {
+		return names[run]
+	}
+	return fmt.Sprintf("%dth", run)
 }
 
 func overlapRunCompleteText(run int) string {
