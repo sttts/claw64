@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -52,6 +53,22 @@ func TestSupportedBurninScenarios(t *testing.T) {
 	}
 	if supportedBurninScenario("missing") {
 		t.Fatalf("supportedBurninScenario(%q) = true", "missing")
+	}
+}
+
+func TestPrintBurninScenarios(t *testing.T) {
+	var buf bytes.Buffer
+	printBurninScenarios(&buf)
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if got, want := len(lines), len(burninScenarios); got != want {
+		t.Fatalf("printed %d scenarios, want %d", got, want)
+	}
+	if lines[0] != "stop-screen" {
+		t.Fatalf("first scenario = %q, want stop-screen", lines[0])
+	}
+	if lines[len(lines)-1] != "overlap-running24" {
+		t.Fatalf("last scenario = %q, want overlap-running24", lines[len(lines)-1])
 	}
 }
 

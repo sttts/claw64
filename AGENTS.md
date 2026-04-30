@@ -103,23 +103,7 @@ allocation and `make kill` to stop processes without starting new ones.
 - Run one scenario with `make burnin-<scenario>`, for example `make burnin-direct-exec`.
 - Default heavy scenario: `go run ./cmd/claw64-bridge burnin direct-exec`
 - `direct-exec` is the main regression gate. It spans three user messages, exercises eleven `EXEC` calls, stores and lists a small BASIC program, runs it, and verifies the final `5050` output after the normal `RUNNING -> READY.` drain path.
-- Additional scenarios:
-  - `go run ./cmd/claw64-bridge burnin stop-screen`
-  - `go run ./cmd/claw64-bridge burnin screen-repeat`
-  - `go run ./cmd/claw64-bridge burnin overlap-queue3`
-  - `go run ./cmd/claw64-bridge burnin overlap-running2`
-  - `go run ./cmd/claw64-bridge burnin overlap-running3`
-  - `go run ./cmd/claw64-bridge burnin overlap-running4`
-  - `go run ./cmd/claw64-bridge burnin overlap-running5`
-  - `go run ./cmd/claw64-bridge burnin overlap-running6`
-  - `go run ./cmd/claw64-bridge burnin overlap-running7`
-  - `go run ./cmd/claw64-bridge burnin overlap-running8`
-  - `go run ./cmd/claw64-bridge burnin overlap-running10`
-  - `go run ./cmd/claw64-bridge burnin overlap-running12`
-  - `go run ./cmd/claw64-bridge burnin overlap-running14`
-  - `go run ./cmd/claw64-bridge burnin overlap-running16`
-  - `go run ./cmd/claw64-bridge burnin overlap-running20`
-  - `go run ./cmd/claw64-bridge burnin overlap-running24`
+- List supported scenarios with `go run ./cmd/claw64-bridge burnin --list`.
 - If the full gate fails, stop and fix that failure before adding more behavior.
 
 ### Usual loop

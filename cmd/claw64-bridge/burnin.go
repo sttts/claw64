@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -98,11 +99,21 @@ func overlapScenarioRuns(scenario string) (int, bool) {
 }
 
 func supportedBurninScenarios() string {
+	return strings.Join(burninScenarioNames(), ", ")
+}
+
+func burninScenarioNames() []string {
 	names := make([]string, 0, len(burninScenarios))
 	for _, supported := range burninScenarios {
 		names = append(names, supported.name)
 	}
-	return strings.Join(names, ", ")
+	return names
+}
+
+func printBurninScenarios(w io.Writer) {
+	for _, name := range burninScenarioNames() {
+		fmt.Fprintln(w, name)
+	}
 }
 
 func (s *scriptedBurnin) completeStopScreen(messages []llm.Message) (llm.Message, error) {

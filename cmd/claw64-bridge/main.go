@@ -94,6 +94,7 @@ type SignalCmd struct {
 }
 
 type BurninCmd struct {
+	List     bool   `name:"list" help:"List supported burn-in scenarios and exit."`
 	Scenario string `arg:"" default:"stop-screen" help:"Deterministic protocol scenario to run."`
 }
 
@@ -142,7 +143,11 @@ func main() {
 		runChatBridge(cli, waCh)
 	case "signal <account> <target>":
 		runChatBridge(cli, chat.NewSignal(cli.Signal.Account, cli.Signal.Config, cli.Signal.Target))
-	case "burnin <scenario>":
+	case "burnin", "burnin <scenario>":
+		if cli.Burnin.List {
+			printBurninScenarios(os.Stdout)
+			return
+		}
 		runBurnin(cli, cli.Burnin.Scenario)
 	case "auth set-key":
 		token := cli.Auth.SetKey.Token
