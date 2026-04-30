@@ -407,8 +407,8 @@ func TestOverlapQueueDepthCountsActiveHolderWaitersAndOverlapSend(t *testing.T) 
 	if got := r.overlapQueueDepth(); got != 3 {
 		t.Fatalf("overlapQueueDepth with holder+waiters = %d, want 3", got)
 	}
-	if r.overlapQueueAtCapacity() {
-		t.Fatal("overlapQueueAtCapacity = true at exactly 3, want false")
+	if !r.overlapQueueAtCapacity() {
+		t.Fatal("overlapQueueAtCapacity = false at exactly 3, want true")
 	}
 
 	r.overlapBusy = true
@@ -471,6 +471,29 @@ func TestOverlapQueueFreshTurnReadyRequiresIdleBridgeState(t *testing.T) {
 	r.textInFlight = []byte("chunk")
 	if r.overlapQueueFreshTurnReady() {
 		t.Fatal("overlapQueueFreshTurnReady = true with text in flight")
+	}
+}
+
+func TestOverlapQueueFreshTurnReadyWithGateHeldAllowsQueuedWaiters(t *testing.T) {
+	r := &Relay{SystemPrompt: "ready", msgGateBusy: true}
+	if !r.overlapQueueFreshTurnReadyWithGateHeld() {
+		t.Fatal("overlapQueueFreshTurnReadyWithGateHeld = false for current gate holder")
+	}
+
+	r.msgGateWaiters = []chan struct{}{make(chan struct{})}
+	if !r.overlapQueueFreshTurnReadyWithGateHeld() {
+		t.Fatal("overlapQueueFreshTurnReadyWithGateHeld = false with queued waiters behind holder")
+	}
+
+	r.basicRunning = true
+	if r.overlapQueueFreshTurnReadyWithGateHeld() {
+		t.Fatal("overlapQueueFreshTurnReadyWithGateHeld = true while overlap is still allowed")
+	}
+
+	r.basicRunning = false
+	r.overlapBusy = true
+	if r.overlapQueueFreshTurnReadyWithGateHeld() {
+		t.Fatal("overlapQueueFreshTurnReadyWithGateHeld = true while overlap send active")
 	}
 }
 

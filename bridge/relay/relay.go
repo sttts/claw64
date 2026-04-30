@@ -246,7 +246,7 @@ func (r *Relay) overlapQueueDepth() int {
 }
 
 func (r *Relay) overlapQueueAtCapacity() bool {
-	return r.overlapQueueDepth() > c64UserQueueSlots
+	return r.overlapQueueDepth() >= c64UserQueueSlots
 }
 
 func (r *Relay) overlapQueueFreshTurnReady() bool {
@@ -269,8 +269,26 @@ func (r *Relay) overlapQueueFreshTurnReady() bool {
 	return !msgGateBusy && !overlapBusy && waiters == 0
 }
 
-func (r *Relay) waitForFreshTurn(ctx context.Context) error {
-	if r.overlapQueueFreshTurnReady() {
+func (r *Relay) overlapQueueFreshTurnReadyWithGateHeld() bool {
+	if r.canSendOverlappingMessage() {
+		return false
+	}
+	if r.waitingTool || len(r.pendingFrames) > 0 || len(r.textOutQueue) > 0 || len(r.textInFlight) > 0 {
+		return false
+	}
+
+	r.overlapMu.Lock()
+	overlapBusy := r.overlapBusy
+	r.overlapMu.Unlock()
+
+	return !overlapBusy
+}
+
+func (r *Relay) acquireFreshMessageGate(ctx context.Context) error {
+	if err := r.acquireMessageGate(ctx); err != nil {
+		return err
+	}
+	if r.overlapQueueFreshTurnReadyWithGateHeld() {
 		return nil
 	}
 
@@ -280,9 +298,10 @@ func (r *Relay) waitForFreshTurn(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			r.releaseMessageGate()
 			return ctx.Err()
 		case <-ticker.C:
-			if r.overlapQueueFreshTurnReady() {
+			if r.overlapQueueFreshTurnReadyWithGateHeld() {
 				return nil
 			}
 		}
@@ -470,12 +489,9 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 	// send user message to C64 (header now, chars stream via callback)
 	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
-	if r.canSendOverlappingMessage() && r.overlapQueueAtCapacity() {
-		if err := r.waitForFreshTurn(ctx); err != nil {
+	if r.overlapQueueAtCapacity() {
+		if err := r.acquireFreshMessageGate(ctx); err != nil {
 			return fmt.Errorf("wait for fresh relay turn: %w", err)
-		}
-		if err := r.acquireMessageGate(ctx); err != nil {
-			return fmt.Errorf("wait for relay idle: %w", err)
 		}
 		defer r.releaseMessageGate()
 		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
