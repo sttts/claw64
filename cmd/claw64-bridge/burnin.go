@@ -53,37 +53,56 @@ func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ [
 	}
 }
 
-func overlapScenarioRuns(scenario string) (int, bool) {
-	switch scenario {
-	case "overlap-msg", "overlap-running2":
-		return 2, true
-	case "overlap-queue3", "overlap-running3":
-		return 3, true
-	case "overlap-running4":
-		return 4, true
-	case "overlap-running5":
-		return 5, true
-	case "overlap-running6":
-		return 6, true
-	case "overlap-running7":
-		return 7, true
-	case "overlap-running8":
-		return 8, true
-	case "overlap-running10":
-		return 10, true
-	case "overlap-running12":
-		return 12, true
-	case "overlap-running14":
-		return 14, true
-	case "overlap-running16":
-		return 16, true
-	case "overlap-running20":
-		return 20, true
-	case "overlap-running24":
-		return 24, true
-	default:
-		return 0, false
+type burninScenario struct {
+	name        string
+	overlapRuns int
+}
+
+var burninScenarios = []burninScenario{
+	{name: "stop-screen"},
+	{name: "screen-repeat"},
+	{name: "direct-exec"},
+	{name: "overlap-msg", overlapRuns: 2},
+	{name: "overlap-queue3", overlapRuns: 3},
+	{name: "overlap-running2", overlapRuns: 2},
+	{name: "overlap-running3", overlapRuns: 3},
+	{name: "overlap-running4", overlapRuns: 4},
+	{name: "overlap-running5", overlapRuns: 5},
+	{name: "overlap-running6", overlapRuns: 6},
+	{name: "overlap-running7", overlapRuns: 7},
+	{name: "overlap-running8", overlapRuns: 8},
+	{name: "overlap-running10", overlapRuns: 10},
+	{name: "overlap-running12", overlapRuns: 12},
+	{name: "overlap-running14", overlapRuns: 14},
+	{name: "overlap-running16", overlapRuns: 16},
+	{name: "overlap-running20", overlapRuns: 20},
+	{name: "overlap-running24", overlapRuns: 24},
+}
+
+func supportedBurninScenario(scenario string) bool {
+	for _, supported := range burninScenarios {
+		if scenario == supported.name {
+			return true
+		}
 	}
+	return false
+}
+
+func overlapScenarioRuns(scenario string) (int, bool) {
+	for _, supported := range burninScenarios {
+		if scenario == supported.name && supported.overlapRuns > 0 {
+			return supported.overlapRuns, true
+		}
+	}
+	return 0, false
+}
+
+func supportedBurninScenarios() string {
+	names := make([]string, 0, len(burninScenarios))
+	for _, supported := range burninScenarios {
+		names = append(names, supported.name)
+	}
+	return strings.Join(names, ", ")
 }
 
 func (s *scriptedBurnin) completeStopScreen(messages []llm.Message) (llm.Message, error) {
@@ -578,6 +597,10 @@ func overlapResultLooksClean(result string) bool {
 }
 
 func runBurnin(cfg CLI, scenario string) {
+	if !supportedBurninScenario(scenario) {
+		log.Fatalf("burnin: unknown scenario %q; supported scenarios: %s", scenario, supportedBurninScenarios())
+	}
+
 	ctx := context.Background()
 
 	if cfg.SerialAddr == "" || cfg.MonitorAddr == "" {

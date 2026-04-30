@@ -2,10 +2,76 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/sttts/claw64/bridge/llm"
 )
+
+func TestSupportedBurninScenarios(t *testing.T) {
+	tests := map[string]int{
+		"overlap-msg":       2,
+		"overlap-queue3":    3,
+		"overlap-running2":  2,
+		"overlap-running3":  3,
+		"overlap-running4":  4,
+		"overlap-running5":  5,
+		"overlap-running6":  6,
+		"overlap-running7":  7,
+		"overlap-running8":  8,
+		"overlap-running10": 10,
+		"overlap-running12": 12,
+		"overlap-running14": 14,
+		"overlap-running16": 16,
+		"overlap-running20": 20,
+		"overlap-running24": 24,
+	}
+	if len(burninScenarios) != len(tests)+3 {
+		t.Fatalf("len(burninScenarios) = %d, want %d", len(burninScenarios), len(tests)+3)
+	}
+	for scenario, wantRuns := range tests {
+		gotRuns, ok := overlapScenarioRuns(scenario)
+		if !ok {
+			t.Fatalf("overlapScenarioRuns(%q) ok = false", scenario)
+		}
+		if gotRuns != wantRuns {
+			t.Fatalf("overlapScenarioRuns(%q) = %d, want %d", scenario, gotRuns, wantRuns)
+		}
+		if !supportedBurninScenario(scenario) {
+			t.Fatalf("supportedBurninScenario(%q) = false", scenario)
+		}
+		if !strings.Contains(supportedBurninScenarios(), scenario) {
+			t.Fatalf("supportedBurninScenarios() does not include %q", scenario)
+		}
+	}
+
+	for _, scenario := range []string{"stop-screen", "screen-repeat", "direct-exec"} {
+		if !supportedBurninScenario(scenario) {
+			t.Fatalf("supportedBurninScenario(%q) = false", scenario)
+		}
+	}
+	if supportedBurninScenario("missing") {
+		t.Fatalf("supportedBurninScenario(%q) = true", "missing")
+	}
+}
+
+func TestOverlapRunPrompt(t *testing.T) {
+	tests := map[int]string{
+		2:  "run it",
+		3:  "run it again",
+		4:  "run it once more",
+		5:  "run it a fifth time",
+		8:  "run it an eighth time",
+		11: "run it an eleventh time",
+		18: "run it an eighteenth time",
+		24: "run it a twenty-fourth time",
+	}
+	for run, want := range tests {
+		if got := overlapRunPrompt(run); got != want {
+			t.Fatalf("overlapRunPrompt(%d) = %q, want %q", run, got, want)
+		}
+	}
+}
 
 func TestScriptedBurninOverlapRunning3(t *testing.T) {
 	s := &scriptedBurnin{scenario: "overlap-running3"}
