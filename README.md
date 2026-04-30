@@ -143,24 +143,6 @@ PRG by default. The repo build writes that loader directly to
 [`cmd/claw64-bridge/claw64.prg`](/Users/sts/Quellen/slagent/claw64/cmd/claw64-bridge/claw64.prg),
 so `--loader-prg` is only needed to override it.
 
-### Burn-In
-
-The bridge includes scripted burn-in scenarios for deterministic end-to-end
-verification without LLM noise. The heavy default gate is:
-
-```bash
-go run ./cmd/claw64-bridge burnin direct-exec
-```
-
-For transport overlap changes, also run the largest overlap queue gate:
-
-```bash
-go run ./cmd/claw64-bridge burnin overlap-running24
-```
-
-Developer-facing burn-in workflow and gate policy are documented in
-[AGENTS.md](/Users/sts/Quellen/slagent/claw64/AGENTS.md).
-
 ## Architecture
 
 ```
