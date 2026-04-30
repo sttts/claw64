@@ -79,18 +79,53 @@ func Listen(addr string) (*Link, error) {
 
 // ListenAndStart binds the TCP listener, runs start, then waits for the C64 handshake.
 func ListenAndStart(addr string, start func() error) (*Link, error) {
+	return ListenAndStartUntil(addr, func() (<-chan error, error) {
+		return nil, start()
+	})
+}
+
+// ListenAndStartUntil binds the TCP listener, runs start, and aborts the
+// handshake wait if the started process exits first.
+func ListenAndStartUntil(addr string, start func() (<-chan error, error)) (*Link, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen %s: %w", addr, err)
 	}
 	log.Printf("serial: listening on %s — start VICE now", addr)
 
-	if err := start(); err != nil {
+	exited, err := start()
+	if err != nil {
 		ln.Close()
 		return nil, err
 	}
 
-	return waitForHandshake(ln)
+	var startExit chan error
+	if exited != nil {
+		startExit = make(chan error, 1)
+		go func() {
+			err := <-exited
+			if err == nil {
+				err = fmt.Errorf("started process exited before C64 handshake")
+			} else {
+				err = fmt.Errorf("started process exited before C64 handshake: %w", err)
+			}
+			startExit <- err
+			_ = ln.Close()
+		}()
+	}
+
+	link, err := waitForHandshake(ln)
+	if err == nil {
+		return link, nil
+	}
+	if startExit != nil {
+		select {
+		case exitErr := <-startExit:
+			return nil, exitErr
+		default:
+		}
+	}
+	return nil, err
 }
 
 func waitForHandshake(ln net.Listener) (*Link, error) {

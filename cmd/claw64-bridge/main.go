@@ -261,7 +261,27 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	}
 }
 
-func startSerialLink(cfg CLI) (*serial.Link, *exec.Cmd, func(), error) {
+type runningVICE struct {
+	cmd  *exec.Cmd
+	done chan struct{}
+	err  error
+}
+
+func (v *runningVICE) exitError() <-chan error {
+	ch := make(chan error, 1)
+	go func() {
+		<-v.done
+		ch <- v.err
+	}()
+	return ch
+}
+
+func (v *runningVICE) wait() error {
+	<-v.done
+	return v.err
+}
+
+func startSerialLink(cfg CLI) (*serial.Link, *runningVICE, func(), error) {
 	if cfg.SerialAddr == "" || cfg.MonitorAddr == "" {
 		serialAddr, monitorAddr := defaultPortAddrs()
 		if cfg.SerialAddr == "" {
@@ -282,16 +302,16 @@ func startSerialLink(cfg CLI) (*serial.Link, *exec.Cmd, func(), error) {
 		return nil, nil, nil, fmt.Errorf("vice: %w", err)
 	}
 
-	var viceCmd *exec.Cmd
-	link, err := serial.ListenAndStart(cfg.SerialAddr, func() error {
+	var viceCmd *runningVICE
+	link, err := serial.ListenAndStartUntil(cfg.SerialAddr, func() (<-chan error, error) {
 		log.Printf("vice: spawning %s with %s", cfg.ViceBin, loaderPath)
 
 		viceCmd, err = spawnVICE(cfg, loaderPath)
 		if err != nil {
 			cleanupLoader()
-			return fmt.Errorf("vice: %w", err)
+			return nil, fmt.Errorf("vice: %w", err)
 		}
-		return nil
+		return viceCmd.exitError(), nil
 	})
 	if err != nil {
 		cleanupLoader()
@@ -408,7 +428,7 @@ func defaultSymbolPath() string {
 	return filepath.Join("c64", "loader.sym")
 }
 
-func spawnVICE(cfg CLI, loaderPath string) (*exec.Cmd, error) {
+func spawnVICE(cfg CLI, loaderPath string) (*runningVICE, error) {
 	args := []string{
 		"-rsdev1", cfg.SerialAddr,
 		"-userportdevice", "2",
@@ -426,15 +446,24 @@ func spawnVICE(cfg CLI, loaderPath string) (*exec.Cmd, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return cmd, nil
+
+	vice := &runningVICE{
+		cmd:  cmd,
+		done: make(chan struct{}),
+	}
+	go func() {
+		vice.err = cmd.Wait()
+		close(vice.done)
+	}()
+	return vice, nil
 }
 
-func stopVICE(cmd *exec.Cmd) {
-	if cmd == nil || cmd.Process == nil {
+func stopVICE(vice *runningVICE) {
+	if vice == nil || vice.cmd == nil || vice.cmd.Process == nil {
 		return
 	}
-	_ = cmd.Process.Kill()
-	_, _ = cmd.Process.Wait()
+	_ = vice.cmd.Process.Kill()
+	_ = vice.wait()
 }
 
 func testSerial(addr, command string) {

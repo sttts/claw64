@@ -27,7 +27,7 @@ ECHO_OUT    = c64/echotest.prg
 VEC_SRC     = c64/vectest.asm
 VEC_OUT     = c64/vectest.prg
 
-.PHONY: assemble assets echotest vice vice-echo bridge run test-serial ports kill clean clean-all clean-ports
+.PHONY: assemble assets echotest vice vice-echo bridge run test test-serial burnin burnin-direct burnin-overlap ports kill clean clean-all clean-ports
 
 define KILL_PORTS
 	@. ./$(PORT_FILE); \
@@ -123,9 +123,24 @@ bridge: $(PORT_FILE)
 	  --monitor-addr "127.0.0.1:$$MONITOR_PORT" \
 	  --spawn-vice=false stdin
 
+# run all Go package tests
+test:
+	go test ./...
+
 # run the serial test tool (TCP server on port 25232)
 test-serial:
 	cd tools && go run serialtest.go
+
+# run all live burn-in scenarios used by the developer gate
+burnin: burnin-direct burnin-overlap
+
+# run the default direct execution burn-in
+burnin-direct: assemble
+	go run ./cmd/claw64-bridge burnin direct-exec
+
+# run the largest running-overlap burn-in
+burnin-overlap: assemble
+	go run ./cmd/claw64-bridge burnin overlap-running24
 
 # show allocated ports for this worktree
 ports: $(PORT_FILE)

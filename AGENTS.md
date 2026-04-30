@@ -97,9 +97,10 @@ allocation and `make kill` to stop processes without starting new ones.
 - For protocol, runtime, transport, or C64-control changes, do not proceed to further feature work unless the full gate is green.
 - The full gate is:
   - `make assemble`
-  - `go test ./...`
-  - a live VICE burn-in
-- Default heavy gate: `go run ./cmd/claw64-bridge burnin direct-exec`
+  - `make test`
+  - `make burnin`
+- `make burnin` runs the default direct execution burn-in and the largest running-overlap burn-in.
+- Default heavy scenario: `go run ./cmd/claw64-bridge burnin direct-exec`
 - `direct-exec` is the main regression gate. It spans three user messages, exercises eleven `EXEC` calls, stores and lists a small BASIC program, runs it, and verifies the final `5050` output after the normal `RUNNING -> READY.` drain path.
 - Additional scenarios:
   - `go run ./cmd/claw64-bridge burnin stop-screen`
