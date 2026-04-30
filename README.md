@@ -152,6 +152,12 @@ verification without LLM noise. The heavy default gate is:
 go run ./cmd/claw64-bridge burnin direct-exec
 ```
 
+For transport overlap changes, also run the largest overlap queue gate:
+
+```bash
+go run ./cmd/claw64-bridge burnin overlap-running24
+```
+
 Developer-facing burn-in workflow and gate policy are documented in
 [AGENTS.md](/Users/sts/Quellen/slagent/claw64/AGENTS.md).
 

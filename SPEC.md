@@ -180,7 +180,9 @@ frame types to API calls and back.
   call the LLM again.
 - Receive ERROR frames, append error text to history, call the LLM again.
 - Maintain per-user conversation histories (the C64 has no RAM for this).
-- Queue messages for sequential processing (one at a time on serial).
+- Preserve user-message ordering while allowing only bounded overlap up to
+  the C64's fixed three-slot user queue; excess messages wait for a fresh
+  relay turn before entering the serial path.
 
 #### Chat platforms
 
