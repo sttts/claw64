@@ -99,7 +99,8 @@ allocation and `make kill` to stop processes without starting new ones.
   - `make assemble`
   - `make test`
   - `make burnin`
-- `make burnin` runs the default direct execution burn-in and the largest running-overlap burn-in.
+- `make burnin` runs every scenario in `BURNIN_GATE_SCENARIOS`.
+- Run one scenario with `make burnin-<scenario>`, for example `make burnin-direct-exec`.
 - Default heavy scenario: `go run ./cmd/claw64-bridge burnin direct-exec`
 - `direct-exec` is the main regression gate. It spans three user messages, exercises eleven `EXEC` calls, stores and lists a small BASIC program, runs it, and verifies the final `5050` output after the normal `RUNNING -> READY.` drain path.
 - Additional scenarios:

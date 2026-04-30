@@ -27,7 +27,10 @@ ECHO_OUT    = c64/echotest.prg
 VEC_SRC     = c64/vectest.asm
 VEC_OUT     = c64/vectest.prg
 
-.PHONY: assemble assets echotest vice vice-echo bridge run test test-serial burnin burnin-direct burnin-overlap ports kill clean clean-all clean-ports
+# Live scenarios that make up the developer burn-in gate.
+BURNIN_GATE_SCENARIOS = direct-exec overlap-running24
+
+.PHONY: assemble assets echotest vectest vice vice-vec vice-echo bridge run test test-serial burnin burnin-direct burnin-overlap ports kill clean clean-all clean-ports
 
 define KILL_PORTS
 	@. ./$(PORT_FILE); \
@@ -132,15 +135,17 @@ test-serial:
 	cd tools && go run serialtest.go
 
 # run all live burn-in scenarios used by the developer gate
-burnin: burnin-direct burnin-overlap
+burnin: $(BURNIN_GATE_SCENARIOS:%=burnin-%)
 
 # run the default direct execution burn-in
-burnin-direct: assemble
-	go run ./cmd/claw64-bridge burnin direct-exec
+burnin-direct: burnin-direct-exec
 
 # run the largest running-overlap burn-in
-burnin-overlap: assemble
-	go run ./cmd/claw64-bridge burnin overlap-running24
+burnin-overlap: burnin-overlap-running24
+
+# run one live burn-in scenario
+burnin-%: assemble
+	go run ./cmd/claw64-bridge burnin $*
 
 # show allocated ports for this worktree
 ports: $(PORT_FILE)
