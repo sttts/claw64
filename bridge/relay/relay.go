@@ -97,9 +97,9 @@ const c64UserQueueSlots = 3
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
 const textAckTimeout = 7 * time.Second
 
-// execAckTimeout covers direct EXEC commands whose first semantic boundary is
-// the completed command result rather than a quick RUNNING/STORED transition.
-const execAckTimeout = 8 * time.Second
+// execAckTimeout covers EXEC commands whose first semantic boundary can be a
+// delayed RESULT/STATUS instead of an immediate transport ACK.
+const execAckTimeout = 12 * time.Second
 
 func (r *Relay) frameWaitTimeout(waitingTextAck bool) time.Duration {
 	if waitingTextAck {
@@ -125,7 +125,7 @@ func isExpectedStatus(status string) bool {
 // c64FrameTimeout is how long the bridge waits for any C64 frame before
 // triggering a generic stall dump. It must stay above execAckTimeout so a
 // slow EXEC delivery retry does not produce a misleading silence dump.
-const c64FrameTimeout = 12 * time.Second
+const c64FrameTimeout = 16 * time.Second
 
 var llmTools = []llm.Tool{
 	llm.BasicExecTool,
@@ -487,15 +487,13 @@ type basicExecArgs struct {
 func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text string, emit func(string) error) error {
 	text = serial.ToASCII(text)
 
-	// send user message to C64 (header now, chars stream via callback)
-	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
 	if r.overlapQueueAtCapacity() {
 		if err := r.acquireFreshMessageGate(ctx); err != nil {
 			return fmt.Errorf("wait for fresh relay turn: %w", err)
 		}
 		defer r.releaseMessageGate()
-		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
+		if err := r.sendMSG(ctx, msgFrame); err != nil {
 			return fmt.Errorf("send MSG: %w", err)
 		}
 		return r.eventLoop(ctx, userID, emit)
@@ -505,7 +503,7 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 			return fmt.Errorf("wait for relay idle: %w", err)
 		}
 		defer r.releaseMessageGate()
-		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
+		if err := r.sendMSG(ctx, msgFrame); err != nil {
 			return fmt.Errorf("send MSG: %w", err)
 		}
 		return r.eventLoop(ctx, userID, emit)
@@ -513,7 +511,7 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 
 	if r.tryAcquireMessageGate() {
 		defer r.releaseMessageGate()
-		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
+		if err := r.sendMSG(ctx, msgFrame); err != nil {
 			return fmt.Errorf("send MSG: %w", err)
 		}
 		return r.eventLoop(ctx, userID, emit)
@@ -524,7 +522,7 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 			return fmt.Errorf("wait for relay idle: %w", err)
 		}
 		defer r.releaseMessageGate()
-		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
+		if err := r.sendMSG(ctx, msgFrame); err != nil {
 			return fmt.Errorf("send MSG: %w", err)
 		}
 		return r.eventLoop(ctx, userID, emit)
@@ -535,13 +533,13 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 			return fmt.Errorf("wait for relay idle: %w", err)
 		}
 		defer r.releaseMessageGate()
-		if err := r.sendVerified(ctx, msgFrame, "MSG"); err != nil {
+		if err := r.sendMSG(ctx, msgFrame); err != nil {
 			return fmt.Errorf("send MSG: %w", err)
 		}
 		return r.eventLoop(ctx, userID, emit)
 	}
 
-	if err := r.sendVerifiedWithAckWaiter(ctx, msgFrame, "MSG"); err != nil {
+	if err := r.sendOverlappingMSG(ctx, msgFrame); err != nil {
 		r.releaseOverlapSend()
 		return fmt.Errorf("send overlapping MSG: %w", err)
 	}
@@ -552,6 +550,16 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 	r.releaseOverlapSend()
 	defer r.releaseMessageGate()
 	return r.eventLoop(ctx, userID, emit)
+}
+
+func (r *Relay) sendMSG(ctx context.Context, msgFrame serial.Frame) error {
+	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
+	return r.sendVerified(ctx, msgFrame, "MSG")
+}
+
+func (r *Relay) sendOverlappingMSG(ctx context.Context, msgFrame serial.Frame) error {
+	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
+	return r.sendVerifiedWithAckWaiter(ctx, msgFrame, "MSG")
 }
 
 // eventLoop waits for C64 frames and reacts.
@@ -1376,6 +1384,9 @@ func (r *Relay) ensureRecvLoop() {
 			for {
 				f, err := r.Link.Recv()
 				if err == nil && f.Type == serial.FrameAck {
+					if r.dispatchAckWaiter(f) {
+						continue
+					}
 					r.ackCh <- f
 					continue
 				}
@@ -1418,7 +1429,10 @@ func (r *Relay) dispatchAckWaiter(f serial.Frame) bool {
 		return false
 	}
 
-	ch <- f
+	select {
+	case ch <- f:
+	default:
+	}
 	return true
 }
 

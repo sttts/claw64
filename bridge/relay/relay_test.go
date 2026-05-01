@@ -526,6 +526,37 @@ func TestDispatchAckWaiterIgnoresUnknownAckID(t *testing.T) {
 	}
 }
 
+func TestDispatchAckWaiterDoesNotBlockOnDuplicateAck(t *testing.T) {
+	r := &Relay{}
+	waiter := r.registerAckWaiter(7)
+	defer r.unregisterAckWaiter(7)
+
+	f := serial.Frame{Type: serial.FrameAck, Payload: []byte{7}}
+	if !r.dispatchAckWaiter(f) {
+		t.Fatal("first dispatchAckWaiter returned false")
+	}
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- r.dispatchAckWaiter(f)
+	}()
+
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("second dispatchAckWaiter returned false")
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("second dispatchAckWaiter blocked")
+	}
+
+	select {
+	case <-waiter:
+	default:
+		t.Fatal("waiter did not keep first ACK")
+	}
+}
+
 func TestUnwrapAcceptedFrameMarksReliableFrameAccepted(t *testing.T) {
 	r := &Relay{}
 	f := serial.Frame{Type: serial.FrameResult, Payload: serial.PrependID(7, []byte("abc"))}
