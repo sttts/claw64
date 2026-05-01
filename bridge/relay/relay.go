@@ -97,9 +97,9 @@ const c64UserQueueSlots = 3
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
 const textAckTimeout = 7 * time.Second
 
-// execAckTimeout covers EXEC commands whose first semantic boundary can be a
-// delayed RESULT/STATUS instead of an immediate transport ACK.
-const execAckTimeout = 12 * time.Second
+// execAckTimeout covers EXEC transport confirmation. BASIC completion is
+// handled later through RESULT/STATUS/ERROR tool frames.
+const execAckTimeout = ackTimeout
 
 func (r *Relay) frameWaitTimeout(waitingTextAck bool) time.Duration {
 	if waitingTextAck {
@@ -124,8 +124,8 @@ func isExpectedStatus(status string) bool {
 
 // c64FrameTimeout is how long the bridge waits for any C64 frame before
 // triggering a generic stall dump. It must stay above execAckTimeout so a
-// slow EXEC delivery retry does not produce a misleading silence dump.
-const c64FrameTimeout = 16 * time.Second
+// slow transport retry does not produce a misleading silence dump.
+const c64FrameTimeout = 12 * time.Second
 
 var llmTools = []llm.Tool{
 	llm.BasicExecTool,

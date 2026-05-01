@@ -463,7 +463,6 @@ bl_rx_done:
         sta agent_state
         lda result_pending
         bne bl_idle_state_done
-        jsr commit_exec_ack_if_pending
         jsr prepare_result_chunks
 bl_idle_state_done:
         jsr service_outbound
@@ -564,7 +563,6 @@ bl_wait_store:
         sta progline_pending
         sta busy
         jsr queue_state_stored
-        jsr commit_exec_ack_if_pending
         lda #AG_IDLE
         sta agent_state
         jmp bloop
@@ -642,7 +640,6 @@ bl_ready_found:
         sta progline_pending
         sta busy
         jsr queue_state_stored
-        jsr commit_exec_ack_if_pending
         lda #AG_IDLE
         sta agent_state
         jmp bloop
@@ -651,7 +648,6 @@ bl_ready_result:
         lda result_pending
         bne bl_ready_skip       // already sending result chunks
         jsr prepare_result_chunks
-        jsr commit_exec_ack_if_pending
 bl_ready_skip:
         lda #AG_IDLE
         sta agent_state
@@ -674,7 +670,6 @@ bl_wait_not_ready:
         // have hung or produced unexpected output. Send an error frame
         // so the bridge knows the command failed.
         jsr send_error          // send ERROR frame with zero-length payload
-        jsr commit_exec_ack_if_pending
         lda #AG_IDLE
         sta agent_state
         lda #0
@@ -887,7 +882,6 @@ sr_tick_ok:
         bcc sr_done
 sr_report:
         jsr queue_state_running
-        jsr commit_exec_ack_if_pending
         lda #1
         sta running_reported
         sta basic_running
@@ -1209,7 +1203,6 @@ irq_wait_state:
         sta agent_state
         lda result_pending
         bne irq_tx_check
-        jsr commit_exec_ack_if_pending
         jsr prepare_result_chunks
         jmp irq_tx_check
 
@@ -1230,7 +1223,6 @@ irq_tick_ok:
         bcc irq_tx_check
 irq_mark_running:
         jsr queue_state_running
-        jsr commit_exec_ack_if_pending
         lda #1
         sta running_reported
         sta basic_running
@@ -2088,7 +2080,7 @@ fd_not_stop:
         jsr copy_exec_from_rxbuf
         jsr detect_program_line
         lda #1
-        sta exec_ack_pending
+        sta ack_pending
         jmp fd_exec_start
 
 fd_exec_busy:
@@ -2159,16 +2151,6 @@ cef_loop:
         inx
         jmp cef_loop
 cef_done:
-        rts
-
-commit_exec_ack_if_pending:
-        lda exec_ack_pending
-        beq ceap_done
-        lda #0
-        sta exec_ack_pending
-        lda #1
-        sta ack_pending
-ceap_done:
         rts
 
 // ---------------------------------------------------------
@@ -2264,7 +2246,6 @@ result_pending: .byte 0 // 1 = RESULT chunks still need sending
 text_pending: .byte 0   // 1 = forward TEXT to user via drip-send
 tx_ack_tick:  .byte 0   // last seen KERNAL jiffy low byte while waiting ACK
 exec_len:      .byte 0  // saved EXEC payload length in exec_buf
-exec_ack_pending: .byte 0 // 1 = delay EXEC ACK until first semantic boundary
 ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
 deferred_ack: .byte 0   // 1 = current inbound TEXT is not safe to ACK yet
 ack_pos:      .byte 0   // current position in ack_buf during paced send
