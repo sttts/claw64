@@ -28,7 +28,7 @@ VEC_SRC     = c64/vectest.asm
 VEC_OUT     = c64/vectest.prg
 
 # Live scenarios that make up the developer burn-in gate.
-BURNIN_GATE_SCENARIOS = direct-exec overlap-running24
+BURNIN_GATE_SCENARIOS = direct-exec slow-exec overlap-running24
 BURNIN_REPEAT ?= 3
 
 .PHONY: assemble assets echotest vectest vice vice-vec vice-echo bridge run test test-serial burnin burnin-repeat burnin-direct burnin-overlap ports kill clean clean-all clean-ports

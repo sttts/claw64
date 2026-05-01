@@ -67,6 +67,7 @@ type Relay struct {
 	msgGateWaiters  []chan struct{}
 	msgRetryBase    time.Duration
 	msgRetryMax     time.Duration
+	DeliveryRetry   func(name string, attempt int, err error)
 }
 
 type recvResult struct {
@@ -1027,6 +1028,7 @@ func (r *Relay) sendTextChunk(ctx context.Context, chunk []byte) error {
 		if err == nil {
 			return nil
 		}
+		r.noteDeliveryRetry("TEXT", attempt+1, err)
 		logWarnf("%s", flowLine("", "→", "C64", "TEXT", fmt.Sprintf("ack attempt %d failed: %v", attempt+1, err)))
 		if attempt+1 < len(retryDelays) {
 			time.Sleep(retryDelays[attempt])
@@ -1074,6 +1076,7 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 		if err == nil {
 			return nil
 		}
+		r.noteDeliveryRetry(name, attempt+1, err)
 		logWarnf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
 		if attempt+1 < len(retryDelays) {
 			time.Sleep(retryDelays[attempt])
@@ -1102,6 +1105,7 @@ func (r *Relay) sendVerifiedWithAckWaiter(ctx context.Context, frame serial.Fram
 		if err == nil {
 			return nil
 		}
+		r.noteDeliveryRetry(name, attempt+1, err)
 		logWarnf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
 		if attempt+1 < len(retryDelays) {
 			time.Sleep(retryDelays[attempt])
@@ -1142,6 +1146,7 @@ func (r *Relay) sendVerifiedOrSemanticWith(ctx context.Context, frame serial.Fra
 
 		ok, err := r.waitForAckOrSemantic(ctx, id, timeout)
 		if err != nil {
+			r.noteDeliveryRetry(name, attempt+1, err)
 			logWarnf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
 			if attempt+1 < len(retryDelays) {
 				time.Sleep(retryDelays[attempt])
@@ -1151,12 +1156,19 @@ func (r *Relay) sendVerifiedOrSemanticWith(ctx context.Context, frame serial.Fra
 		if ok {
 			return nil
 		}
+		r.noteDeliveryRetry(name, attempt+1, nil)
 		logWarnf("     ! %s ack attempt %d failed: no confirmation", name, attempt+1)
 		if attempt+1 < len(retryDelays) {
 			time.Sleep(retryDelays[attempt])
 		}
 	}
 	return fmt.Errorf("%s delivery could not be verified after %d attempt(s)", name, len(retryDelays))
+}
+
+func (r *Relay) noteDeliveryRetry(name string, attempt int, err error) {
+	if r.DeliveryRetry != nil {
+		r.DeliveryRetry(name, attempt, err)
+	}
 }
 
 // allocID returns the next transport ID and advances the counter.

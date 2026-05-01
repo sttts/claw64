@@ -27,8 +27,8 @@ func TestSupportedBurninScenarios(t *testing.T) {
 		"overlap-running20": 20,
 		"overlap-running24": 24,
 	}
-	if len(burninScenarios) != len(tests)+3 {
-		t.Fatalf("len(burninScenarios) = %d, want %d", len(burninScenarios), len(tests)+3)
+	if len(burninScenarios) != len(tests)+4 {
+		t.Fatalf("len(burninScenarios) = %d, want %d", len(burninScenarios), len(tests)+4)
 	}
 	for scenario, wantRuns := range tests {
 		gotRuns, ok := overlapScenarioRuns(scenario)
@@ -46,7 +46,7 @@ func TestSupportedBurninScenarios(t *testing.T) {
 		}
 	}
 
-	for _, scenario := range []string{"stop-screen", "screen-repeat", "direct-exec"} {
+	for _, scenario := range []string{"stop-screen", "screen-repeat", "direct-exec", "slow-exec"} {
 		if !supportedBurninScenario(scenario) {
 			t.Fatalf("supportedBurninScenario(%q) = false", scenario)
 		}
@@ -106,6 +106,16 @@ func TestScriptedBurninOverlapRunning3(t *testing.T) {
 	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: RUNNING"}}, "status", "{}")
 	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: READY."}}, "screen", "{}")
 	assertCompleteText(t, s, []llm.Message{{Role: "tool", Content: "[C64 screen output]: OVERLAP ONE\nOVERLAP TWO\nREADY."}}, "THIRD RUN COMPLETE.")
+}
+
+func TestScriptedBurninSlowExec(t *testing.T) {
+	s := &scriptedBurnin{scenario: "slow-exec"}
+
+	assertCompleteText(t, s, []llm.Message{{Role: "user", Content: "Hi"}}, "READY FOR SLOW EXEC.")
+	assertToolCall(t, s, []llm.Message{{Role: "user", Content: "run a slow exec"}}, "exec", `{"command":"FOR I=1 TO 20000:NEXT I:PRINT \"SLOW DONE\""}`)
+	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: RUNNING"}}, "status", "{}")
+	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: READY."}}, "screen", "{}")
+	assertCompleteText(t, s, []llm.Message{{Role: "tool", Content: "[C64 text screen screenshot]: SLOW DONE\nREADY."}}, "BURN-IN slow-exec complete.")
 }
 
 func assertToolCall(t *testing.T, s *scriptedBurnin, messages []llm.Message, wantName, wantArgs string) {

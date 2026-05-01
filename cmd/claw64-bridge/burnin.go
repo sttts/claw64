@@ -49,6 +49,8 @@ func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ [
 		return s.completeScreenRepeat(messages)
 	case "direct-exec":
 		return s.completeDirectExec(messages)
+	case "slow-exec":
+		return s.completeSlowExec(messages)
 	default:
 		return llm.Message{}, fmt.Errorf("unknown burn-in scenario %q", s.scenario)
 	}
@@ -63,6 +65,7 @@ var burninScenarios = []burninScenario{
 	{name: "stop-screen"},
 	{name: "screen-repeat"},
 	{name: "direct-exec"},
+	{name: "slow-exec"},
 	{name: "overlap-msg", overlapRuns: 2},
 	{name: "overlap-queue3", overlapRuns: 3},
 	{name: "overlap-running2", overlapRuns: 2},
@@ -322,6 +325,52 @@ func (s *scriptedBurnin) completeDirectExec(messages []llm.Message) (llm.Message
 			return llm.Message{}, fmt.Errorf("step %d: expected final screenshot/result with 5050, got %q", s.step, lastTool)
 		}
 		return llm.Message{Role: "assistant", Content: "BURN-IN direct-exec complete."}, nil
+	default:
+		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
+	}
+}
+
+func (s *scriptedBurnin) completeSlowExec(messages []llm.Message) (llm.Message, error) {
+	lastTool := lastToolMessage(messages)
+	lastUser := strings.ToLower(lastUserMessage(messages))
+
+	switch s.step {
+	case 0:
+		s.step++
+		return llm.Message{Role: "assistant", Content: "READY FOR SLOW EXEC."}, nil
+	case 1:
+		if !strings.Contains(lastUser, "slow") {
+			return llm.Message{}, fmt.Errorf("step %d: expected slow exec request, got %q", s.step, lastUser)
+		}
+		s.step++
+		return execToolCall("FOR I=1 TO 20000:NEXT I:PRINT \"SLOW DONE\"", s.step), nil
+	case 2:
+		switch {
+		case toolResultContains(lastTool, "[C64 screen output]: ", "SLOW DONE", "READY."):
+			return llm.Message{Role: "assistant", Content: "BURN-IN slow-exec complete."}, nil
+		case lastTool == "[C64 BASIC status]: RUNNING":
+			s.step++
+			return simpleToolCall("status", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected slow EXEC result or RUNNING, got %q", s.step, lastTool)
+		}
+	case 3:
+		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
+		switch status {
+		case "RUNNING", "STOP REQUESTED":
+			return simpleToolCall("status", "{}", s.step), nil
+		case "READY", "READY.":
+			s.step++
+			return simpleToolCall("screen", "{}", s.step), nil
+		default:
+			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining slow EXEC, got %q", s.step, lastTool)
+		}
+	case 4:
+		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "SLOW DONE", "READY.") &&
+			!toolResultContains(lastTool, "[C64 screen output]: ", "SLOW DONE", "READY.") {
+			return llm.Message{}, fmt.Errorf("step %d: expected slow EXEC final screen, got %q", s.step, lastTool)
+		}
+		return llm.Message{Role: "assistant", Content: "BURN-IN slow-exec complete."}, nil
 	default:
 		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
 	}
@@ -634,13 +683,23 @@ func runBurnin(cfg CLI, scenario string) {
 
 	log.Println("serial: ready")
 
+	var deliveryRetries map[string]int
+	var deliveryRetry func(name string, attempt int, err error)
+	if scenario == "slow-exec" {
+		deliveryRetries = map[string]int{}
+		deliveryRetry = func(name string, _ int, _ error) {
+			deliveryRetries[name]++
+		}
+	}
+
 	rl := &relay.Relay{
-		Link:        link,
-		LLM:         &scriptedBurnin{scenario: scenario},
-		History:     relay.NewHistory(),
-		DebugDir:    "debug",
-		MonitorAddr: cfg.MonitorAddr,
-		SymbolPath:  defaultSymbolPath(),
+		Link:          link,
+		LLM:           &scriptedBurnin{scenario: scenario},
+		History:       relay.NewHistory(),
+		DebugDir:      "debug",
+		MonitorAddr:   cfg.MonitorAddr,
+		SymbolPath:    defaultSymbolPath(),
+		DeliveryRetry: deliveryRetry,
 	}
 	rl.SetupProgress()
 
@@ -652,6 +711,7 @@ func runBurnin(cfg CLI, scenario string) {
 
 	if _, ok := overlapScenarioRuns(scenario); ok {
 		runOverlapBurnin(ctx, rl, scenario)
+		failOnUnexpectedDeliveryRetries(scenario, deliveryRetries)
 		log.Printf("burnin: scenario %s completed", scenario)
 		return
 	}
@@ -669,10 +729,18 @@ func runBurnin(cfg CLI, scenario string) {
 		}
 	}
 	if lastText == "" {
+		failOnUnexpectedDeliveryRetries(scenario, deliveryRetries)
 		log.Printf("burnin: scenario %s completed without user-visible text", scenario)
 		return
 	}
+	failOnUnexpectedDeliveryRetries(scenario, deliveryRetries)
 	log.Printf("burnin: scenario %s completed", scenario)
+}
+
+func failOnUnexpectedDeliveryRetries(scenario string, retries map[string]int) {
+	if scenario == "slow-exec" && retries["EXEC"] > 0 {
+		log.Fatalf("burnin %s: EXEC delivery retried %d time(s)", scenario, retries["EXEC"])
+	}
 }
 
 func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
@@ -757,6 +825,11 @@ func burninInputs(scenario string) []string {
 			"Hi",
 			"Can you program a sum of 1 to 100 ?",
 			"run it",
+		}
+	case "slow-exec":
+		return []string{
+			"Hi",
+			"run a slow exec",
 		}
 	default:
 		return []string{"Hi"}
