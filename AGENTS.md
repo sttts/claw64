@@ -101,6 +101,7 @@ allocation and `make kill` to stop processes without starting new ones.
   - `make burnin`
 - `make burnin` runs every scenario in `BURNIN_GATE_SCENARIOS`.
 - Run one scenario with `make burnin-<scenario>`, for example `make burnin-direct-exec`.
+- Use `make burnin-repeat` for flake hunting; set `BURNIN_REPEAT=<n>` to override the default repeat count.
 - Default heavy scenario: `go run ./cmd/claw64-bridge burnin direct-exec`
 - `direct-exec` is the main regression gate. It spans three user messages, exercises eleven `EXEC` calls, stores and lists a small BASIC program, runs it, and verifies the final `5050` output after the normal `RUNNING -> READY.` drain path.
 - List supported scenarios with `go run ./cmd/claw64-bridge burnin --list`.

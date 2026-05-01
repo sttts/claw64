@@ -29,8 +29,9 @@ VEC_OUT     = c64/vectest.prg
 
 # Live scenarios that make up the developer burn-in gate.
 BURNIN_GATE_SCENARIOS = direct-exec overlap-running24
+BURNIN_REPEAT ?= 3
 
-.PHONY: assemble assets echotest vectest vice vice-vec vice-echo bridge run test test-serial burnin burnin-direct burnin-overlap ports kill clean clean-all clean-ports
+.PHONY: assemble assets echotest vectest vice vice-vec vice-echo bridge run test test-serial burnin burnin-repeat burnin-direct burnin-overlap ports kill clean clean-all clean-ports
 
 define KILL_PORTS
 	@. ./$(PORT_FILE); \
@@ -136,6 +137,16 @@ test-serial:
 
 # run all live burn-in scenarios used by the developer gate
 burnin: $(BURNIN_GATE_SCENARIOS:%=burnin-%)
+
+# repeat the full live burn-in gate to catch timing flakes
+burnin-repeat: assemble
+	@for RUN in $$(seq 1 $(BURNIN_REPEAT)); do \
+	  echo "burnin repeat $$RUN/$(BURNIN_REPEAT)"; \
+	  for SCENARIO in $(BURNIN_GATE_SCENARIOS); do \
+	    echo "burnin scenario $$SCENARIO"; \
+	    go run ./cmd/claw64-bridge burnin $$SCENARIO || exit $$?; \
+	  done; \
+	done
 
 # run the default direct execution burn-in
 burnin-direct: burnin-direct-exec
