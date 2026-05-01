@@ -122,9 +122,10 @@ func isExpectedStatus(status string) bool {
 	return false
 }
 
-// c64FrameTimeout is how long the bridge waits for any C64 frame
-// before triggering a stall dump.
-const c64FrameTimeout = 8 * time.Second
+// c64FrameTimeout is how long the bridge waits for any C64 frame before
+// triggering a generic stall dump. It must stay above execAckTimeout so a
+// slow EXEC delivery retry does not produce a misleading silence dump.
+const c64FrameTimeout = 12 * time.Second
 
 var llmTools = []llm.Tool{
 	llm.BasicExecTool,
