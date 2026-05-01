@@ -52,6 +52,25 @@ define KILL_PORTS
 	done
 endef
 
+define RUN_BURNIN
+	STATUS=0; \
+	STALL_BEFORE=$$(ls -t debug/stall-*.log 2>/dev/null | head -1); \
+	go run ./cmd/claw64-bridge burnin $(1) || STATUS=$$?; \
+	if [ "$$STATUS" -ne 0 ]; then \
+	  echo "burnin failed: scenario=$(1)" >&2; \
+	  STALL_AFTER=$$(ls -t debug/stall-*.log 2>/dev/null | head -1); \
+	  if [ -n "$$STALL_AFTER" ] && [ "$$STALL_AFTER" != "$$STALL_BEFORE" ]; then \
+	    echo "new stall dump: $$STALL_AFTER" >&2; \
+	  elif [ -n "$$STALL_AFTER" ]; then \
+	    echo "new stall dump: none" >&2; \
+	    echo "latest existing stall dump: $$STALL_AFTER" >&2; \
+	  else \
+	    echo "new stall dump: none" >&2; \
+	  fi; \
+	  exit $$STATUS; \
+	fi
+endef
+
 # download KickAssembler if not present
 $(KICKASS_JAR):
 	@mkdir -p build
@@ -144,7 +163,7 @@ burnin-repeat: assemble
 	  echo "burnin repeat $$RUN/$(BURNIN_REPEAT)"; \
 	  for SCENARIO in $(BURNIN_GATE_SCENARIOS); do \
 	    echo "burnin scenario $$SCENARIO"; \
-	    go run ./cmd/claw64-bridge burnin $$SCENARIO || exit $$?; \
+	    $(call RUN_BURNIN,$$SCENARIO); \
 	  done; \
 	done
 
@@ -156,7 +175,7 @@ burnin-overlap: burnin-overlap-running24
 
 # run one live burn-in scenario
 burnin-%: assemble
-	go run ./cmd/claw64-bridge burnin $*
+	@$(call RUN_BURNIN,$*)
 
 # show allocated ports for this worktree
 ports: $(PORT_FILE)
