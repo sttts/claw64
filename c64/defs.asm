@@ -102,7 +102,9 @@
 .const KBUF_LEN     = $C6    // number of chars in keyboard buffer
 .const LASTKEY      = $CB    // matrix code of last key pressed ($40 = none)
 .const CURSOR_COL   = $D3    // cursor column
+.const QUOTE_MODE   = $D4    // screen editor quote mode flag
 .const CURSOR_ROW   = $D6    // cursor row
+.const INSERT_COUNT = $D8    // pending screen editor insert count
 .const SCREEN_RAM   = $0400  // screen RAM start (40x25 = 1000 bytes)
 .const BORDER_COLOR = $D020  // border color register
 .const BG_COLOR     = $D021  // background color register

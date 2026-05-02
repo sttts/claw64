@@ -87,6 +87,11 @@ func ListenAndStart(addr string, start func() error) (*Link, error) {
 // ListenAndStartUntil binds the TCP listener, runs start, and aborts the
 // handshake wait if the started process exits first.
 func ListenAndStartUntil(addr string, start func() (<-chan error, error)) (*Link, error) {
+	return ListenAndStartUntilTimeout(addr, start, 0)
+}
+
+// ListenAndStartUntilTimeout bounds the handshake wait after start returns.
+func ListenAndStartUntilTimeout(addr string, start func() (<-chan error, error), timeout time.Duration) (*Link, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen %s: %w", addr, err)
@@ -114,9 +119,32 @@ func ListenAndStartUntil(addr string, start func() (<-chan error, error)) (*Link
 		}()
 	}
 
+	var timedOut chan struct{}
+	var timeoutTimer *time.Timer
+	if timeout > 0 {
+		timedOut = make(chan struct{})
+
+		// Closing the listener interrupts Accept without touching any accepted
+		// connection. A successful handshake stops the timer below.
+		timeoutTimer = time.AfterFunc(timeout, func() {
+			close(timedOut)
+			_ = ln.Close()
+		})
+	}
+
 	link, err := waitForHandshake(ln)
 	if err == nil {
+		if timeoutTimer != nil {
+			timeoutTimer.Stop()
+		}
 		return link, nil
+	}
+	if timedOut != nil {
+		select {
+		case <-timedOut:
+			return nil, fmt.Errorf("C64 handshake timed out after %s", timeout)
+		default:
+		}
 	}
 	if startExit != nil {
 		select {

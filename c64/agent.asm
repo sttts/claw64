@@ -206,7 +206,16 @@ cp_bas_wr:
         lda #>irq_raster
         sta IRQ_HI
 
-        // ---- Hook BASIC main loop so prompt-idle drains outbound ----
+        // ---- Hook BASIC main loop to complete stored program lines ----
+        lda IMAIN_LO
+        sta old_imain_lo
+        lda IMAIN_HI
+        sta old_imain_hi
+        lda #<imain_hook
+        sta IMAIN_LO
+        lda #>imain_hook
+        sta IMAIN_HI
+
         // ---- Hook ISTOP so long-running BASIC keeps a control path ----
         // BASIC calls ISTOP frequently while a program is running.
         // We use that path to keep serial control alive for status,
@@ -553,21 +562,6 @@ bl_wait_ready_jump:
         jmp bl_wait_ready
 
 bl_wait_store:
-        inc ready_timer
-        lda KBUF_LEN
-        bne bl_wait_store_busy
-        lda ready_timer
-        cmp #20
-        bcc bl_wait_store_busy
-        lda #0
-        sta progline_pending
-        sta busy
-        jsr queue_state_stored
-        lda #AG_IDLE
-        sta agent_state
-        jmp bloop
-
-bl_wait_store_busy:
         jmp bl_kb
 
 bl_wait_ready:
@@ -630,21 +624,7 @@ bl_ready_found:
         sta dot_dir             // left = sending
         sta basic_running
         sta running_reported
-        lda progline_pending
-        beq bl_ready_result
-        lda CURSOR_ROW
-        cmp scan_start
-        bcc bl_scan_next
-        beq bl_scan_next
-        lda #0
-        sta progline_pending
-        sta busy
-        jsr queue_state_stored
-        lda #AG_IDLE
-        sta agent_state
-        jmp bloop
 
-bl_ready_result:
         lda result_pending
         bne bl_ready_skip       // already sending result chunks
         jsr prepare_result_chunks
@@ -734,6 +714,21 @@ reenter_idle:
         jmp bloop               // empty → run agent loop
 reenter_keys:
         jmp $E5D4               // continue KERNAL key loop
+
+// BASIC main-loop hook — numbered program-line EXEC completes when BASIC
+// returns to its input loop, not when the screen cursor merely moves.
+imain_hook:
+        lda agent_state
+        cmp #AG_STOREWAIT
+        bne ih_main_done
+        lda #0
+        sta progline_pending
+        sta busy
+        jsr queue_state_stored
+        lda #AG_IDLE
+        sta agent_state
+ih_main_done:
+        jmp (old_imain_lo)
 
 // ISTOP hook — keeps a small control loop alive while BASIC is running.
 // This lets the bridge receive "still running", status, screenshot, and
@@ -907,13 +902,16 @@ csr_done:
 // frames. Serialize access so shared send/ack state is advanced by only one
 // context at a time.
 service_outbound:
-        lda tx_service_busy
-        bne so_guard_done
         inc tx_service_busy
+        lda tx_service_busy
+        cmp #1
+        beq so_guard_acquired
+        dec tx_service_busy
+        rts
+so_guard_acquired:
         jsr service_outbound_inner
         lda #0
         sta tx_service_busy
-so_guard_done:
         rts
 
 service_outbound_inner:
@@ -1514,12 +1512,12 @@ prc_chunk_loop:
         lda ssr_total_hi
         bne prc_chunk_sub
         lda ssr_total_lo
-        cmp #32
+        cmp #CHUNK_MAX
         bcc prc_init_send
 prc_chunk_sub:
         sec
         lda ssr_total_lo
-        sbc #32
+        sbc #CHUNK_MAX
         sta ssr_total_lo
         lda ssr_total_hi
         sbc #0
@@ -1585,7 +1583,7 @@ brc_have_line:
         ldy ssr_text_len_tmp
 
 brc_copy:
-        cpy #32
+        cpy #CHUNK_MAX
         beq brc_finish
         lda result_col
         cmp ssr_line_len_tmp
@@ -2229,6 +2227,8 @@ spx_done:
 clear_input_row:
         lda #0
         sta CURSOR_COL
+        sta QUOTE_MODE
+        sta INSERT_COUNT
         ldx CURSOR_ROW
         jsr screen_ptr_from_x
         ldy #0
@@ -2291,6 +2291,8 @@ scan_start:   .byte 0   // cursor row at injection start (scan skips lines <= th
 busy:         .byte 0   // 1 = agent is in a conversation cycle (animate border)
 old_irq_lo:   .byte 0   // saved IRQ vector low byte
 old_irq_hi:   .byte 0   // saved IRQ vector high byte
+old_imain_lo: .byte 0   // saved BASIC main loop vector low byte
+old_imain_hi: .byte 0   // saved BASIC main loop vector high byte
 old_istop_lo: .byte 0   // saved ISTOP vector low byte
 old_istop_hi: .byte 0   // saved ISTOP vector high byte
 old_bsout_lo: .byte 0   // saved BSOUT vector low byte

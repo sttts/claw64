@@ -1692,6 +1692,23 @@ func (r *Relay) currentToolPayload() []byte {
 	return append([]byte(nil), r.toolInFlight...)
 }
 
+// WriteDebugDump captures the same monitor state as stall dumps for explicit
+// callers such as deterministic burn-in failures.
+func (r *Relay) WriteDebugDump(reason string) (string, error) {
+	pending := r.currentToolPayload()
+	if pending == nil {
+		pending = r.currentTextChunk()
+	}
+	return writeStallDump(
+		r.DebugDir,
+		r.MonitorAddr,
+		r.SymbolPath,
+		reason,
+		pending,
+		r.currentRelayState(),
+	)
+}
+
 func (r *Relay) currentRelayState() []string {
 	r.msgGateMu.Lock()
 	msgGateBusy := r.msgGateBusy

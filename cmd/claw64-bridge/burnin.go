@@ -850,11 +850,21 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
 	}
 
 	waitOne := func(name string, ch <-chan result, want string) {
+		dumpFailure := func() {
+			if filename, dumpErr := rl.WriteDebugDump("burn-in failure: " + name); dumpErr == nil {
+				log.Printf("burnin %s: wrote debug dump to %s", name, filename)
+			} else {
+				log.Printf("burnin %s: debug dump failed: %v", name, dumpErr)
+			}
+		}
+
 		res := <-ch
 		if res.err != nil {
+			dumpFailure()
 			log.Fatalf("burnin %s: %v", name, res.err)
 		}
 		if len(res.texts) == 0 {
+			dumpFailure()
 			log.Fatalf("burnin %s: no user-visible text", name)
 		}
 		for _, text := range res.texts {
@@ -862,6 +872,7 @@ func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {
 				return
 			}
 		}
+		dumpFailure()
 		log.Fatalf("burnin %s: expected text containing %q, got %q", name, want, res.texts)
 	}
 

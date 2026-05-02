@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/alecthomas/kong"
 
@@ -302,28 +303,43 @@ func startSerialLink(cfg CLI) (*serial.Link, *runningVICE, func(), error) {
 		return link, nil, func() {}, err
 	}
 
+	return startSpawnedSerialLink(cfg)
+}
+
+func startSpawnedSerialLink(cfg CLI) (*serial.Link, *runningVICE, func(), error) {
+	const attempts = 8
+	const handshakeTimeout = 45 * time.Second
+
 	loaderPath, cleanupLoader, err := loaderPRGPath(cfg)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("vice: %w", err)
 	}
 
-	var viceCmd *runningVICE
-	link, err := serial.ListenAndStartUntil(cfg.SerialAddr, func() (<-chan error, error) {
-		log.Printf("vice: spawning %s with %s", cfg.ViceBin, loaderPath)
+	for attempt := 1; attempt <= attempts; attempt++ {
+		var viceCmd *runningVICE
+		link, err := serial.ListenAndStartUntilTimeout(cfg.SerialAddr, func() (<-chan error, error) {
+			log.Printf("vice: spawning %s with %s", cfg.ViceBin, loaderPath)
 
-		viceCmd, err = spawnVICE(cfg, loaderPath)
-		if err != nil {
-			cleanupLoader()
-			return nil, fmt.Errorf("vice: %w", err)
+			viceCmd, err = spawnVICE(cfg, loaderPath)
+			if err != nil {
+				return nil, fmt.Errorf("vice: %w", err)
+			}
+			return viceCmd.exitError(), nil
+		}, handshakeTimeout)
+		if err == nil {
+			return link, viceCmd, cleanupLoader, nil
 		}
-		return viceCmd.exitError(), nil
-	})
-	if err != nil {
-		cleanupLoader()
-		return nil, nil, nil, err
+		stopVICE(viceCmd)
+		if attempt == attempts {
+			cleanupLoader()
+			return nil, nil, nil, err
+		}
+		log.Printf("vice: startup attempt %d/%d failed: %v; retrying", attempt, attempts, err)
+		time.Sleep(time.Duration(attempt) * time.Second)
 	}
 
-	return link, viceCmd, cleanupLoader, nil
+	cleanupLoader()
+	return nil, nil, nil, fmt.Errorf("vice: startup failed")
 }
 
 func defaultPortAddrs() (string, string) {
