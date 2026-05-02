@@ -110,6 +110,21 @@ func TestAppendC64LLMEventUsesBackendCompatibleUserRole(t *testing.T) {
 	}
 }
 
+func TestHandleResultFrameStartsFreshOnFirstChunk(t *testing.T) {
+	r := &Relay{
+		resultChunks: map[int]string{
+			1: " stale-tail",
+		},
+	}
+
+	if result, complete := r.handleResultFrame(serial.Frame{Type: serial.FrameResult, Payload: []byte{0, 2, 'n', 'e', 'w'}}); complete {
+		t.Fatalf("first chunk completed with stale tail: %q", result)
+	}
+	if result, complete := r.handleResultFrame(serial.Frame{Type: serial.FrameResult, Payload: []byte{1, 2, '-', 't', 'a', 'i', 'l'}}); !complete || result != "new-tail" {
+		t.Fatalf("result = %q complete = %t, want new-tail true", result, complete)
+	}
+}
+
 func TestAcquireMessageGateWaitsUntilRelease(t *testing.T) {
 	r := &Relay{
 		msgRetryBase: 2 * time.Millisecond,

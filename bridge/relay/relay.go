@@ -360,11 +360,11 @@ func (r *Relay) handleResultFrame(f serial.Frame) (string, bool) {
 	idx := int(f.Payload[0])
 	total := int(f.Payload[1])
 	text := string(f.Payload[2:])
-	if r.lastToolName == "screen" {
+	if r.lastToolName == "screen" || os.Getenv("CLAW64_DEBUG_RESULT_CHUNKS") != "" {
 		log.Printf("%s", flowLine("LLM", "←", "C64", "RESULT", fmt.Sprintf("screen chunk %d/%d payload=%s text=%q", idx+1, total, hex.EncodeToString(f.Payload), text)))
 	}
 
-	if r.resultChunks == nil {
+	if idx == 0 || r.resultChunks == nil {
 		r.resultChunks = make(map[int]string)
 	}
 	r.resultChunks[idx] = text
@@ -1387,6 +1387,7 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 // DrainTransport consumes late transport frames until the C64 link is quiet.
 // It is intended for deterministic test/burn-in boundaries, not agent logic.
 func (r *Relay) DrainTransport(ctx context.Context, quiet, max time.Duration) error {
+	r.flushPendingAcks()
 	deadline := time.Now().Add(max)
 	for {
 		remaining := time.Until(deadline)
@@ -1403,6 +1404,7 @@ func (r *Relay) DrainTransport(ctx context.Context, quiet, max time.Duration) er
 		cancel()
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
+				r.flushPendingAcks()
 				return nil
 			}
 			return err

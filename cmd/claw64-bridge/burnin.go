@@ -84,9 +84,10 @@ var burninScenarios = []burninScenario{
 }
 
 var burninGateScenarios = []string{"direct-exec", "slow-exec", "overlap-running24"}
+var burninSessionGateScenarios = []string{"direct-exec", "overlap-running24"}
 
 func supportedBurninScenario(scenario string) bool {
-	if scenario == "gate" {
+	if scenario == "gate" || scenario == "gate-session" {
 		return true
 	}
 	for _, supported := range burninScenarios {
@@ -107,7 +108,7 @@ func overlapScenarioRuns(scenario string) (int, bool) {
 }
 
 func supportedBurninScenarios() string {
-	return strings.Join(append([]string{"gate"}, burninScenarioNames()...), ", ")
+	return strings.Join(append([]string{"gate", "gate-session"}, burninScenarioNames()...), ", ")
 }
 
 func burninScenarioNames() []string {
@@ -120,6 +121,7 @@ func burninScenarioNames() []string {
 
 func printBurninScenarios(w io.Writer) {
 	fmt.Fprintln(w, "gate")
+	fmt.Fprintln(w, "gate-session")
 	for _, name := range burninScenarioNames() {
 		fmt.Fprintln(w, name)
 	}
@@ -685,6 +687,10 @@ func runBurnin(cfg CLI, scenario string) {
 	}
 	if scenario == "gate" {
 		runBurninGate(cfg)
+		return
+	}
+	if scenario == "gate-session" {
+		runBurninScenarios(cfg, burninSessionGateScenarios)
 		return
 	}
 	runBurninScenarios(cfg, []string{scenario})

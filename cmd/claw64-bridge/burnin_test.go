@@ -54,8 +54,10 @@ func TestSupportedBurninScenarios(t *testing.T) {
 	if supportedBurninScenario("missing") {
 		t.Fatalf("supportedBurninScenario(%q) = true", "missing")
 	}
-	if !supportedBurninScenario("gate") {
-		t.Fatalf("supportedBurninScenario(%q) = false", "gate")
+	for _, scenario := range []string{"gate", "gate-session"} {
+		if !supportedBurninScenario(scenario) {
+			t.Fatalf("supportedBurninScenario(%q) = false", scenario)
+		}
 	}
 }
 
@@ -64,11 +66,14 @@ func TestPrintBurninScenarios(t *testing.T) {
 	printBurninScenarios(&buf)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if got, want := len(lines), len(burninScenarios)+1; got != want {
+	if got, want := len(lines), len(burninScenarios)+2; got != want {
 		t.Fatalf("printed %d scenarios, want %d", got, want)
 	}
 	if lines[0] != "gate" {
 		t.Fatalf("first scenario = %q, want gate", lines[0])
+	}
+	if lines[1] != "gate-session" {
+		t.Fatalf("second scenario = %q, want gate-session", lines[1])
 	}
 	if lines[len(lines)-1] != "overlap-running24" {
 		t.Fatalf("last scenario = %q, want overlap-running24", lines[len(lines)-1])
