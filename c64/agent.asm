@@ -2099,6 +2099,7 @@ fd_exec_start:
         // ---- Start keystroke injection ----
         lda CURSOR_ROW
         sta scan_start          // scanner will only check rows > scan_start
+        jsr clear_input_row
 
         ldx exec_len
         lda #$0D                // RETURN key
@@ -2216,6 +2217,27 @@ spx_next:
 spx_done:
         lda $FB
         ldy $FC
+        rts
+
+// ---------------------------------------------------------
+// clear_input_row — blank the current editor row before EXEC injection.
+//
+// The KERNAL screen editor parses the visible logical line on RETURN.
+// Clearing stale cells prevents short injected commands from inheriting
+// old screen content after a previous command left the cursor on a reused row.
+// ---------------------------------------------------------
+clear_input_row:
+        lda #0
+        sta CURSOR_COL
+        ldx CURSOR_ROW
+        jsr screen_ptr_from_x
+        ldy #0
+        lda #$20
+cir_loop:
+        sta ($FB),y
+        iny
+        cpy #40
+        bne cir_loop
         rts
 
 // ---------------------------------------------------------
