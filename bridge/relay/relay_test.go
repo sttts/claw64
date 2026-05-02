@@ -93,6 +93,41 @@ func TestFrameWaitTimeout(t *testing.T) {
 	}
 }
 
+func TestTransportIDAheadHandlesWrapAndStaleIDs(t *testing.T) {
+	tests := []struct {
+		name string
+		id   byte
+		last byte
+		want bool
+	}{
+		{name: "next", id: 18, last: 17, want: true},
+		{name: "same", id: 17, last: 17, want: false},
+		{name: "stale", id: 12, last: 17, want: false},
+		{name: "wrap", id: 1, last: 126, want: true},
+		{name: "pre wrap stale", id: 126, last: 1, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := transportIDAhead(tt.id, tt.last); got != tt.want {
+				t.Fatalf("transportIDAhead(%d, %d) = %t, want %t", tt.id, tt.last, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSemanticConfirmsDeliveryForToolResponses(t *testing.T) {
+	if !semanticConfirmsDelivery("STATUS", serial.FrameStatus) {
+		t.Fatalf("STATUS response should confirm STATUS delivery")
+	}
+	if !semanticConfirmsDelivery("SCREENSHOT", serial.FrameResult) {
+		t.Fatalf("RESULT response should confirm SCREENSHOT delivery")
+	}
+	if semanticConfirmsDelivery("STATUS", serial.FrameSystem) {
+		t.Fatalf("SYSTEM response should not confirm STATUS delivery")
+	}
+}
+
 func TestAppendC64LLMEventUsesBackendCompatibleUserRole(t *testing.T) {
 	r := &Relay{History: NewHistory()}
 

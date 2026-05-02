@@ -48,8 +48,8 @@ type Relay struct {
 	basicRunning    bool
 	completionDrain bool   // hold TEXT while RUNNING→RESULT drains
 	nextTxID        byte   // bridge→C64 transport ID counter
-	rxLastID        byte   // last accepted C64→bridge transport ID
-	rxLastType      byte   // frame type of last accepted C64→bridge frame
+	rxLastID        byte   // newest accepted C64→bridge transport ID
+	rxLastType      byte   // frame type of newest accepted C64→bridge frame
 	pendingAcks     []byte // queued ACK IDs to send during next quiet window
 	pendingFrames   []queuedFrame
 	lateAckIDs      map[byte]struct{}
@@ -1144,7 +1144,7 @@ func (r *Relay) sendVerifiedOrSemanticWith(ctx context.Context, frame serial.Fra
 			return err
 		}
 
-		ok, err := r.waitForAckOrSemantic(ctx, id, timeout)
+		ok, err := r.waitForAckOrSemantic(ctx, id, timeout, name)
 		if err != nil {
 			r.noteDeliveryRetry(name, attempt+1, err)
 			logWarnf("     ! %s ack attempt %d failed: %v", name, attempt+1, err)
@@ -1161,6 +1161,11 @@ func (r *Relay) sendVerifiedOrSemanticWith(ctx context.Context, frame serial.Fra
 		if attempt+1 < len(retryDelays) {
 			time.Sleep(retryDelays[attempt])
 		}
+	}
+	if filename, err := r.WriteDebugDump("delivery failure: " + name); err == nil {
+		logWarnf("     ! delivery failure dump written to %s", filename)
+	} else {
+		logWarnf("     ! delivery failure dump failed: %v", err)
 	}
 	return fmt.Errorf("%s delivery could not be verified after %d attempt(s)", name, len(retryDelays))
 }
@@ -1235,9 +1240,24 @@ func (r *Relay) acceptC64FrameWith(f *serial.Frame, ackNow bool, flush bool) boo
 		log.Printf("%s", flowLine("", "←", "C64", "dedup", fmt.Sprintf("type=%s id=%d", serial.TypeName(f.Type), id)))
 		return true
 	}
+	if r.rxLastID != 0 && !transportIDAhead(id, r.rxLastID) {
+		log.Printf("%s", flowLine("", "←", "C64", "dedup", fmt.Sprintf("stale type=%s id=%d newest=%d", serial.TypeName(f.Type), id, r.rxLastID)))
+		return true
+	}
 	r.rxLastID = id
 	r.rxLastType = f.Type
 	return false
+}
+
+func transportIDAhead(id, last byte) bool {
+	if id == last {
+		return false
+	}
+	diff := int(id) - int(last)
+	if diff < 0 {
+		diff += 127
+	}
+	return diff > 0 && diff <= 63
 }
 
 // flushPendingAcks sends all queued ACK frames to the C64.
@@ -1339,7 +1359,7 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) 
 	}
 }
 
-func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.Duration) (bool, error) {
+func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.Duration, name string) (bool, error) {
 	deadline := time.Now().Add(timeout)
 
 	for {
@@ -1377,10 +1397,25 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			}
 			deadline = time.Now().Add(timeout)
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
+			if semanticConfirmsDelivery(name, f.Type) {
+				r.flushPendingAcks()
+				return true, nil
+			}
 			continue
 		default:
 			return false, fmt.Errorf("unexpected frame while waiting for ACK: %s", serial.TypeName(f.Type))
 		}
+	}
+}
+
+func semanticConfirmsDelivery(name string, frameType byte) bool {
+	switch name {
+	case "SCREENSHOT":
+		return frameType == serial.FrameResult || frameType == serial.FrameError
+	case "STATUS", "STOP":
+		return frameType == serial.FrameStatus || frameType == serial.FrameError
+	default:
+		return false
 	}
 }
 
