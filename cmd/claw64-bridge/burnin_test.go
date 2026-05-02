@@ -54,6 +54,9 @@ func TestSupportedBurninScenarios(t *testing.T) {
 	if supportedBurninScenario("missing") {
 		t.Fatalf("supportedBurninScenario(%q) = true", "missing")
 	}
+	if !supportedBurninScenario("gate") {
+		t.Fatalf("supportedBurninScenario(%q) = false", "gate")
+	}
 }
 
 func TestPrintBurninScenarios(t *testing.T) {
@@ -61,11 +64,11 @@ func TestPrintBurninScenarios(t *testing.T) {
 	printBurninScenarios(&buf)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if got, want := len(lines), len(burninScenarios); got != want {
+	if got, want := len(lines), len(burninScenarios)+1; got != want {
 		t.Fatalf("printed %d scenarios, want %d", got, want)
 	}
-	if lines[0] != "stop-screen" {
-		t.Fatalf("first scenario = %q, want stop-screen", lines[0])
+	if lines[0] != "gate" {
+		t.Fatalf("first scenario = %q, want gate", lines[0])
 	}
 	if lines[len(lines)-1] != "overlap-running24" {
 		t.Fatalf("last scenario = %q, want overlap-running24", lines[len(lines)-1])
@@ -94,7 +97,12 @@ func TestScriptedBurninOverlapRunning3(t *testing.T) {
 	s := &scriptedBurnin{scenario: "overlap-running3"}
 
 	assertCompleteText(t, s, []llm.Message{{Role: "user", Content: "Hi"}}, "READY FOR OVERLAP.")
-	assertToolCall(t, s, []llm.Message{{Role: "user", Content: "Can you program a tiny overlap demo?"}}, "exec", `{"command":"10 PRINT \"OVERLAP ONE\""}`)
+	assertToolCall(t, s, []llm.Message{{Role: "user", Content: "Can you program a tiny overlap demo?"}}, "exec", `{"command":"30"}`)
+	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: STORED"}}, "exec", `{"command":"40"}`)
+	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: STORED"}}, "exec", `{"command":"50"}`)
+	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: STORED"}}, "exec", `{"command":"60"}`)
+	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: STORED"}}, "exec", `{"command":"70"}`)
+	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: STORED"}}, "exec", `{"command":"10 PRINT \"OVERLAP ONE\""}`)
 	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: STORED"}}, "exec", `{"command":"20 PRINT \"OVERLAP TWO\""}`)
 	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: STORED"}}, "exec", `{"command":"LIST"}`)
 	assertCompleteText(t, s, []llm.Message{{Role: "tool", Content: "[C64 screen output]: \n10 PRINT \"OVERLAP ONE\"\n20 PRINT \"OVERLAP TWO\"\nREADY."}}, "FIRST PROGRAM STORED.")
@@ -116,6 +124,12 @@ func TestScriptedBurninSlowExec(t *testing.T) {
 	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: RUNNING"}}, "status", "{}")
 	assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: READY."}}, "screen", "{}")
 	assertCompleteText(t, s, []llm.Message{{Role: "tool", Content: "[C64 text screen screenshot]: SLOW DONE\nREADY."}}, "BURN-IN slow-exec complete.")
+}
+
+func TestScriptedBurninSlowExecCompletesWhilePolling(t *testing.T) {
+	s := &scriptedBurnin{scenario: "slow-exec", step: 3}
+
+	assertCompleteText(t, s, []llm.Message{{Role: "tool", Content: "[C64 screen output]: \"\nSLOW DONE\n\nREADY."}}, "BURN-IN slow-exec complete.")
 }
 
 func assertToolCall(t *testing.T, s *scriptedBurnin, messages []llm.Message, wantName, wantArgs string) {

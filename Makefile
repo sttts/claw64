@@ -27,8 +27,6 @@ ECHO_OUT    = c64/echotest.prg
 VEC_SRC     = c64/vectest.asm
 VEC_OUT     = c64/vectest.prg
 
-# Live scenarios that make up the developer burn-in gate.
-BURNIN_GATE_SCENARIOS = direct-exec slow-exec overlap-running24
 BURNIN_REPEAT ?= 3
 
 .PHONY: assemble assets echotest vectest vice vice-vec vice-echo bridge run test test-serial burnin burnin-repeat burnin-direct burnin-overlap ports kill clean clean-all clean-ports
@@ -155,16 +153,14 @@ test-serial:
 	cd tools && go run serialtest.go
 
 # run all live burn-in scenarios used by the developer gate
-burnin: $(BURNIN_GATE_SCENARIOS:%=burnin-%)
+burnin: assemble
+	@$(call RUN_BURNIN,gate)
 
 # repeat the full live burn-in gate to catch timing flakes
 burnin-repeat: assemble
 	@for RUN in $$(seq 1 $(BURNIN_REPEAT)); do \
 	  echo "burnin repeat $$RUN/$(BURNIN_REPEAT)"; \
-	  for SCENARIO in $(BURNIN_GATE_SCENARIOS); do \
-	    echo "burnin scenario $$SCENARIO"; \
-	    $(call RUN_BURNIN,$$SCENARIO); \
-	  done; \
+	  $(call RUN_BURNIN,gate); \
 	done
 
 # run the default direct execution burn-in

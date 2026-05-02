@@ -1207,19 +1207,15 @@ func (r *Relay) consumeLateAck(id byte) bool {
 	return true
 }
 
-func (r *Relay) ackReliableFrameNow(f serial.Frame) {
-	if !serial.IsReliableC64(f.Type) {
-		return
-	}
-	id, _, ok := serial.StripID(f.Payload)
-	if !ok {
-		return
-	}
-	r.queueAckToC64(id)
-	r.flushPendingAcks()
+func (r *Relay) acceptC64Frame(f *serial.Frame, ackNow bool) bool {
+	return r.acceptC64FrameWith(f, ackNow, true)
 }
 
-func (r *Relay) acceptC64Frame(f *serial.Frame, ackNow bool) bool {
+func (r *Relay) acceptC64FrameQueued(f *serial.Frame, ackNow bool) bool {
+	return r.acceptC64FrameWith(f, ackNow, false)
+}
+
+func (r *Relay) acceptC64FrameWith(f *serial.Frame, ackNow bool, flush bool) bool {
 	if !serial.IsReliableC64(f.Type) {
 		return false
 	}
@@ -1230,7 +1226,9 @@ func (r *Relay) acceptC64Frame(f *serial.Frame, ackNow bool) bool {
 	}
 	if ackNow {
 		r.queueAckToC64(id)
-		r.flushPendingAcks()
+		if flush {
+			r.flushPendingAcks()
+		}
 	}
 	f.Payload = body
 	if id == r.rxLastID && f.Type == r.rxLastType {
@@ -1289,14 +1287,14 @@ func (r *Relay) settlePendingAcks() {
 // unwrapC64Frame strips the transport ID from a reliable C64→bridge frame,
 // queues ACK, and returns (frame with stripped payload, isDuplicate).
 func (r *Relay) unwrapC64Frame(f *serial.Frame) bool {
-	return r.acceptC64Frame(f, true)
+	return r.acceptC64FrameQueued(f, true)
 }
 
 func (r *Relay) unwrapAcceptedFrame(f *serial.Frame, accepted bool, ackNow bool) (bool, bool) {
 	if accepted {
 		return false, true
 	}
-	if r.acceptC64Frame(f, ackNow) {
+	if r.acceptC64FrameQueued(f, ackNow) {
 		return true, false
 	}
 	return false, true
@@ -1322,7 +1320,13 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) 
 			continue
 		case serial.FrameUser, serial.FrameSystem, serial.FrameStatus,
 			serial.FrameResult, serial.FrameError, serial.FrameLLM:
-			if r.acceptC64Frame(&f, true) {
+			acceptedDuplicate := false
+			if waitingTextAck {
+				acceptedDuplicate = r.acceptC64Frame(&f, true)
+			} else {
+				acceptedDuplicate = r.acceptC64FrameQueued(&f, true)
+			}
+			if acceptedDuplicate {
 				continue
 			}
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
@@ -1359,7 +1363,7 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			logWarnf("     ! ACK id mismatch: got %d want %d", ackID, id)
 			continue
 		case serial.FrameUser, serial.FrameSystem:
-			if r.acceptC64Frame(&f, true) {
+			if r.acceptC64FrameQueued(&f, true) {
 				continue
 			}
 			deadline = time.Now().Add(timeout)
@@ -1368,7 +1372,7 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 		case serial.FrameHeartbeat:
 			continue
 		case serial.FrameStatus, serial.FrameResult, serial.FrameError, serial.FrameLLM:
-			if r.acceptC64Frame(&f, true) {
+			if r.acceptC64FrameQueued(&f, true) {
 				continue
 			}
 			deadline = time.Now().Add(timeout)
@@ -1376,6 +1380,42 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			continue
 		default:
 			return false, fmt.Errorf("unexpected frame while waiting for ACK: %s", serial.TypeName(f.Type))
+		}
+	}
+}
+
+// DrainTransport consumes late transport frames until the C64 link is quiet.
+// It is intended for deterministic test/burn-in boundaries, not agent logic.
+func (r *Relay) DrainTransport(ctx context.Context, quiet, max time.Duration) error {
+	deadline := time.Now().Add(max)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("transport did not settle within %s", max)
+		}
+		wait := quiet
+		if remaining < wait {
+			wait = remaining
+		}
+
+		waitCtx, cancel := context.WithTimeout(ctx, wait)
+		f, err := r.recvFromSocketOnly(waitCtx, false)
+		cancel()
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil
+			}
+			return err
+		}
+
+		switch f.Type {
+		case serial.FrameAck, serial.FrameHeartbeat:
+			continue
+		case serial.FrameUser, serial.FrameSystem, serial.FrameStatus,
+			serial.FrameResult, serial.FrameError, serial.FrameLLM:
+			r.acceptC64FrameQueued(&f, true)
+		default:
+			log.Printf("%s", flowLine("", "←", "C64", "drain", fmt.Sprintf("discarded %s", serial.TypeName(f.Type))))
 		}
 	}
 }

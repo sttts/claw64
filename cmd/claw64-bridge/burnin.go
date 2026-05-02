@@ -83,7 +83,12 @@ var burninScenarios = []burninScenario{
 	{name: "overlap-running24", overlapRuns: 24},
 }
 
+var burninGateScenarios = []string{"direct-exec", "slow-exec", "overlap-running24"}
+
 func supportedBurninScenario(scenario string) bool {
+	if scenario == "gate" {
+		return true
+	}
 	for _, supported := range burninScenarios {
 		if scenario == supported.name {
 			return true
@@ -102,7 +107,7 @@ func overlapScenarioRuns(scenario string) (int, bool) {
 }
 
 func supportedBurninScenarios() string {
-	return strings.Join(burninScenarioNames(), ", ")
+	return strings.Join(append([]string{"gate"}, burninScenarioNames()...), ", ")
 }
 
 func burninScenarioNames() []string {
@@ -114,6 +119,7 @@ func burninScenarioNames() []string {
 }
 
 func printBurninScenarios(w io.Writer) {
+	fmt.Fprintln(w, "gate")
 	for _, name := range burninScenarioNames() {
 		fmt.Fprintln(w, name)
 	}
@@ -355,6 +361,9 @@ func (s *scriptedBurnin) completeSlowExec(messages []llm.Message) (llm.Message, 
 			return llm.Message{}, fmt.Errorf("step %d: expected slow EXEC result or RUNNING, got %q", s.step, lastTool)
 		}
 	case 3:
+		if slowExecResultLooksDone(lastTool) {
+			return llm.Message{Role: "assistant", Content: "BURN-IN slow-exec complete."}, nil
+		}
 		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
 		switch status {
 		case "RUNNING", "STOP REQUESTED":
@@ -366,8 +375,7 @@ func (s *scriptedBurnin) completeSlowExec(messages []llm.Message) (llm.Message, 
 			return llm.Message{}, fmt.Errorf("step %d: expected RUNNING/READY while draining slow EXEC, got %q", s.step, lastTool)
 		}
 	case 4:
-		if !toolResultContains(lastTool, "[C64 text screen screenshot]: ", "SLOW DONE", "READY.") &&
-			!toolResultContains(lastTool, "[C64 screen output]: ", "SLOW DONE", "READY.") {
+		if !slowExecResultLooksDone(lastTool) {
 			return llm.Message{}, fmt.Errorf("step %d: expected slow EXEC final screen, got %q", s.step, lastTool)
 		}
 		return llm.Message{Role: "assistant", Content: "BURN-IN slow-exec complete."}, nil
@@ -384,30 +392,40 @@ func (s *scriptedBurnin) completeOverlapQueue(messages []llm.Message, totalRuns 
 		return llm.Message{Role: "assistant", Content: "READY FOR OVERLAP."}, nil
 	}
 
-	if s.step >= 4 {
+	if s.step >= 9 {
 		return s.completeOverlapRunStep(lastUser, lastTool, totalRuns)
 	}
 
+	clearLines := []string{"30", "40", "50", "60", "70"}
 	switch s.step {
 	case 0:
 		if !strings.Contains(lastUser, "program") {
 			return llm.Message{}, fmt.Errorf("step %d: expected programming request, got %q", s.step, lastUser)
 		}
 		s.step++
+		return execToolCall(clearLines[0], s.step), nil
+	case 1, 2, 3, 4, 5:
+		if lastTool != "[C64 BASIC status]: STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED for cleanup line, got %q", s.step, lastTool)
+		}
+		s.step++
+		if s.step <= len(clearLines) {
+			return execToolCall(clearLines[s.step-1], s.step), nil
+		}
 		return execToolCall("10 PRINT \"OVERLAP ONE\"", s.step), nil
-	case 1:
+	case 6:
 		if lastTool != "[C64 BASIC status]: STORED" {
 			return llm.Message{}, fmt.Errorf("step %d: expected STORED for line 10, got %q", s.step, lastTool)
 		}
 		s.step++
 		return execToolCall("20 PRINT \"OVERLAP TWO\"", s.step), nil
-	case 2:
+	case 7:
 		if lastTool != "[C64 BASIC status]: STORED" {
 			return llm.Message{}, fmt.Errorf("step %d: expected STORED for line 20, got %q", s.step, lastTool)
 		}
 		s.step++
 		return execToolCall("LIST", s.step), nil
-	case 3:
+	case 8:
 		if !toolResultContains(lastTool, "[C64 screen output]: ", "10 PRINT \"OVERLAP ONE\"", "20 PRINT \"OVERLAP TWO\"", "READY.") {
 			return llm.Message{}, fmt.Errorf("step %d: expected LIST output, got %q", s.step, lastTool)
 		}
@@ -422,9 +440,14 @@ func execToolCall(command string, n int) llm.Message {
 	return simpleToolCall("exec", fmt.Sprintf("{\"command\":%q}", command), n)
 }
 
+func slowExecResultLooksDone(result string) bool {
+	return toolResultContains(result, "[C64 text screen screenshot]: ", "SLOW DONE", "READY.") ||
+		toolResultContains(result, "[C64 screen output]: ", "SLOW DONE", "READY.")
+}
+
 func (s *scriptedBurnin) completeOverlapRunStep(lastUser, lastTool string, totalRuns int) (llm.Message, error) {
-	completedRun := ((s.step - 4) / 4) + 2
-	phase := (s.step - 4) % 4
+	completedRun := ((s.step - 9) / 4) + 2
+	phase := (s.step - 9) % 4
 	if completedRun > totalRuns {
 		return llm.Message{}, fmt.Errorf("unexpected scripted step %d after %d overlap runs", s.step, totalRuns)
 	}
@@ -473,7 +496,7 @@ func (s *scriptedBurnin) completeOverlapRunStep(lastUser, lastTool string, total
 
 func (s *scriptedBurnin) completeOverlapRun(completedRun, totalRuns int) llm.Message {
 	if totalRuns > completedRun {
-		s.step = 4 + (completedRun-1)*4
+		s.step = 9 + (completedRun-1)*4
 	}
 	return llm.Message{Role: "assistant", Content: overlapRunCompleteText(completedRun)}
 }
@@ -660,7 +683,20 @@ func runBurnin(cfg CLI, scenario string) {
 	if !supportedBurninScenario(scenario) {
 		log.Fatalf("burnin: unknown scenario %q; supported scenarios: %s", scenario, supportedBurninScenarios())
 	}
+	if scenario == "gate" {
+		runBurninGate(cfg)
+		return
+	}
+	runBurninScenarios(cfg, []string{scenario})
+}
 
+func runBurninGate(cfg CLI) {
+	for _, scenario := range burninGateScenarios {
+		runBurninScenarios(cfg, []string{scenario})
+	}
+}
+
+func runBurninScenarios(cfg CLI, scenarios []string) {
 	ctx := context.Background()
 
 	if cfg.SerialAddr == "" || cfg.MonitorAddr == "" {
@@ -683,6 +719,33 @@ func runBurnin(cfg CLI, scenario string) {
 
 	log.Println("serial: ready")
 
+	rl := &relay.Relay{
+		Link:        link,
+		History:     relay.NewHistory(),
+		DebugDir:    "debug",
+		MonitorAddr: cfg.MonitorAddr,
+		SymbolPath:  defaultSymbolPath(),
+	}
+	rl.SetupProgress()
+
+	log.Printf("bridge: burnin=%s serial=%s", strings.Join(scenarios, ","), cfg.SerialAddr)
+
+	// Split VICE/bridge startup leaves a short reconnect window after the
+	// C64 handshake. Let the serial side settle before the first scripted MSG.
+	time.Sleep(750 * time.Millisecond)
+
+	for idx, scenario := range scenarios {
+		if idx > 0 {
+			time.Sleep(750 * time.Millisecond)
+		}
+		runBurninScenario(ctx, rl, scenario)
+		if err := rl.DrainTransport(ctx, 750*time.Millisecond, 5*time.Second); err != nil {
+			log.Fatalf("burnin: drain after %s: %v", scenario, err)
+		}
+	}
+}
+
+func runBurninScenario(ctx context.Context, rl *relay.Relay, scenario string) {
 	var deliveryRetries map[string]int
 	var deliveryRetry func(name string, attempt int, err error)
 	if scenario == "slow-exec" {
@@ -692,22 +755,10 @@ func runBurnin(cfg CLI, scenario string) {
 		}
 	}
 
-	rl := &relay.Relay{
-		Link:          link,
-		LLM:           &scriptedBurnin{scenario: scenario},
-		History:       relay.NewHistory(),
-		DebugDir:      "debug",
-		MonitorAddr:   cfg.MonitorAddr,
-		SymbolPath:    defaultSymbolPath(),
-		DeliveryRetry: deliveryRetry,
-	}
-	rl.SetupProgress()
-
-	log.Printf("bridge: burnin=%s serial=%s", scenario, cfg.SerialAddr)
-
-	// Split VICE/bridge startup leaves a short reconnect window after the
-	// C64 handshake. Let the serial side settle before the first scripted MSG.
-	time.Sleep(750 * time.Millisecond)
+	rl.LLM = &scriptedBurnin{scenario: scenario}
+	rl.History = relay.NewHistory()
+	rl.DeliveryRetry = deliveryRetry
+	log.Printf("burnin: scenario %s starting", scenario)
 
 	if _, ok := overlapScenarioRuns(scenario); ok {
 		runOverlapBurnin(ctx, rl, scenario)
@@ -719,7 +770,7 @@ func runBurnin(cfg CLI, scenario string) {
 	inputs := burninInputs(scenario)
 	var lastText string
 	for _, input := range inputs {
-		err = rl.HandleMessageStream(ctx, "burnin", input, func(message string) error {
+		err := rl.HandleMessageStream(ctx, "burnin", input, func(message string) error {
 			lastText = message
 			fmt.Fprintf(os.Stdout, "\n%s %s\n", "c64>", message)
 			return nil
