@@ -148,6 +148,7 @@ underlying bridge flag is `--serial-port`; setting it implies
 The physical setup currently uses a user port RS232 adapter based on Jan
 Klingel's [Commodore 64/128 to PC serial guide](https://janklingel.de/2025/03/21/connecting-commodore-64-128-to-pc/)
 with an [HC-05 serial Bluetooth module](https://www.amazon.de/dp/B07J66PR6B?ref=ppx_yo2ov_dt_b_fed_asin_title).
+The case is this [3D-printed user port adapter](https://www.thingiverse.com/thing:3368773).
 
 <p align="center">
   <img src="docs/userport-adapter.jpg" width="80%" alt="Claw64 C64 user port serial Bluetooth adapter">
