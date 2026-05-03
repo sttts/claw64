@@ -772,7 +772,7 @@ func runBurninScenarios(cfg CLI, scenarios []string) {
 	}
 	rl.SetupProgress()
 
-	log.Printf("bridge: burnin=%s serial=%s", strings.Join(scenarios, ","), cfg.SerialAddr)
+	log.Printf("bridge: burnin=%s serial=%s", strings.Join(scenarios, ","), serialLabel(cfg))
 
 	// Split VICE/bridge startup leaves a short reconnect window after the
 	// C64 handshake. Let the serial side settle before the first scripted MSG.

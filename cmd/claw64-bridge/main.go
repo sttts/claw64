@@ -57,6 +57,7 @@ func (w *lineLogWriter) flush() {
 
 type CLI struct {
 	SerialAddr  string `name:"serial-addr" help:"Serial TCP address VICE connects to. Defaults to the worktree .ports file when present."`
+	SerialPort  string `name:"serial-port" help:"Real serial device path, for example /dev/cu.C64. Implies --spawn-vice=false."`
 	MonitorAddr string `name:"monitor-addr" help:"VICE remote monitor address. Defaults to the worktree .ports file when present."`
 	LLM         string `name:"llm" default:"openai" enum:"anthropic,openai,ollama" help:"LLM backend."`
 	Model       string `name:"model" help:"Override the LLM model name."`
@@ -127,6 +128,7 @@ func main() {
 		kong.Name("claw64-bridge"),
 		kong.Description("Bridge chat platforms to the C64 agent."),
 	)
+	normalizeCLI(&cli)
 
 	switch ctx.Command() {
 	case "stdin":
@@ -165,9 +167,15 @@ func main() {
 		}
 		log.Printf("auth: saved Anthropic token to %s", path)
 	case "test-serial":
-		testSerial(cli.SerialAddr, cli.TestSerial.Command)
+		testSerial(cli, cli.TestSerial.Command)
 	default:
 		ctx.FatalIfErrorf(fmt.Errorf("unknown command %q", ctx.Command()))
+	}
+}
+
+func normalizeCLI(cli *CLI) {
+	if cli.SerialPort != "" {
+		cli.SpawnVICE = false
 	}
 }
 
@@ -250,7 +258,7 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	}
 	rl.SetupProgress()
 
-	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, cfg.SerialAddr)
+	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, serialLabel(cfg))
 
 	err = ch.Start(ctx, func(ctx context.Context, userID, text string) error {
 		err := rl.HandleMessageStream(ctx, userID, text, func(message string) error {
@@ -288,6 +296,10 @@ func (v *runningVICE) wait() error {
 }
 
 func startSerialLink(cfg CLI) (*serial.Link, *runningVICE, func(), error) {
+	if cfg.SerialPort != "" {
+		link, err := serial.OpenDevice(cfg.SerialPort)
+		return link, nil, func() {}, err
+	}
 	if cfg.SerialAddr == "" || cfg.MonitorAddr == "" {
 		serialAddr, monitorAddr := defaultPortAddrs()
 		if cfg.SerialAddr == "" {
@@ -304,6 +316,13 @@ func startSerialLink(cfg CLI) (*serial.Link, *runningVICE, func(), error) {
 	}
 
 	return startSpawnedSerialLink(cfg)
+}
+
+func serialLabel(cfg CLI) string {
+	if cfg.SerialPort != "" {
+		return cfg.SerialPort
+	}
+	return cfg.SerialAddr
 }
 
 func startSpawnedSerialLink(cfg CLI) (*serial.Link, *runningVICE, func(), error) {
@@ -534,8 +553,16 @@ func stopVICE(vice *runningVICE) {
 	_ = vice.wait()
 }
 
-func testSerial(addr, command string) {
-	link, err := serial.Listen(addr)
+func testSerial(cfg CLI, command string) {
+	var (
+		link *serial.Link
+		err  error
+	)
+	if cfg.SerialPort != "" {
+		link, err = serial.OpenDevice(cfg.SerialPort)
+	} else {
+		link, err = serial.Listen(cfg.SerialAddr)
+	}
 	if err != nil {
 		log.Fatalf("serial: %v", err)
 	}

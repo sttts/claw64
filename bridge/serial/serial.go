@@ -1,5 +1,5 @@
-// Package serial provides the TCP connection to VICE's emulated
-// RS232 userport. VICE acts as a TCP client connecting to us.
+// Package serial provides connections to VICE's emulated RS232 userport
+// over TCP and to real serial devices.
 package serial
 
 import (
@@ -15,7 +15,7 @@ import (
 // Link is a serial connection to the C64 via VICE's TCP RS232.
 type Link struct {
 	ln   net.Listener
-	conn net.Conn
+	conn io.ReadWriteCloser
 	mu   sync.Mutex // serializes writes
 
 	// OnSendByte is called during Send for each payload byte sent.
@@ -26,6 +26,10 @@ type Link struct {
 	OnRecvByte func(frameType byte, idx int, b byte)
 
 	Debug bool // log every byte on the wire
+}
+
+type readDeadliner interface {
+	SetReadDeadline(time.Time) error
 }
 
 // debugWriter wraps a writer and logs every byte written.
@@ -75,6 +79,23 @@ func Listen(addr string) (*Link, error) {
 	log.Printf("serial: listening on %s — start VICE now", addr)
 
 	return waitForHandshake(ln)
+}
+
+// OpenDevice opens a real serial device and waits for the C64 handshake.
+func OpenDevice(path string) (*Link, error) {
+	conn, err := openDevice(path)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("serial: opened %s at 2400,0,0 — waiting for C64 handshake", path)
+
+	link, err := waitForHandshakeByte(conn)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	log.Printf("serial: C64 agent ready (handshake '!')")
+	return link, nil
 }
 
 // ListenAndStart binds the TCP listener, runs start, then waits for the C64 handshake.
@@ -204,6 +225,24 @@ func waitForHandshake(ln net.Listener) (*Link, error) {
 	}
 }
 
+func waitForHandshakeByte(conn io.ReadWriteCloser) (*Link, error) {
+	buf := make([]byte, 1)
+	for {
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return nil, fmt.Errorf("handshake: %w", err)
+		}
+		if buf[0] == 0x21 {
+			l := &Link{conn: conn}
+			l.Debug = os.Getenv("CLAW64_SERIAL_DEBUG") != ""
+			if l.Debug {
+				log.Println("serial: DEBUG mode — logging all bytes")
+			}
+			return l, nil
+		}
+		log.Printf("serial: unexpected byte 0x%02X, waiting for handshake", buf[0])
+	}
+}
+
 // Send writes a frame to the C64 byte-by-byte with delays.
 func (l *Link) Send(f Frame) error {
 	l.mu.Lock()
@@ -270,7 +309,11 @@ func (l *Link) Recv() (Frame, error) {
 
 // DrainRead reads and discards all pending data with a timeout.
 func (l *Link) DrainRead(timeout time.Duration) {
-	l.conn.SetReadDeadline(time.Now().Add(timeout))
+	deadliner, ok := l.conn.(readDeadliner)
+	if !ok {
+		return
+	}
+	deadliner.SetReadDeadline(time.Now().Add(timeout))
 	buf := make([]byte, 1024)
 	for {
 		_, err := l.conn.Read(buf)
@@ -278,7 +321,7 @@ func (l *Link) DrainRead(timeout time.Duration) {
 			break
 		}
 	}
-	l.conn.SetReadDeadline(time.Time{})
+	deadliner.SetReadDeadline(time.Time{})
 }
 
 // Close shuts down the serial link.
