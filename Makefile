@@ -26,10 +26,11 @@ ECHO_SRC    = c64/echotest.asm
 ECHO_OUT    = c64/echotest.prg
 VEC_SRC     = c64/vectest.asm
 VEC_OUT     = c64/vectest.prg
+D64_OUT     = c64/agent.d64
 
 BURNIN_REPEAT ?= 3
 
-.PHONY: assemble assets echotest vectest vice vice-vec vice-echo bridge run test test-serial burnin burnin-repeat burnin-direct burnin-overlap ports kill clean clean-all clean-ports
+.PHONY: assemble assets d64 echotest vectest vice vice-vec vice-echo bridge run test test-serial burnin burnin-repeat burnin-direct burnin-overlap ports kill clean clean-all clean-ports
 
 define KILL_PORTS
 	@. ./$(PORT_FILE); \
@@ -93,6 +94,10 @@ assets:
 assemble: $(KICKASS_JAR)
 	java -jar $(KICKASS_JAR) -o $(ASM_OUT) $(ASM_SRC)
 	java -jar $(KICKASS_JAR) -o $(LOADER_OUT) $(LOADER_SRC)
+
+# create a D64 disk image with agent.prg
+d64: assemble
+	c1541 -format "claw64,01" d64 $(D64_OUT) -write $(ASM_OUT) agent
 
 # assemble the echo test
 echotest: $(KICKASS_JAR)
@@ -186,7 +191,7 @@ kill: $(PORT_FILE)
 
 # remove build artifacts
 clean:
-	rm -f $(ASM_OUT) c64/*.sym
+	rm -f $(ASM_OUT) $(D64_OUT) c64/*.sym
 
 # remove port allocation
 clean-ports:
