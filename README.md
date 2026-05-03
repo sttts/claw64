@@ -151,8 +151,9 @@ of blocking silently.
 
 For real hardware bring-up, the top-left screen character is a startup
 checkpoint. Start `make bridge-serial` first, then start the C64 program. When
-the character reaches `M`, RS232 is configured and the C64 is sending the
-handshake byte. If the bridge still says `waiting for C64 handshake` after `M`
+the character reaches `M`, RS232 is configured. The C64 keeps sending the
+handshake byte until the first valid bridge frame arrives, then clears `M` back
+to a space. If the bridge still says `waiting for C64 handshake` after `M`
 appears, check the serial device, Bluetooth pairing, wiring, and baud settings.
 
 | Character | Startup phase |
@@ -169,7 +170,7 @@ appears, check the serial device, Bluetooth pairing, wiring, and baud settings.
 | `J` | sprite data copied |
 | `K` | resident agent install entered |
 | `L` | vectors and sprites installed |
-| `M` | RS232 configured; handshake is being sent |
+| `M` | RS232 configured; handshake is being repeated |
 
 The physical setup currently uses a user port RS232 adapter based on Jan
 Klingel's [Commodore 64/128 to PC serial guide](https://janklingel.de/2025/03/21/connecting-commodore-64-128-to-pc/)

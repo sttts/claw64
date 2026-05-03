@@ -323,21 +323,7 @@ cp_bas_wr:
         // Startup checkpoint M: RS232 is configured and the handshake is next.
         inc SCREEN_RAM
 
-        // ---- Send handshake byte before switching to RAM mode ----
-        // Match the later RS232 send path's file-table repair.
-        lda LDTND
-        bne hs_chrout
-        lda LAT
-        cmp #RS232_DEV
-        bne hs_chrout
-        lda #1
-        sta LDTND
-hs_chrout:
-        ldx #RS232_DEV
-        jsr CHKOUT              // set RS232 as output
-        lda #$21                // '!' handshake
-        jsr CHROUT              // send via RS232 (not screen)
-        jsr CLRCHN              // reset I/O
+        // The idle loop sends handshakes until the first bridge frame arrives.
 
         // System prompt is sent on first MSG (needs echo for VICE TX)
 
@@ -448,6 +434,7 @@ bl_rx_loop:
 
 bl_rx_done:
         jsr CLRCHN
+        jsr service_startup_handshake
 
         // Once we're back in the prompt-idle loop, make READY detection
         // converge even if the KERNAL editor trampoline was not the path
@@ -1070,6 +1057,21 @@ so_send_loop:
         jmp so_send_loop
 
 so_done:
+        rts
+
+// service_startup_handshake — keep advertising readiness until bridge input.
+service_startup_handshake:
+        lda rx_last_id
+        bne ssh_done
+        lda $A2
+        sec
+        sbc tx_ack_tick
+        bpl ssh_done
+        lda $A2
+        sta tx_ack_tick
+        lda #$21                // '!' handshake
+        jmp so_chrout
+ssh_done:
         rts
 
 // so_chrout — send one byte via RS232 CHROUT with LDTND fix.
@@ -1951,6 +1953,8 @@ fd_accept:
         // New reliable frame — store newest (id, type) and queue ACK.
         lda fd_cur_id
         sta rx_last_id
+        lda #$20
+        sta SCREEN_RAM
         lda tx_ack_wait
         beq fd_accept_confirmed
         lda send_total
