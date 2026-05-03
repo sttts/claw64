@@ -143,7 +143,9 @@ make bridge-serial SERIAL_DEVICE=/dev/ttyUSB0
 
 This opens the device as raw `2400,0,0` / 8N1 with no flow control. The
 underlying bridge flag is `--serial-port`; setting it implies
-`--spawn-vice=false`.
+`--spawn-vice=false`. If a Bluetooth serial connection drops before the C64
+handshake arrives, the bridge logs the error, reopens the device, and keeps
+waiting.
 
 For real hardware bring-up, the top-left screen character is a startup
 checkpoint. Start `make bridge-serial` first, then start the C64 program. When

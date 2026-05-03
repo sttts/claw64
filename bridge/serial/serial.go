@@ -83,19 +83,29 @@ func Listen(addr string) (*Link, error) {
 
 // OpenDevice opens a real serial device and waits for the C64 handshake.
 func OpenDevice(path string) (*Link, error) {
-	conn, err := openDevice(path)
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("serial: opened %s at 2400,0,0 — waiting for C64 handshake", path)
+	openedOnce := false
+	for {
+		conn, err := openDevice(path)
+		if err != nil {
+			if !openedOnce {
+				return nil, err
+			}
+			log.Printf("serial: reopen %s failed: %v; retrying", path, err)
+			time.Sleep(time.Second)
+			continue
+		}
+		openedOnce = true
+		log.Printf("serial: opened %s at 2400,0,0 — waiting for C64 handshake", path)
 
-	link, err := waitForHandshakeByte(conn)
-	if err != nil {
+		link, err := waitForHandshakeByte(conn)
+		if err == nil {
+			log.Printf("serial: C64 agent ready (handshake '!')")
+			return link, nil
+		}
 		conn.Close()
-		return nil, err
+		log.Printf("serial: handshake on %s failed: %v; reopening", path, err)
+		time.Sleep(time.Second)
 	}
-	log.Printf("serial: C64 agent ready (handshake '!')")
-	return link, nil
 }
 
 // ListenAndStart binds the TCP listener, runs start, then waits for the C64 handshake.
