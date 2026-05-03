@@ -1890,15 +1890,23 @@ fd_reliable:
         sta fd_cur_id
         dec frame_len           // body length = original - 1
 
-        // Duplicate suppression: if (id, type) matches last accepted, re-ACK only.
+        // Duplicate/stale suppression: old ids are ACKed but not replayed.
+        lda rx_last_id
+        beq fd_accept
         lda fd_cur_id
         cmp rx_last_id
-        bne fd_accept
-        lda frame_sub
-        cmp rx_last_type
-        bne fd_accept
+        beq fd_stale
+        bcs fd_id_forward
+        clc
+        adc #127
+fd_id_forward:
+        sec
+        sbc rx_last_id
+        cmp #64
+        bcc fd_accept
 
-        // Duplicate — re-ACK without replaying side effects.
+fd_stale:
+        // Stale/duplicate — re-ACK without replaying side effects.
         lda frame_sub
         cmp #FRAME_TEXT
         bne fd_dup_ack
@@ -1911,7 +1919,7 @@ fd_dup_ack:
         rts
 
 fd_accept:
-        // New reliable frame — store (id, type) and queue ACK.
+        // New reliable frame — store newest (id, type) and queue ACK.
         lda fd_cur_id
         sta rx_last_id
         lda frame_sub

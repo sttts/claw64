@@ -88,7 +88,7 @@ Where:
 
 - `ID` is 1 byte at first
 - ids are scoped per direction
-- sender increments modulo 256 and skips `0` on wraparound
+- sender increments in the 7-bit-clean range `1..127` and skips `0`
 
 This transport state is not agent state. It is the minimum key needed to make
 retries and duplicate suppression safe on the C64.
@@ -108,7 +108,7 @@ Rules:
 - receiver sends `ACK(id)` only when the reliable frame has been accepted far
   enough that the sender may continue safely
 - bad checksum: drop silently, no ACK
-- duplicate `id`: do not re-run side effects, just re-ACK
+- duplicate or stale `id`: do not re-run side effects, just re-ACK
 - unknown future `id`: receiver may still accept it if semantics allow; strict in-order across all ids is not required
 
 `ACK` must not mean merely "I parsed the frame". It must mean:
@@ -166,7 +166,7 @@ Reliable sender behavior:
 Receiver behavior:
 
 - first valid new `id`: apply once, ACK once the sender may safely continue
-- duplicate valid `id`: re-ACK, do not repeat side effects
+- duplicate or stale valid `id`: re-ACK, do not repeat side effects
 - corrupt frame: ignore
 
 This makes retries safe.
@@ -176,18 +176,18 @@ This makes retries safe.
 The protocol is designed around tiny receiver state:
 
 - one 1-byte outbound id counter per direction
-- one `last_rx_id`
+- one newest `last_rx_id`
 - one `last_rx_type`
 
-Minimal duplicate rule:
+Minimal duplicate/stale rule:
 
-- if `(id, type)` matches the last accepted reliable inbound frame:
-  - re-ACK
-  - do not replay side effects
-- otherwise:
+- if `id` is the newest valid inbound id:
   - accept
   - store `(id, type)`
-  - ACK
+  - ACK when safe
+- if `id` is equal to or older than the newest accepted inbound id:
+  - re-ACK
+  - do not replay side effects
 
 This is cheap in both code and RAM. It deliberately does not support:
 
@@ -205,12 +205,12 @@ One-byte ids are sufficient for this protocol.
 
 Rules:
 
-- ids are compared as exact byte values, not as a larger sequence number
+- ids are compared with a tiny half-window sequence rule
 - `0` is reserved for "unset" and is never used as a live transport id
-- after `255`, the next id is `1`
+- after `127`, the next id is `1`
+- an id is ahead if it is within 63 steps of the newest accepted id
 - wraparound is safe because the protocol does not allow multiple in-flight
-  dependent reliable frames and duplicate suppression only protects against
-  the most recently accepted `(type, id)` pair
+  dependent reliable frames
 
 This keeps the transport tiny while still making retries and duplicates safe.
 
@@ -278,7 +278,7 @@ per direction.
 Minimal first step:
 
 - remember the most recent id for each reliable inbound direction
-- if the same id arrives again with the same type, re-ACK and drop semantic replay
+- if an equal or older id arrives again, re-ACK and drop semantic replay
 
 This is enough to stop duplicate `EXEC`, duplicate `STOP`, duplicate `TEXT`,
 and duplicate `USER` side effects.
