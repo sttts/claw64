@@ -92,8 +92,8 @@ install:
         // can also PATCH it (which we do at $E5D1 below).
         //
         // Copy KERNAL ($E0-$FF) FIRST, then BASIC ($A0-$CF).
-        // KERNAL must be first: during BASIC copy, NMI may fire with
-        // $01=$35 and needs KERNAL code in RAM.
+        // Writes land in RAM under ROM even while reads still see ROM,
+        // so keep $01=$37 until the copied KERNAL is complete.
         lda #$E0                // start with KERNAL
         sta cur_page
 cp:
@@ -109,19 +109,11 @@ cp_rd:  lda $E000,y             // read byte from KERNAL ROM (address is self-mo
         lda cur_page            // load current page number again
         sta cp_wr+2             // self-modify: set high byte of STA $xx00,y below
 
-        // Switch to $35 = BASIC ROM off, KERNAL as RAM, I/O visible.
-        // Now writes AND reads at $E000-$FFFF go to RAM.
-        lda #%00110101
-        sta PROCPORT
         ldy #0                  // Y = byte offset within the 256-byte page
 cp_wrl: lda TMPBUF,y            // read byte from our temporary staging buffer
 cp_wr:  sta $E000,y             // write to RAM underneath where KERNAL ROM was
         iny                     // next byte
         bne cp_wrl              // loop until Y wraps (256 bytes done)
-
-        // Switch back to $37 = ROMs visible, for next page's read phase
-        lda #%00110111
-        sta PROCPORT
 
         // Advance to next page
         inc cur_page
@@ -143,8 +135,6 @@ cp_bas_rd:
         bne cp_bas_rdl
         lda cur_page
         sta cp_bas_wr+2         // patch write address high byte
-        lda #%00110101
-        sta PROCPORT
         ldy #0
 cp_bas_wrl:
         lda TMPBUF,y
@@ -152,8 +142,6 @@ cp_bas_wr:
         sta $A000,y             // self-modified: high byte patched above
         iny
         bne cp_bas_wrl
-        lda #%00110111
-        sta PROCPORT
         inc cur_page
         lda cur_page
         cmp #$D0                // stop at I/O area
@@ -326,9 +314,16 @@ cp_bas_wr:
         lda #$03
         sta $2F
         sta $31
-        // ---- Send handshake byte BEFORE switching to RAM mode ----
-        // Must send while $01=$37 (ROM) so KERNAL CHKOUT/CHROUT work
-        // with the file table set up by serial_init.
+        // ---- Send handshake byte before switching to RAM mode ----
+        // Match the later RS232 send path's file-table repair.
+        lda LDTND
+        bne hs_chrout
+        lda LAT
+        cmp #RS232_DEV
+        bne hs_chrout
+        lda #1
+        sta LDTND
+hs_chrout:
         ldx #RS232_DEV
         jsr CHKOUT              // set RS232 as output
         lda #$21                // '!' handshake
