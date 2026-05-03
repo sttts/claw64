@@ -5,13 +5,13 @@ var BasicExecTool = Tool{
 	Type: "function",
 	Function: Function{
 		Name:        "exec",
-		Description: "Execute C64 BASIC input and return screen output",
+		Description: "Send one C64 BASIC input line",
 		Parameters: Parameters{
 			Type: "object",
 			Properties: map[string]Property{
 				"command": {
 					Type:        "string",
-					Description: "C64 BASIC input, max 122 chars. Colons and numbered program lines allowed. Numbered lines return STORED and are not run. No newlines.",
+					Description: "Single-line C64 BASIC input payload",
 				},
 			},
 			Required: []string{"command"},
@@ -24,7 +24,7 @@ var TextScreenshotTool = Tool{
 	Type: "function",
 	Function: Function{
 		Name:        "screen",
-		Description: "Return the current visible C64 text screen without running BASIC",
+		Description: "Request the current visible C64 text screen",
 		Parameters: Parameters{
 			Type:       "object",
 			Properties: map[string]Property{},
@@ -38,7 +38,7 @@ var BasicStopTool = Tool{
 	Type: "function",
 	Function: Function{
 		Name:        "stop",
-		Description: "Stop the currently running BASIC program and return control to READY if possible",
+		Description: "Request RUN/STOP for the current C64 BASIC program",
 		Parameters: Parameters{
 			Type:       "object",
 			Properties: map[string]Property{},
@@ -52,7 +52,7 @@ var BasicStatusTool = Tool{
 	Type: "function",
 	Function: Function{
 		Name:        "status",
-		Description: "Return whether the C64 BASIC interpreter is still running a program or is back at READY",
+		Description: "Request current C64 BASIC execution status",
 		Parameters: Parameters{
 			Type:       "object",
 			Properties: map[string]Property{},
