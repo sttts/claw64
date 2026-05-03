@@ -83,6 +83,13 @@ func TestPrintBurninScenarios(t *testing.T) {
 	}
 }
 
+func TestGateIncludesProtocolReliabilityScenarios(t *testing.T) {
+	want := []string{"direct-exec", "slow-exec", "wraparound", "overlap-running24"}
+	if strings.Join(burninGateScenarios, ",") != strings.Join(want, ",") {
+		t.Fatalf("burninGateScenarios = %v, want %v", burninGateScenarios, want)
+	}
+}
+
 func TestOverlapRunPrompt(t *testing.T) {
 	tests := map[int]string{
 		2:  "run it",

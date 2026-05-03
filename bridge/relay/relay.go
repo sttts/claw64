@@ -1294,7 +1294,7 @@ func (r *Relay) sendNewReliableBridgeFrame(frame serial.Frame) (byte, serial.Fra
 
 	id := r.allocID()
 	frame.Payload = serial.PrependID(id, frame.Payload)
-	r.settlePendingAcks()
+	r.settlePendingAcksLocked()
 	if err := r.Link.Send(frame); err != nil {
 		return 0, frame, err
 	}
@@ -1305,7 +1305,7 @@ func (r *Relay) resendReliableBridgeFrame(frame serial.Frame) error {
 	r.txMu.Lock()
 	defer r.txMu.Unlock()
 
-	r.settlePendingAcks()
+	r.settlePendingAcksLocked()
 	return r.Link.Send(frame)
 }
 
@@ -1361,6 +1361,35 @@ func transportIDAhead(id, last byte) bool {
 // Called in recvFromC64 before the select (quiet window) and before
 // bridge→C64 sends to prevent ACK deadlocks.
 func (r *Relay) flushPendingAcks() {
+	r.txMu.Lock()
+	defer r.txMu.Unlock()
+
+	r.flushPendingAcksLocked()
+}
+
+func (r *Relay) settlePendingAcksLocked() {
+	if len(r.pendingAcks) > 0 {
+		r.flushPendingAcksLocked()
+	}
+	if r.lastAckSentAt.IsZero() {
+		return
+	}
+	quietWindow := ackQuietWindow
+	if r.basicRunning {
+		quietWindow = runningAckQuietWindow
+	}
+	if remain := quietWindow - time.Since(r.lastAckSentAt); remain > 0 {
+		time.Sleep(remain)
+	}
+	if !r.basicRunning || r.lastC64FrameAt.IsZero() {
+		return
+	}
+	if remain := runningRecvQuietWindow - time.Since(r.lastC64FrameAt); remain > 0 {
+		time.Sleep(remain)
+	}
+}
+
+func (r *Relay) flushPendingAcksLocked() {
 	if len(r.pendingAcks) > 0 && !r.lastC64FrameAt.IsZero() {
 		if remain := c64AckHandoffQuietWindow - time.Since(r.lastC64FrameAt); remain > 0 {
 			time.Sleep(remain)
@@ -1385,31 +1414,6 @@ func (r *Relay) flushPendingAcks() {
 	r.pendingAcks = r.pendingAcks[:0]
 	if sent {
 		r.lastAckSentAt = time.Now()
-	}
-}
-
-// settlePendingAcks flushes queued bridge ACKs before sending a new
-// bridge→C64 frame and gives the C64 a short window to consume them.
-func (r *Relay) settlePendingAcks() {
-	if len(r.pendingAcks) > 0 {
-		time.Sleep(10 * time.Millisecond)
-		r.flushPendingAcks()
-	}
-	if r.lastAckSentAt.IsZero() {
-		return
-	}
-	quietWindow := ackQuietWindow
-	if r.basicRunning {
-		quietWindow = runningAckQuietWindow
-	}
-	if remain := quietWindow - time.Since(r.lastAckSentAt); remain > 0 {
-		time.Sleep(remain)
-	}
-	if !r.basicRunning || r.lastC64FrameAt.IsZero() {
-		return
-	}
-	if remain := runningRecvQuietWindow - time.Since(r.lastC64FrameAt); remain > 0 {
-		time.Sleep(remain)
 	}
 }
 

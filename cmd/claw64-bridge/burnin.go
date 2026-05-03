@@ -87,7 +87,7 @@ var burninScenarios = []burninScenario{
 	{name: "overlap-running24", overlapRuns: 24},
 }
 
-var burninGateScenarios = []string{"direct-exec", "slow-exec", "overlap-running24"}
+var burninGateScenarios = []string{"direct-exec", "slow-exec", "wraparound", "overlap-running24"}
 var burninSessionGateScenarios = []string{"direct-exec", "overlap-running24"}
 
 const wraparoundStatusChecks = 140
