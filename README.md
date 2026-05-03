@@ -145,6 +145,14 @@ This opens the device as raw `2400,0,0` / 8N1 with no flow control. The
 underlying bridge flag is `--serial-port`; setting it implies
 `--spawn-vice=false`.
 
+The physical setup currently uses a user port RS232 adapter based on Jan
+Klingel's [Commodore 64/128 to PC serial guide](https://janklingel.de/2025/03/21/connecting-commodore-64-128-to-pc/)
+with an [HC-05 serial Bluetooth module](https://www.amazon.de/dp/B07J66PR6B?ref=ppx_yo2ov_dt_b_fed_asin_title).
+
+<p align="center">
+  <img src="docs/userport-adapter.jpg" width="80%" alt="Claw64 C64 user port serial Bluetooth adapter">
+</p>
+
 At startup, the loader shows a lobster logo in multicolor bitmap mode for
 roughly two seconds before restoring the normal BASIC text screen and
 starting the agent.
