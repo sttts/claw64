@@ -97,7 +97,7 @@ assemble: $(KICKASS_JAR)
 
 # create a D64 disk image with claw64.prg
 d64: assemble
-	c1541 -format "claw64,01" d64 $(D64_OUT) -write $(ASM_OUT) agent
+	c1541 -format "claw64,01" d64 $(D64_OUT) -write $(ASM_OUT) claw64
 
 # assemble the echo test
 echotest: $(KICKASS_JAR)
