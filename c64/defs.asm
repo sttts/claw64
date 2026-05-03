@@ -11,10 +11,10 @@
 .const AGENT_BASE      = $C000  // agent code starts here
 .const BASIC_GUARD_BASE = $9000 // top of BASIC RAM exposed to BASIC after install
 .const SOUL_BASE       = $9800  // system prompt inside the protected high BASIC RAM block
-.const AGENT_RXBUF     = $CEE0  // 128-byte receive / tool payload buffer
-.const AGENT_TXBUF     = $CF60  // transmit / inject buffer
+.const AGENT_RXBUF     = $CF00  // 128-byte receive / tool payload buffer
+.const AGENT_TXBUF     = $CF80  // transmit / inject buffer
 .const AGENT_RXBUF_LEN = 128
-.const AGENT_TXBUF_LEN = $A0
+.const AGENT_TXBUF_LEN = $80
 .const BRIDGE_FRAME_MAX = $7B  // reserve $7c-$7f length bytes for parser resync
 
 // Planned protected-RAM reservations.

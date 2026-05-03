@@ -90,7 +90,7 @@ var burninScenarios = []burninScenario{
 var burninGateScenarios = []string{"direct-exec", "slow-exec", "wraparound", "overlap-running24"}
 var burninSessionGateScenarios = []string{"direct-exec", "overlap-running24"}
 
-const wraparoundStatusChecks = 140
+const wraparoundReliableChecks = 20
 
 func supportedBurninScenario(scenario string) bool {
 	if scenario == "gate" || scenario == "gate-session" {
@@ -405,18 +405,18 @@ func (s *scriptedBurnin) completeWraparound(messages []llm.Message) (llm.Message
 			return llm.Message{}, fmt.Errorf("step %d: expected wraparound request, got %q", s.step, lastUser)
 		}
 		s.step++
-		return simpleToolCall("status", "{}", s.step), nil
-	case s.step <= wraparoundStatusChecks:
+		return execToolCall("0 REM WRAP", s.step), nil
+	case s.step <= wraparoundReliableChecks:
 		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		if status != "READY" && status != "READY." {
-			return llm.Message{}, fmt.Errorf("step %d: expected READY while wrapping ids, got %q", s.step, lastTool)
+		if status != "STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected STORED while wrapping ids, got %q", s.step, lastTool)
 		}
 		s.step++
-		return simpleToolCall("status", "{}", s.step), nil
-	case s.step == wraparoundStatusChecks+1:
+		return execToolCall("0 REM WRAP", s.step), nil
+	case s.step == wraparoundReliableChecks+1:
 		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
-		if status != "READY" && status != "READY." {
-			return llm.Message{}, fmt.Errorf("step %d: expected final READY while wrapping ids, got %q", s.step, lastTool)
+		if status != "STORED" {
+			return llm.Message{}, fmt.Errorf("step %d: expected final STORED while wrapping ids, got %q", s.step, lastTool)
 		}
 		return llm.Message{Role: "assistant", Content: "BURN-IN WRAPAROUND COMPLETE."}, nil
 	default:
@@ -794,15 +794,24 @@ func runBurninScenario(ctx context.Context, rl *relay.Relay, scenario string) {
 	deliveryRetry := func(name string, _ int, _ error) {
 		deliveryRetries[name]++
 	}
+	c64Duplicates := map[string]int{}
+	c64Duplicate := func(name string, _ byte, _ byte) {
+		c64Duplicates[name]++
+	}
 
 	rl.LLM = &scriptedBurnin{scenario: scenario}
 	rl.History = relay.NewHistory()
 	rl.DeliveryRetry = deliveryRetry
+	rl.C64Duplicate = c64Duplicate
+	if scenario == "wraparound" {
+		rl.SetNextTransportID(120)
+	}
 	log.Printf("burnin: scenario %s starting", scenario)
 
 	if _, ok := overlapScenarioRuns(scenario); ok {
 		runOverlapBurnin(ctx, rl, scenario)
 		failOnUnexpectedDeliveryRetries(scenario, deliveryRetries)
+		failOnUnexpectedC64Duplicates(scenario, c64Duplicates)
 		log.Printf("burnin: scenario %s completed", scenario)
 		return
 	}
@@ -821,32 +830,40 @@ func runBurninScenario(ctx context.Context, rl *relay.Relay, scenario string) {
 	}
 	if lastText == "" {
 		failOnUnexpectedDeliveryRetries(scenario, deliveryRetries)
+		failOnUnexpectedC64Duplicates(scenario, c64Duplicates)
 		log.Printf("burnin: scenario %s completed without user-visible text", scenario)
 		return
 	}
 	failOnUnexpectedDeliveryRetries(scenario, deliveryRetries)
+	failOnUnexpectedC64Duplicates(scenario, c64Duplicates)
 	log.Printf("burnin: scenario %s completed", scenario)
 }
 
 func failOnUnexpectedDeliveryRetries(scenario string, retries map[string]int) {
-	if retrySummary := unexpectedDeliveryRetries(retries); retrySummary != "" {
+	if retrySummary := summarizeNonzeroCounts(retries); retrySummary != "" {
 		log.Fatalf("burnin %s: delivery retried: %s", scenario, retrySummary)
 	}
 }
 
-func unexpectedDeliveryRetries(retries map[string]int) string {
-	if len(retries) == 0 {
+func failOnUnexpectedC64Duplicates(scenario string, duplicates map[string]int) {
+	if duplicateSummary := summarizeNonzeroCounts(duplicates); duplicateSummary != "" {
+		log.Fatalf("burnin %s: C64 duplicate reliable frames: %s", scenario, duplicateSummary)
+	}
+}
+
+func summarizeNonzeroCounts(counts map[string]int) string {
+	if len(counts) == 0 {
 		return ""
 	}
-	names := make([]string, 0, len(retries))
-	for name := range retries {
+	names := make([]string, 0, len(counts))
+	for name := range counts {
 		names = append(names, name)
 	}
 	slices.Sort(names)
 	parts := make([]string, 0, len(names))
 	for _, name := range names {
-		if retries[name] > 0 {
-			parts = append(parts, fmt.Sprintf("%s=%d", name, retries[name]))
+		if counts[name] > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", name, counts[name]))
 		}
 	}
 	return strings.Join(parts, ", ")

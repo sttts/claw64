@@ -151,26 +151,27 @@ func TestScriptedBurninWraparound(t *testing.T) {
 	s := &scriptedBurnin{scenario: "wraparound"}
 
 	assertCompleteText(t, s, []llm.Message{{Role: "user", Content: "Hi"}}, "READY FOR WRAPAROUND.")
-	assertToolCall(t, s, []llm.Message{{Role: "user", Content: "wrap ids"}}, "status", "{}")
-	for s.step <= wraparoundStatusChecks {
-		assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: READY."}}, "status", "{}")
+	assertToolCall(t, s, []llm.Message{{Role: "user", Content: "wrap ids"}}, "exec", `{"command":"0 REM WRAP"}`)
+	for s.step <= wraparoundReliableChecks {
+		assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: STORED"}}, "exec", `{"command":"0 REM WRAP"}`)
 	}
-	assertCompleteText(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: READY."}}, "BURN-IN WRAPAROUND COMPLETE.")
+	assertCompleteText(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: STORED"}}, "BURN-IN WRAPAROUND COMPLETE.")
 }
 
-func TestUnexpectedDeliveryRetriesSummarizesAllRetryTypes(t *testing.T) {
-	got := unexpectedDeliveryRetries(map[string]int{
+func TestSummarizeNonzeroCountsSortsAndSkipsZeroes(t *testing.T) {
+	got := summarizeNonzeroCounts(map[string]int{
 		"TEXT": 2,
 		"EXEC": 1,
+		"STOP": 0,
 	})
 	if got != "EXEC=1, TEXT=2" {
-		t.Fatalf("unexpectedDeliveryRetries = %q, want %q", got, "EXEC=1, TEXT=2")
+		t.Fatalf("summarizeNonzeroCounts = %q, want %q", got, "EXEC=1, TEXT=2")
 	}
 }
 
-func TestUnexpectedDeliveryRetriesIgnoresEmptyCounter(t *testing.T) {
-	if got := unexpectedDeliveryRetries(map[string]int{}); got != "" {
-		t.Fatalf("unexpectedDeliveryRetries = %q, want empty", got)
+func TestSummarizeNonzeroCountsIgnoresEmptyCounter(t *testing.T) {
+	if got := summarizeNonzeroCounts(map[string]int{}); got != "" {
+		t.Fatalf("summarizeNonzeroCounts = %q, want empty", got)
 	}
 }
 

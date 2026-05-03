@@ -959,7 +959,7 @@ so_chk_ack_wait:
         inc tx_ack_timer
 so_ack_tick_same:
         lda tx_ack_timer
-        cmp #60                 // 1 second at 60Hz before retransmit
+        cmp #180                // 3 seconds covers a full 120-byte frame at 2400 baud
         bcs so_ack_retry
         jmp so_send_check       // still waiting — don't build next frame
 
@@ -1123,14 +1123,12 @@ dao_done:
         rts
 
 build_reliable_outbound:
-        // STATUS frames have priority among reliable outbound frames.
+        // STATUS is request-owned; the bridge retries STATUS? if needed.
         lda state_pending
         beq bro_done
         lda #0
         sta state_pending
         jsr build_state_frame
-        jsr inject_tx_id
-        rts
 
 bro_done:
         rts
@@ -1894,6 +1892,14 @@ frame_dispatch:
 fd_ack_done:
         rts
 
+        // STATUS? is request-owned; the bridge retries the probe if no
+        // STATUS response arrives, so it does not need transport ACK.
+        lda frame_sub
+        cmp #FRAME_STATUSQ
+        bne fd_inbound_gate
+        lda frame_len
+        beq fd_dispatch
+
 fd_inbound_gate:
         // Ignore echoed C64-origin frames before reliable inbound handling.
         cmp #FRAME_RESULT
@@ -1941,8 +1947,14 @@ fd_accept:
         // New reliable frame — store newest (id, type) and queue ACK.
         lda fd_cur_id
         sta rx_last_id
+        lda tx_ack_wait
+        beq fd_accept_confirmed
+        lda send_total
+        sta send_pos            // inbound progress cancels pending retransmit
+fd_accept_confirmed:
+        lda #0
+        sta tx_ack_wait         // inbound progress semantically confirms C64 delivery
         lda frame_sub
-        sta rx_last_type
         cmp #FRAME_TEXT
         beq fd_dispatch
         cmp #FRAME_EXEC
@@ -2312,7 +2324,6 @@ state_len:    .byte 0   // payload length for FRAME_STATUS
 state_src_lo: .byte 0   // source pointer low byte for FRAME_STATUS text
 state_src_hi: .byte 0   // source pointer high byte for FRAME_STATUS text
 rx_last_id:   .byte 0   // transport id of last accepted reliable inbound frame
-rx_last_type: .byte 0   // frame type of last accepted reliable inbound frame
 fd_cur_id:    .byte 0   // transport id extracted from current frame being dispatched
 tx_next_id:   .byte 1   // outbound transport id counter, starts at 1
 tx_ack_wait:  .byte 0   // 1 = waiting for ACK of current outbound frame

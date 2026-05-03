@@ -70,6 +70,7 @@ type Relay struct {
 	msgRetryBase     time.Duration
 	msgRetryMax      time.Duration
 	DeliveryRetry    func(name string, attempt int, err error)
+	C64Duplicate     func(name string, id byte, newest byte)
 }
 
 type recvResult struct {
@@ -96,6 +97,7 @@ const c64AckHandoffQuietWindow = 100 * time.Millisecond
 const c64TextHandoffQuietWindow = 1200 * time.Millisecond
 const runningAckQuietWindow = 3 * time.Second
 const runningRecvQuietWindow = 1 * time.Second
+const runningStatusPollInterval = 3 * time.Second
 const gateHandoffQuietWindow = 250 * time.Millisecond
 const queuedGateHandoffQuietWindow = runningRecvQuietWindow
 const c64UserQueueSlots = 3
@@ -973,8 +975,17 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) (bool, error
 	case "status":
 		logStream(r.streamOut(), "%s ", flowLabel("LLM", "→", "C64", "STATUS?"))
 		fmt.Fprintln(r.streamOut())
+		if r.basicRunning {
+			timer := time.NewTimer(runningStatusPollInterval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return false, ctx.Err()
+			case <-timer.C:
+			}
+		}
 		statusFrame := serial.Frame{Type: serial.FrameStatusReq}
-		if err := r.sendVerifiedOrSemantic(ctx, statusFrame, "STATUS"); err != nil {
+		if err := r.sendStatusProbe(ctx, statusFrame); err != nil {
 			return false, fmt.Errorf("send STATUS: %w", err)
 		}
 		r.toolInFlight = r.toolInFlight[:0]
@@ -1246,6 +1257,55 @@ func (r *Relay) sendVerifiedOrSemanticWith(ctx context.Context, frame serial.Fra
 	return fmt.Errorf("%s delivery could not be verified after %d attempt(s)", name, len(retryDelays))
 }
 
+func (r *Relay) sendStatusProbe(ctx context.Context, frame serial.Frame) error {
+	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
+	for attempt := 0; attempt < len(retryDelays); attempt++ {
+		if err := r.sendUnreliableBridgeFrame(frame); err != nil {
+			return err
+		}
+
+		if err := r.waitForStatusSemantic(ctx, toolFrameTimeout); err == nil {
+			return nil
+		} else {
+			r.noteDeliveryRetry("STATUS", attempt+1, err)
+			logWarnf("     ! STATUS semantic attempt %d failed: %v", attempt+1, err)
+		}
+		if attempt+1 < len(retryDelays) {
+			time.Sleep(retryDelays[attempt])
+		}
+	}
+	return fmt.Errorf("STATUS semantic response was not received after %d attempt(s)", len(retryDelays))
+}
+
+func (r *Relay) waitForStatusSemantic(ctx context.Context, timeout time.Duration) error {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	for {
+		f, err := r.recvFromSocketOnly(waitCtx, false)
+		if err != nil {
+			return err
+		}
+		switch f.Type {
+		case serial.FrameAck, serial.FrameHeartbeat:
+			continue
+		case serial.FrameStatus, serial.FrameError:
+			if r.acceptC64FrameQueued(&f, true) {
+				continue
+			}
+			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
+			return nil
+		case serial.FrameUser, serial.FrameSystem, serial.FrameResult, serial.FrameLLM:
+			if r.acceptC64FrameQueued(&f, true) {
+				continue
+			}
+			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
+		default:
+			return fmt.Errorf("unexpected frame while waiting for STATUS: %s", serial.TypeName(f.Type))
+		}
+	}
+}
+
 func (r *Relay) noteDeliveryRetry(name string, attempt int, err error) {
 	if r.DeliveryRetry != nil {
 		r.DeliveryRetry(name, attempt, err)
@@ -1266,6 +1326,15 @@ func (r *Relay) allocID() byte {
 	}
 	r.nextTxID = next
 	return id
+}
+
+// SetNextTransportID seeds the bridge->C64 reliable ID counter.
+// Burn-in uses this to exercise wraparound without flooding the live link.
+func (r *Relay) SetNextTransportID(id byte) {
+	if id == 0 || id > 0x7f {
+		id = 1
+	}
+	r.nextTxID = id
 }
 
 // queueAckToC64 queues an ACK ID to be sent during the next quiet window.
@@ -1301,6 +1370,14 @@ func (r *Relay) sendNewReliableBridgeFrame(frame serial.Frame) (byte, serial.Fra
 	return id, frame, nil
 }
 
+func (r *Relay) sendUnreliableBridgeFrame(frame serial.Frame) error {
+	r.txMu.Lock()
+	defer r.txMu.Unlock()
+
+	r.settlePendingAcksLocked()
+	return r.Link.Send(frame)
+}
+
 func (r *Relay) resendReliableBridgeFrame(frame serial.Frame) error {
 	r.txMu.Lock()
 	defer r.txMu.Unlock()
@@ -1318,6 +1395,9 @@ func (r *Relay) acceptC64FrameQueued(f *serial.Frame, ackNow bool) bool {
 }
 
 func (r *Relay) acceptC64FrameWith(f *serial.Frame, ackNow bool, flush bool) bool {
+	if f.Type == serial.FrameStatus && isExpectedStatus(string(f.Payload)) {
+		return false
+	}
 	if !serial.IsReliableC64(f.Type) {
 		return false
 	}
@@ -1335,15 +1415,23 @@ func (r *Relay) acceptC64FrameWith(f *serial.Frame, ackNow bool, flush bool) boo
 	f.Payload = body
 	if id == r.rxLastID && f.Type == r.rxLastType {
 		log.Printf("%s", flowLine("", "←", "C64", "dedup", fmt.Sprintf("type=%s id=%d", serial.TypeName(f.Type), id)))
+		r.noteC64Duplicate(f.Type, id, r.rxLastID)
 		return true
 	}
 	if r.rxLastID != 0 && !transportIDAhead(id, r.rxLastID) {
 		log.Printf("%s", flowLine("", "←", "C64", "dedup", fmt.Sprintf("stale type=%s id=%d newest=%d", serial.TypeName(f.Type), id, r.rxLastID)))
+		r.noteC64Duplicate(f.Type, id, r.rxLastID)
 		return true
 	}
 	r.rxLastID = id
 	r.rxLastType = f.Type
 	return false
+}
+
+func (r *Relay) noteC64Duplicate(frameType byte, id byte, newest byte) {
+	if r.C64Duplicate != nil {
+		r.C64Duplicate(serial.TypeName(frameType), id, newest)
+	}
 }
 
 func transportIDAhead(id, last byte) bool {
