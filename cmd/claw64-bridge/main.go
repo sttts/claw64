@@ -132,10 +132,8 @@ func main() {
 
 	switch ctx.Command() {
 	case "stdin":
-		ch := chat.NewStdin()
 		termstyle.ForceColor()
-		log.SetOutput(termstyle.DimWriter(ch.LogWriter()))
-		runChatBridge(cli, ch)
+		runChatBridge(cli, chat.NewStdin())
 	case "slack <target>":
 		runChatBridge(cli, chat.NewSlack(cli.Slack.Workspace, cli.Slack.Target, cli.Slack.Topic))
 	case "whatsapp <target>":
@@ -240,8 +238,6 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	defer link.Close()
 	defer stopVICE(viceCmd)
 
-	log.Println("serial: ready")
-
 	rl := &relay.Relay{
 		Link:        link,
 		LLM:         llmClient,
@@ -250,6 +246,15 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 		MonitorAddr: cfg.MonitorAddr,
 		SymbolPath:  defaultSymbolPath(),
 	}
+
+	// Only route logs into the stdin TUI after all startup failure points have
+	// passed. Otherwise fatal startup logs are buffered before the TUI exists.
+	type logWriter interface{ LogWriter() io.Writer }
+	if lw, ok := ch.(logWriter); ok {
+		log.SetOutput(termstyle.DimWriter(lw.LogWriter()))
+	}
+
+	log.Println("serial: ready")
 
 	// Route streaming progress through the TUI when available.
 	type streamWriter interface{ StreamWriter() io.Writer }
