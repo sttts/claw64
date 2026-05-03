@@ -25,7 +25,9 @@ BasicUpstart2(start)
 
 start:
         sei
+        :loader_checkpoint($01) // A: loader entered
         jsr show_logo
+        :loader_checkpoint($02) // B: splash visible
 
         // Copy agent code from inline data to $C000
         lda #<agent_data
@@ -48,6 +50,7 @@ ldr_cp: lda (LDR_SRC_LO),y
         inc LDR_DST_HI
         dex
         bne ldr_cp
+        :loader_checkpoint($03) // C: resident agent copied
 
         // Copy guarded helper code into protected high BASIC RAM at $9000.
         lda #<guarded_data
@@ -63,6 +66,7 @@ ldr_cp: lda (LDR_SRC_LO),y
         lda #>(guarded_end - guarded_data)
         sta LDR_LEN_HI
         jsr copy_block
+        :loader_checkpoint($04) // D: guarded helper copied
 
         // Seed guarded busy-color table used by the resident IRQ path.
         lda #<busy_colors_data
@@ -78,6 +82,7 @@ ldr_cp: lda (LDR_SRC_LO),y
         lda #>4
         sta LDR_LEN_HI
         jsr copy_block
+        :loader_checkpoint($05) // E: busy-color table seeded
 
         // Seed guarded READY. screen-code table used by prompt detection.
         lda #<ready_codes_data
@@ -93,6 +98,7 @@ ldr_cp: lda (LDR_SRC_LO),y
         lda #>6
         sta LDR_LEN_HI
         jsr copy_block
+        :loader_checkpoint($06) // F: READY. table seeded
 
         // Seed guarded status text used by the resident state path.
         lda #<state_text_data
@@ -108,6 +114,7 @@ ldr_cp: lda (LDR_SRC_LO),y
         lda #>37
         sta LDR_LEN_HI
         jsr copy_block
+        :loader_checkpoint($07) // G: status text seeded
 
         // Copy cold helper code into RAM under BASIC ROM at $A000.
         lda #%00110101
@@ -131,7 +138,7 @@ ldr_cp: lda (LDR_SRC_LO),y
 
         jsr wait_logo
         jsr hide_logo
-        cli
+        :loader_checkpoint($08) // H: text screen restored
 
         // Pass soul_data address to agent via $FB/$FC.
         // Must be AFTER logo routines which use $FB/$FC as scratch.
@@ -141,11 +148,13 @@ ldr_cp: lda (LDR_SRC_LO),y
         sta $FC
 
         // Copy sprite data to cassette buffer area via cold helper.
+        :loader_checkpoint($09) // I: about to copy sprite data
         lda #%00110101
         sta LDR_PROCPORT
         jsr cold_copy_sprites
         lda #%00110111
         sta LDR_PROCPORT
+        :loader_checkpoint($0A) // J: sprite data copied
 
         // Jump to agent install at $C000
         jmp AGENT_BASE
@@ -168,6 +177,15 @@ ldr_cp: lda (LDR_SRC_LO),y
         lda #>len
         sta LDR_LEN_HI
         jsr copy_block
+}
+
+.macro loader_checkpoint(code) {
+        lda #code
+        sta SCREEN_RAM
+        sta SAVE_SCREEN
+        lda #1
+        sta $D800
+        sta SAVE_COLOR
 }
 
 // ---------------------------------------------------------

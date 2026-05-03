@@ -77,6 +77,9 @@ install:
         // the memory map and patch KERNAL code.
         sei
 
+        // Startup checkpoint K: resident agent install entered.
+        inc SCREEN_RAM
+
         // Set processor port to $37 = normal memory map with ROMs
         // visible. We need KERNAL ROM readable at $E000-$FFFF so
         // we can copy its contents into the underlying RAM.
@@ -276,6 +279,9 @@ cp_bas_wr:
         lda #5
         sta anim_timer
 
+        // Startup checkpoint L: vectors and sprites installed.
+        inc SCREEN_RAM
+
         // ---- Initialize RS232 serial ----
         //
         // serial_init calls KERNAL routines (OPEN, SETLFS, SETNAM) which
@@ -329,6 +335,9 @@ hs_chrout:
         lda #$21                // '!' handshake
         jsr CHROUT              // send via RS232 (not screen)
         jsr CLRCHN              // reset I/O
+
+        // Startup checkpoint M: serial handshake sent.
+        inc SCREEN_RAM
 
         // System prompt is sent on first MSG (needs echo for VICE TX)
 
