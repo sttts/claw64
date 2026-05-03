@@ -329,6 +329,11 @@ func startSpawnedSerialLink(cfg CLI) (*serial.Link, *runningVICE, func(), error)
 		if err == nil {
 			return link, viceCmd, cleanupLoader, nil
 		}
+		if filename, dumpErr := relay.WriteMonitorDump("debug", cfg.MonitorAddr, defaultSymbolPath(), "startup failure: "+err.Error()); dumpErr == nil {
+			log.Printf("vice: startup failure dump written to %s", filename)
+		} else {
+			log.Printf("vice: startup failure dump failed: %v", dumpErr)
+		}
 		stopVICE(viceCmd)
 		if attempt == attempts {
 			cleanupLoader()
@@ -450,8 +455,23 @@ func defaultSymbolPath() string {
 }
 
 func spawnVICE(cfg CLI, loaderPath string) (*runningVICE, error) {
-	args := []string{
-		"-default",
+	viceBin := cfg.ViceBin
+	if path, err := exec.LookPath(cfg.ViceBin); err == nil {
+		viceBin = path
+	}
+
+	args := []string{"-default"}
+	if dataDir := viceDataDir(viceBin); dataDir != "" {
+		args = append(args, "-directory", dataDir)
+	}
+	args = append(args,
+		"-loglimit", "0",
+		"+logtofile",
+		"+logtostdout",
+		"-drive8type", "0",
+		"-drive9type", "0",
+		"-drive10type", "0",
+		"-drive11type", "0",
 		"+sound",
 		"-sounddev", "dummy",
 		"-rsdev1", cfg.SerialAddr,
@@ -462,9 +482,9 @@ func spawnVICE(cfg CLI, loaderPath string) (*runningVICE, error) {
 		"-remotemonitor",
 		"-remotemonitoraddress", cfg.MonitorAddr,
 		"-autostart", loaderPath,
-	}
+	)
 
-	cmd := exec.Command(cfg.ViceBin, args...)
+	cmd := exec.Command(viceBin, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -480,6 +500,30 @@ func spawnVICE(cfg CLI, loaderPath string) (*runningVICE, error) {
 		close(vice.done)
 	}()
 	return vice, nil
+}
+
+func viceDataDir(viceBin string) string {
+	path, err := filepath.EvalSymlinks(viceBin)
+	if err != nil {
+		path = viceBin
+	}
+
+	candidates := []string{
+		filepath.Join(filepath.Dir(path), "..", "share", "vice"),
+		filepath.Join(filepath.Dir(path), "..", "..", "share", "vice"),
+		"/opt/homebrew/share/vice",
+		"/usr/local/share/vice",
+	}
+	for _, candidate := range candidates {
+		abs, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		if st, err := os.Stat(filepath.Join(abs, "C64")); err == nil && st.IsDir() {
+			return abs
+		}
+	}
+	return ""
 }
 
 func stopVICE(vice *runningVICE) {

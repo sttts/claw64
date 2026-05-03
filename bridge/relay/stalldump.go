@@ -14,6 +14,12 @@ import (
 
 type monitorSymbolTable map[string]uint16
 
+// WriteMonitorDump captures raw monitor state before a Relay exists, such as
+// during startup handshakes.
+func WriteMonitorDump(debugDir, monitorAddr, symPath, reason string) (string, error) {
+	return writeStallDump(debugDir, monitorAddr, symPath, reason, nil, nil)
+}
+
 func writeStallDump(debugDir, monitorAddr, symPath, reason string, pendingChunk []byte, relayState []string) (string, error) {
 	if debugDir == "" || monitorAddr == "" {
 		return "", fmt.Errorf("debug dump disabled")
