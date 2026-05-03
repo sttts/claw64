@@ -102,6 +102,15 @@ const gateHandoffQuietWindow = 250 * time.Millisecond
 const queuedGateHandoffQuietWindow = runningRecvQuietWindow
 const c64UserQueueSlots = 3
 
+// Tool-result labels are adapter envelopes for backend chat APIs. They are
+// not agent instructions; behavior policy must stay in the C64 soul.
+const (
+	toolResultScreenPrefix     = "[C64 screen output]: "
+	toolResultScreenshotPrefix = "[C64 text screen screenshot]: "
+	toolResultStatusPrefix     = "[C64 BASIC status]: "
+	toolResultTimeout          = "ERROR: command timed out on C64"
+)
+
 // textAckTimeout allows one inbound TEXT chunk, the resulting USER frame,
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
 const textAckTimeout = 7 * time.Second
@@ -646,9 +655,9 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 				continue
 			}
 
-			resultPrefix := "[C64 screen output]: "
+			resultPrefix := toolResultScreenPrefix
 			if r.lastToolName == "screen" {
-				resultPrefix = "[C64 text screen screenshot]: "
+				resultPrefix = toolResultScreenshotPrefix
 			}
 			result := resultPrefix + resultText
 			if resultText == "" {
@@ -689,7 +698,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 				log.Printf("%s", flowLine("LLM", "←", "C64", "STATUS!", fmt.Sprintf("%s payload=%s", status, hex.EncodeToString(f.Payload))))
 				r.dumpMalformedStatus(status, f.Payload)
 			}
-			r.appendToolResult(userID, "[C64 BASIC status]: "+status)
+			r.appendToolResult(userID, toolResultStatusPrefix+status)
 			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
 				return err
@@ -706,7 +715,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			r.basicRunning = false
 			r.completionDrain = false
 			r.textDrainPending = true
-			r.appendToolResult(userID, "ERROR: command timed out on C64")
+			r.appendToolResult(userID, toolResultTimeout)
 			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
 				return err
