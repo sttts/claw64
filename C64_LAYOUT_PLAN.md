@@ -1,5 +1,9 @@
 # C64 Layout Plan
 
+This file is historical design context plus the current layout status. The
+safe replay plan below was written before the guarded queue work landed; the
+authoritative current addresses are in `c64/defs.asm`.
+
 This document defines the safe replay plan for making room for heartbeat,
 queued input, and floppy-backed memory without destabilizing the existing
 agent.
@@ -7,7 +11,29 @@ agent.
 The rule for this effort is strict: a memory-layout change is its own slice.
 No feature work may ride along with a layout move.
 
-## Current Stable Baseline
+## Current Implemented Layout
+
+Current protected agent-owned layout:
+
+- `$9000-$91FF`: guarded helper code
+- `$9200-$94FF`: fixed user-message queue, 3 slots x 256 bytes
+- `$9500-$9503`: queue metadata
+- `$9504+`: guarded lookup/status tables
+- `$9600-$967F`: EXEC staging
+- `$9800+`: soul / system prompt text
+- `$A000-$A3FF`: cold helper-code reserve
+- `$A800-$BFFF`: memory staging reserve
+- `$C000-$CEFF`: resident TSR runtime, exact end checked at assemble time
+- `$CF00-$CF7F`: RX/tool payload buffer
+- `$CF80-$CFFF`: TX/injection buffer
+
+BASIC memory is capped at `$9000`, so the queue, guarded helpers, soul, and
+staging areas are protected from normal BASIC programs.
+
+The queue portion of this plan has been implemented. Heartbeat-triggered LLM
+turns and floppy-backed durable memory are still future feature slices.
+
+## Historical Stable Baseline
 
 As of the replayed baseline:
 
@@ -54,7 +80,7 @@ without breaking:
 The long-term target is to use RAM under BASIC ROM deliberately, instead of
 trying to keep all growth below `$D000`.
 
-Planned reserved regions:
+Original planned reserved regions:
 
 - `$9800-$9DFF`
   - soul text
@@ -66,10 +92,15 @@ Planned reserved regions:
 - `$A800-$BFFF`
   - memory staging area and future durable-memory work buffers
 
-Things that should remain unchanged in the first layout slice:
+The implemented queue layout differs from the original `$A400-$A7FF`
+queue/heartbeat proposal. Queue storage and metadata now live in protected
+high BASIC RAM at `$9200-$9503`; `$A800-$BFFF` remains the memory-staging
+reservation.
+
+Historical first-slice constraints at the time this plan was written:
 
 - resident runtime base at `$C000`
-- current fixed RX/TX buffers at `$CEE0` / `$CF60`
+- fixed RX/TX buffers were not to move in that slice
 - serial behavior
 - loader protocol
 

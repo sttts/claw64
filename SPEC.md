@@ -100,15 +100,40 @@ $0000-$00FF  Zero page (shared; agent uses upper range)
 $0100-$01FF  Stack
 $0200-$03FF  System variables, keyboard buffer
 $0400-$07FF  Screen RAM (agent reads this to capture output)
-$0800-$9FFF  BASIC program + variables (untouched)
-$A000-$BFFF  BASIC ROM
-$C000-$CCFF  Agent code + data
-$CD00-$CDFF  Receive buffer (256 bytes)
-$CE00-$CEFF  Send buffer (256 bytes)
-$CF00-$CFFF  Temp / spare space
+$0800-$8FFF  BASIC program + variables after install
+$9000-$91FF  Guarded helper code copied by loader
+$9200-$94FF  C64-side user-message queue (3 x 256-byte slots)
+$9500-$9503  Queue metadata: staged length, head, tail, count
+$9504+       Guarded busy/READY/status lookup tables
+$9600-$967F  EXEC staging buffer
+$9800+       C64 soul / system prompt text
+$A000-$A3FF  Cold helper-code reserve
+$A800-$BFFF  Memory staging reserve for future durable-memory work
+$C000-$CEFF  Resident agent code + data
+$CF00-$CF7F  Receive / tool payload buffer (128 bytes)
+$CF80-$CFFF  Transmit / injection buffer (128 bytes)
 $D000-$DFFF  I/O registers (VIC-II, SID, CIA)
 $E000-$FFFF  KERNAL ROM (copied to RAM for patching)
 ```
+
+BASIC's top-of-memory is lowered to `$9000` during install. Everything from
+`$9000` up to the resident agent is protected agent-owned RAM even though some
+of it sits under ROM in the normal C64 memory map. Assembly assertions verify
+that guarded helpers, queue storage, staging reservations, resident code, and
+fixed RX/TX buffers do not overlap.
+
+The user-message queue is a fixed ring buffer on the C64. It has three
+256-byte slots at `$9200-$94FF`; if all slots are occupied, the guarded enqueue
+helper advances the head and overwrites the oldest pending message. The bridge
+therefore preserves ordering while limiting overlap to the C64's real queue
+capacity; excess chat messages wait outside the serial path.
+
+Durable memory is not implemented yet. `$A800-$BFFF` is reserved as a staging
+window for planned floppy-backed `MEMORY_SUMMARY` / `MEMORY_FULL` traffic, not
+as durable state by itself.
+
+Heartbeat is a protocol and design reservation, not current C64 behavior. The
+C64 agent does not yet schedule idle heartbeat LLM turns.
 
 #### KERNAL integration
 

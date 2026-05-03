@@ -161,6 +161,10 @@ allocation and `make kill` to stop processes without starting new ones.
 
 ## Architecture Notes
 - C64 agent is a TSR at $C000, hooks KERNAL at $E5D1 and IRQ at $0314/$0315, invisible to user.
+- Current protected memory map: guarded helpers $9000-$91FF, C64 user queue
+  $9200-$94FF (3 x 256-byte slots), queue metadata $9500-$9503, EXEC staging
+  $9600-$967F, soul $9800+, cold helper reserve $A000-$A3FF, future memory
+  staging $A800-$BFFF, resident runtime below RXBUF $CF00, TXBUF $CF80.
 - Serial protocol: see `PROTOCOL.md` for the normative wire format and rules.
   In short: SYNC(0xFE) + TYPE(1) + LENGTH(1) + PAYLOAD + CHK(XOR), with
   reliable frames carrying a 1-byte transport ID in the payload.

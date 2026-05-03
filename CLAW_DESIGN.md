@@ -317,7 +317,15 @@ from turn state to event state.
 
 Do not store durable memory in BASIC RAM.
 
-Use the ROM-shadow region as staging memory:
+Use protected C64-owned RAM for staging memory. Current implementation status:
+
+- `$9000-$91FF`: guarded helper code
+- `$9200-$94FF`: fixed three-slot user-message queue
+- `$9500-$9503`: queue metadata
+- `$9800+`: soul / bootstrap text
+- `$A800-$BFFF`: disk-memory staging reserve (`6144 bytes`)
+
+The older target split was:
 
 - `A000-A7FF`: soul and bootstrap text reserve (`2048 bytes`)
 - `A800-BFFF`: disk-memory staging buffer (`6144 bytes`)

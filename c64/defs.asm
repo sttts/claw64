@@ -17,8 +17,8 @@
 .const AGENT_TXBUF_LEN = $80
 .const BRIDGE_FRAME_MAX = $7B  // reserve $7c-$7f length bytes for parser resync
 
-// Planned protected-RAM reservations.
-// Guarded helper code plus queue/heartbeat live in protected high BASIC RAM.
+// Protected high-RAM reservations.
+// Guarded helper code, queues, tables, and future staging live above MEMSIZ.
 .const COLD_CODE_BASE  = $A000
 .const COLD_CODE_LIMIT = $A400
 .const GUARD_CODE_BASE = BASIC_GUARD_BASE

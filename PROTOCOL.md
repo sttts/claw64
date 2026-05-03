@@ -55,8 +55,9 @@ Code size on the C64 is the real budget.
 The live agent sits below the receive buffer. In current builds that means:
 
 - code/data starts at `$C000`
-- receive buffer starts around `$CF3A`
-- practical code/data budget is about `3898` bytes
+- receive buffer starts at `$CF00`
+- transmit buffer starts at `$CF80`
+- practical resident code/data budget is just under `$0F00` bytes
 
 So protocol improvements must be optimized first for C64 code size, and only
 second for wire elegance.
@@ -239,7 +240,7 @@ sensitive phases.
 Normal mode may remain bidirectional:
 
 - bridge can send requests
-- C64 can emit `USER`, `STATUS`, `RESULT`, `LLM`
+- C64 can emit `USER`, `STATUS`, `RESULT`, `LLM`, and `HEARTBEAT`
 
 ### Sensitive Mode: Command Completion
 
@@ -286,6 +287,15 @@ Examples:
 - `ERROR`
 - `LLM`
 - `SYSTEM`
+
+### Fire-And-Forget C64 -> Bridge
+
+- `HEARTBEAT`
+
+The wire type exists, but heartbeat-triggered LLM turns are not implemented in
+the current C64 agent. The planned behavior is documented in
+`CLAW_DESIGN.md`: the C64 TSR will originate idle heartbeat events, and the
+bridge will only forward them.
 
 ## Duplicate Suppression
 

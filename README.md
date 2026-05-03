@@ -257,6 +257,38 @@ so `--loader-prg` is only needed to override it.
 └────────────────────────────────────────────────────────┘
 ```
 
+## C64 Memory And Queues
+
+The installed agent lowers BASIC memory so the user program cannot overwrite
+the agent-owned high-RAM areas. Current protected layout:
+
+| Range | Purpose |
+| --- | --- |
+| `$9000-$91FF` | guarded helper code copied by the loader |
+| `$9200-$94FF` | fixed C64-side user-message queue, 3 slots x 256 bytes |
+| `$9500-$9503` | user-queue metadata: staged length, head, tail, count |
+| `$9504+` | guarded busy/READY/status lookup tables |
+| `$9600-$967F` | EXEC staging buffer |
+| `$9800+` | C64 soul / system prompt text |
+| `$A000-$A3FF` | cold helper-code reserve |
+| `$A800-$BFFF` | memory staging reserve for future durable-memory work |
+| `$C000-$CEFF` | resident TSR agent code and state, growth checked at assemble time |
+| `$CF00-$CF7F` | receive / tool payload buffer |
+| `$CF80-$CFFF` | transmit / injection buffer |
+
+The queue is owned by the C64. While a relay cycle is busy, the bridge may
+deliver only bounded overlap up to those three slots. If the C64-side queue is
+full, the guarded enqueue helper drops the oldest pending message and keeps
+the newest one.
+
+The durable-memory feature is still planned, not implemented. The current
+`$A800-$BFFF` region is only a staging reservation; durable memory is intended
+to live on C64-owned disk media, not as hidden bridge context.
+
+Heartbeat is also planned, not active behavior. The protocol has a heartbeat
+frame type, but the current C64 agent does not yet originate idle heartbeat
+LLM turns.
+
 ## Serial Protocol
 
 The wire protocol is defined in [`PROTOCOL.md`](/Users/sts/Quellen/slagent/claw64/PROTOCOL.md).
