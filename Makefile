@@ -6,6 +6,7 @@
 #   java (any JDK/JRE)          # for KickAssembler (downloaded automatically)
 
 VICE        ?= x64sc
+SERIAL_DEVICE ?= /dev/cu.C64
 
 # Per-worktree port file — allocates sticky serial + monitor ports so
 # multiple worktrees can run VICE concurrently without collisions.
@@ -30,7 +31,7 @@ D64_OUT     = c64/claw64.d64
 
 BURNIN_REPEAT ?= 3
 
-.PHONY: assemble assets d64 echotest vectest vice vice-vec vice-echo bridge run test test-serial burnin burnin-repeat burnin-direct burnin-overlap ports kill clean clean-all clean-ports
+.PHONY: assemble assets d64 echotest vectest vice vice-vec vice-echo bridge bridge-serial run test test-serial burnin burnin-repeat burnin-direct burnin-overlap ports kill clean clean-all clean-ports
 
 define KILL_PORTS
 	@. ./$(PORT_FILE); \
@@ -148,6 +149,11 @@ bridge: $(PORT_FILE)
 	  --serial-addr "127.0.0.1:$$SERIAL_PORT" \
 	  --monitor-addr "127.0.0.1:$$MONITOR_PORT" \
 	  --spawn-vice=false stdin
+
+# run the Go bridge against a physical C64 serial adapter
+bridge-serial:
+	go run ./cmd/claw64-bridge \
+	  --serial-port "$(SERIAL_DEVICE)" stdin
 
 # run all Go package tests
 test:

@@ -134,6 +134,17 @@ make vice          # launch VICE (auto-starts agent)
 make bridge        # run bridge in another terminal
 ```
 
+For a physical C64 serial adapter, start the bridge without VICE:
+
+```bash
+make bridge-serial                         # uses /dev/cu.C64
+make bridge-serial SERIAL_DEVICE=/dev/ttyUSB0
+```
+
+This opens the device as raw `2400,0,0` / 8N1 with no flow control. The
+underlying bridge flag is `--serial-port`; setting it implies
+`--spawn-vice=false`.
+
 At startup, the loader shows a lobster logo in multicolor bitmap mode for
 roughly two seconds before restoring the normal BASIC text screen and
 starting the agent.
