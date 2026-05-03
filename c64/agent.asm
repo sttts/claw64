@@ -1800,6 +1800,8 @@ fr_x:   rts
 // Also serves as the initial value for the running XOR checksum.
 fr_sub:
         and #$7F                // strip bit 7 (VICE RS232 corruption)
+        cmp #BRIDGE_FRAME_MAX+1 // $7c-$7f are sync-like, not valid inbound subtypes
+        bcs fr_len_resync
         sta frame_sub           // store the subtype byte
         sta frame_chk           // initialize checksum with subtype
         inc parse_state         // advance to state 2 (LEN)
@@ -1880,8 +1882,8 @@ frame_dispatch:
         // ACK frames from the bridge are unreliable — no transport ID.
         // Handle them before the reliable-frame ID extraction path.
         lda frame_sub
-        cmp #FRAME_ACK
-        bne fd_reliable
+        cmp #FRAME_ACK_IN
+        bne fd_inbound_gate
         lda frame_len
         beq fd_ack_done
         lda AGENT_RXBUF         // ACK payload = id being acknowledged
@@ -1890,6 +1892,12 @@ frame_dispatch:
         lda #0
         sta tx_ack_wait         // ACK received — stop waiting
 fd_ack_done:
+        rts
+
+fd_inbound_gate:
+        // Ignore echoed C64-origin frames before reliable inbound handling.
+        cmp #FRAME_RESULT
+        bcc fd_reliable
         rts
 
 fd_reliable:

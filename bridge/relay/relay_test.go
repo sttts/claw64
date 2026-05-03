@@ -117,6 +117,12 @@ func TestTransportIDAheadHandlesWrapAndStaleIDs(t *testing.T) {
 }
 
 func TestSemanticConfirmsDeliveryForToolResponses(t *testing.T) {
+	if !semanticConfirmsDelivery("EXEC", serial.FrameStatus) {
+		t.Fatalf("STATUS response should confirm EXEC delivery")
+	}
+	if !semanticConfirmsDelivery("EXEC", serial.FrameResult) {
+		t.Fatalf("RESULT response should confirm EXEC delivery")
+	}
 	if !semanticConfirmsDelivery("STATUS", serial.FrameStatus) {
 		t.Fatalf("STATUS response should confirm STATUS delivery")
 	}
@@ -650,15 +656,22 @@ func TestWaitForAckWaiterAcceptsMatchingAck(t *testing.T) {
 func TestCompletionGraceWindowExtendsForPendingOverlapSend(t *testing.T) {
 	r := &Relay{}
 
-	if got := r.completionGraceWindow(true, false); got != 250*time.Millisecond {
-		t.Fatalf("completionGraceWindow = %v, want %v", got, 250*time.Millisecond)
+	if got := r.completionGraceWindow(true, false); got != c64TextHandoffQuietWindow {
+		t.Fatalf("completionGraceWindow = %v, want %v", got, c64TextHandoffQuietWindow)
 	}
 
 	r.overlapBusy = true
-	if got := r.completionGraceWindow(true, false); got != time.Second {
+	if got := r.completionGraceWindow(false, true); got != time.Second {
 		t.Fatalf("completionGraceWindow with overlapBusy = %v, want %v", got, time.Second)
 	}
 
+	r.overlapBusy = false
+	r.msgGateWaiters = []chan struct{}{make(chan struct{})}
+	if got := r.completionGraceWindow(true, false); got != c64TextHandoffQuietWindow {
+		t.Fatalf("completionGraceWindow with queued waiters = %v, want %v", got, c64TextHandoffQuietWindow)
+	}
+
+	r.msgGateWaiters = nil
 	r.waitingTool = true
 	if got := r.completionGraceWindow(true, false); got != 0 {
 		t.Fatalf("completionGraceWindow while waitingTool = %v, want 0", got)

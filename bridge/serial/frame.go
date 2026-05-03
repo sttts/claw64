@@ -12,8 +12,8 @@
 package serial
 
 import (
-	"io"
 	"fmt"
+	"io"
 	"log"
 )
 
@@ -31,16 +31,17 @@ const (
 	FrameStatusReq  byte = 0x51 // 'Q' — ask whether BASIC is running or READY
 	FrameText       byte = 0x54 // 'T' — LLM's final answer, forward to user
 	FrameScreenshot byte = 0x50 // 'P' — request current text screen snapshot
+	FrameAckToC64   byte = 0x42 // 'B' — bridge ACK for C64 reliable frames
 
 	// C64 → Bridge
-	FrameAck       byte = 0x41 // 'A' — transport id echo for verified delivery
-	FrameResult    byte = 0x52 // 'R' — tool result: screen scrape
-	FrameStatus    byte = 0x55 // 'U' — BASIC state / long-running status text
-	FrameUser      byte = 0x59 // 'Y' — user-visible text emitted by the C64
-	FrameLLM       byte = 0x4C // 'L' — context message for the LLM
-	FrameError     byte = 0x58 // 'X' — tool call timed out
-	FrameHeartbeat byte = 0x48 // 'H' — heartbeat
-	FrameSystem    byte = 0x53 // 'S' — system prompt chunk
+	FrameResult    byte = 0x60 // '`' — tool result: screen scrape
+	FrameSystem    byte = 0x61 // 'a' — system prompt chunk
+	FrameStatus    byte = 0x62 // 'b' — BASIC state / long-running status text
+	FrameLLM       byte = 0x63 // 'c' — context message for the LLM
+	FrameHeartbeat byte = 0x64 // 'd' — heartbeat
+	FrameError     byte = 0x65 // 'e' — tool call timed out
+	FrameUser      byte = 0x66 // 'f' — user-visible text emitted by the C64
+	FrameAck       byte = 0x67 // 'g' — C64 ACK for bridge reliable frames
 )
 
 // Frame is a single protocol frame.
@@ -85,8 +86,9 @@ func readFiltered(r io.Reader) (byte, error) {
 func isKnownType(typ byte) bool {
 	return typ == FrameMsg || typ == FrameExec || typ == FrameStop ||
 		typ == FrameStatusReq || typ == FrameText || typ == FrameScreenshot ||
-		typ == FrameAck || typ == FrameResult || typ == FrameStatus || typ == FrameUser ||
-		typ == FrameLLM || typ == FrameError || typ == FrameHeartbeat ||
+		typ == FrameAckToC64 || typ == FrameAck || typ == FrameResult ||
+		typ == FrameStatus || typ == FrameUser || typ == FrameLLM || typ == FrameError ||
+		typ == FrameHeartbeat ||
 		typ == FrameSystem
 }
 
@@ -106,7 +108,7 @@ func Decode(r io.Reader, onPayloadByte ...func(byte, int, byte)) (Frame, error) 
 		if err != nil {
 			return Frame{}, fmt.Errorf("sync: %w", err)
 		}
-		masked := b & 0x7F // strip bit 7
+		masked := b & 0x7F  // strip bit 7
 		if masked >= 0x7C { // 0x7C=1111100, catches $FE,$FC,$7E,$7C etc
 			break
 		}
@@ -195,6 +197,8 @@ func TypeName(t byte) string {
 		return "STATUS"
 	case FrameText:
 		return "TEXT"
+	case FrameAckToC64:
+		return "ACK_TO_C64"
 	case FrameUser:
 		return "USER"
 	case FrameScreenshot:

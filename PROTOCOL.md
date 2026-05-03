@@ -107,6 +107,17 @@ ACK <id>
 
 Not payload echo.
 
+The wire uses directional ACK type bytes so transport echoes cannot be
+misread as acknowledgments in the opposite direction:
+
+- bridge -> C64 ACK: `B`
+- C64 -> bridge ACK: `g`
+
+C64-origin semantic frame types are kept in the safe `$60..$67` range, while
+all bridge-origin reliable request types stay below that range. This lets the
+C64 cheaply reject echoed C64-origin frames before reliable bridge-frame
+handling without using sync-like bytes.
+
 Rules:
 
 - receiver sends `ACK(id)` only when the reliable frame has been accepted far
@@ -264,9 +275,11 @@ Examples:
 - `STATUS`
 - `TEXT`
 - `SCREENSHOT`
+- `ACK` (`B`)
 
 ### Reliable C64 -> Bridge
 
+- `ACK` (`g`)
 - `USER`
 - `STATUS`
 - `RESULT`

@@ -129,16 +129,17 @@
 .const FRAME_STATUSQ = $51   // 'Q' — ask whether BASIC is RUNNING or READY
 .const FRAME_SCREEN = $50    // 'P' — request current text screen snapshot
 .const FRAME_TEXT   = $54    // 'T' — LLM's final answer into the C64 agent
+.const FRAME_ACK_IN = $42    // 'B' — bridge ACK for C64 reliable frames
 //
 // C64 -> Bridge:
-.const FRAME_ACK    = $41    // 'A' — transport id echo for verified delivery
-.const FRAME_RESULT = $52    // 'R' — tool result: screen scrape
-.const FRAME_STATUS = $55    // 'U' — BASIC state / long-running status text
-.const FRAME_USER   = $59    // 'Y' — user-visible text emitted by the C64
-.const FRAME_LLM    = $4C    // 'L' — context message for the LLM
-.const FRAME_ERROR  = $58    // 'X' — tool call timed out
-.const FRAME_HBEAT  = $48    // 'H' — heartbeat
-.const FRAME_SYSTEM = $53    // 'S' — system prompt chunk
+.const FRAME_RESULT = $60    // '`' — tool result: screen scrape
+.const FRAME_SYSTEM = $61    // 'a' — system prompt chunk
+.const FRAME_STATUS = $62    // 'b' — BASIC state / long-running status text
+.const FRAME_LLM    = $63    // 'c' — context message for the LLM
+.const FRAME_HBEAT  = $64    // 'd' — heartbeat
+.const FRAME_ERROR  = $65    // 'e' — tool call timed out
+.const FRAME_USER   = $66    // 'f' — user-visible text emitted by the C64
+.const FRAME_ACK    = $67    // 'g' — C64 ACK for bridge reliable frames
 
 // Frame parser states
 .const STATE_HUNT   = 0      // hunting for SYNC byte

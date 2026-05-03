@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -789,13 +790,9 @@ func runBurninScenarios(cfg CLI, scenarios []string) {
 }
 
 func runBurninScenario(ctx context.Context, rl *relay.Relay, scenario string) {
-	var deliveryRetries map[string]int
-	var deliveryRetry func(name string, attempt int, err error)
-	if scenario == "slow-exec" {
-		deliveryRetries = map[string]int{}
-		deliveryRetry = func(name string, _ int, _ error) {
-			deliveryRetries[name]++
-		}
+	deliveryRetries := map[string]int{}
+	deliveryRetry := func(name string, _ int, _ error) {
+		deliveryRetries[name]++
 	}
 
 	rl.LLM = &scriptedBurnin{scenario: scenario}
@@ -832,9 +829,27 @@ func runBurninScenario(ctx context.Context, rl *relay.Relay, scenario string) {
 }
 
 func failOnUnexpectedDeliveryRetries(scenario string, retries map[string]int) {
-	if scenario == "slow-exec" && retries["EXEC"] > 0 {
-		log.Fatalf("burnin %s: EXEC delivery retried %d time(s)", scenario, retries["EXEC"])
+	if retrySummary := unexpectedDeliveryRetries(retries); retrySummary != "" {
+		log.Fatalf("burnin %s: delivery retried: %s", scenario, retrySummary)
 	}
+}
+
+func unexpectedDeliveryRetries(retries map[string]int) string {
+	if len(retries) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(retries))
+	for name := range retries {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		if retries[name] > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", name, retries[name]))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func runOverlapBurnin(ctx context.Context, rl *relay.Relay, scenario string) {

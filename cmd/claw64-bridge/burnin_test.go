@@ -151,6 +151,22 @@ func TestScriptedBurninWraparound(t *testing.T) {
 	assertCompleteText(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: READY."}}, "BURN-IN WRAPAROUND COMPLETE.")
 }
 
+func TestUnexpectedDeliveryRetriesSummarizesAllRetryTypes(t *testing.T) {
+	got := unexpectedDeliveryRetries(map[string]int{
+		"TEXT": 2,
+		"EXEC": 1,
+	})
+	if got != "EXEC=1, TEXT=2" {
+		t.Fatalf("unexpectedDeliveryRetries = %q, want %q", got, "EXEC=1, TEXT=2")
+	}
+}
+
+func TestUnexpectedDeliveryRetriesIgnoresEmptyCounter(t *testing.T) {
+	if got := unexpectedDeliveryRetries(map[string]int{}); got != "" {
+		t.Fatalf("unexpectedDeliveryRetries = %q, want empty", got)
+	}
+}
+
 func assertToolCall(t *testing.T, s *scriptedBurnin, messages []llm.Message, wantName, wantArgs string) {
 	t.Helper()
 

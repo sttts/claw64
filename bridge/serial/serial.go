@@ -221,9 +221,8 @@ func (l *Link) Send(f Frame) error {
 		}
 		// VICE/KERNAL RS232 drops the trailing checksum byte on longer
 		// bridge→C64 frames unless we pace writes a bit more gently.
-		time.Sleep(35 * time.Millisecond)
+		time.Sleep(45 * time.Millisecond)
 	}
-
 	// report payload to progress callback
 	if l.OnSendByte != nil && len(f.Payload) > 0 {
 		for i := range f.Payload {
@@ -262,7 +261,7 @@ func (l *Link) Recv() (Frame, error) {
 		// Skip bridge→C64 command frames. User-visible C64 text now uses
 		// its own frame type, so inbound TEXT can be skipped safely here.
 		switch f.Type {
-		case FrameMsg, FrameExec, FrameStop, FrameStatusReq, FrameScreenshot, FrameText:
+		case FrameMsg, FrameExec, FrameStop, FrameStatusReq, FrameScreenshot, FrameText, FrameAckToC64:
 			continue
 		}
 		return f, nil
