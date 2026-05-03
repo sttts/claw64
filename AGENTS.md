@@ -104,6 +104,7 @@ allocation and `make kill` to stop processes without starting new ones.
 - Use `make burnin-repeat` for flake hunting; set `BURNIN_REPEAT=<n>` to override the default repeat count.
 - Default heavy scenario: `go run ./cmd/claw64-bridge burnin direct-exec`
 - `direct-exec` is the main regression gate. It spans three user messages, exercises eleven `EXEC` calls, stores and lists a small BASIC program, runs it, and verifies the final `5050` output after the normal `RUNNING -> READY.` drain path.
+- `wraparound` drives enough live reliable `STATUS` frames in one session to cross the `127 -> 1` transport id boundary.
 - List supported scenarios with `go run ./cmd/claw64-bridge burnin --list`.
 - If the full gate fails, stop and fix that failure before adding more behavior.
 

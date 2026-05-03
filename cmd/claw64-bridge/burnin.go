@@ -51,6 +51,8 @@ func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ [
 		return s.completeDirectExec(messages)
 	case "slow-exec":
 		return s.completeSlowExec(messages)
+	case "wraparound":
+		return s.completeWraparound(messages)
 	default:
 		return llm.Message{}, fmt.Errorf("unknown burn-in scenario %q", s.scenario)
 	}
@@ -66,6 +68,7 @@ var burninScenarios = []burninScenario{
 	{name: "screen-repeat"},
 	{name: "direct-exec"},
 	{name: "slow-exec"},
+	{name: "wraparound"},
 	{name: "overlap-msg", overlapRuns: 2},
 	{name: "overlap-queue3", overlapRuns: 3},
 	{name: "overlap-running2", overlapRuns: 2},
@@ -85,6 +88,8 @@ var burninScenarios = []burninScenario{
 
 var burninGateScenarios = []string{"direct-exec", "slow-exec", "overlap-running24"}
 var burninSessionGateScenarios = []string{"direct-exec", "overlap-running24"}
+
+const wraparoundStatusChecks = 140
 
 func supportedBurninScenario(scenario string) bool {
 	if scenario == "gate" || scenario == "gate-session" {
@@ -381,6 +386,38 @@ func (s *scriptedBurnin) completeSlowExec(messages []llm.Message) (llm.Message, 
 			return llm.Message{}, fmt.Errorf("step %d: expected slow EXEC final screen, got %q", s.step, lastTool)
 		}
 		return llm.Message{Role: "assistant", Content: "BURN-IN slow-exec complete."}, nil
+	default:
+		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
+	}
+}
+
+func (s *scriptedBurnin) completeWraparound(messages []llm.Message) (llm.Message, error) {
+	lastTool := lastToolMessage(messages)
+	lastUser := strings.ToLower(lastUserMessage(messages))
+
+	switch {
+	case s.step == 0:
+		s.step++
+		return llm.Message{Role: "assistant", Content: "READY FOR WRAPAROUND."}, nil
+	case s.step == 1:
+		if !strings.Contains(lastUser, "wrap") {
+			return llm.Message{}, fmt.Errorf("step %d: expected wraparound request, got %q", s.step, lastUser)
+		}
+		s.step++
+		return simpleToolCall("status", "{}", s.step), nil
+	case s.step <= wraparoundStatusChecks:
+		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
+		if status != "READY" && status != "READY." {
+			return llm.Message{}, fmt.Errorf("step %d: expected READY while wrapping ids, got %q", s.step, lastTool)
+		}
+		s.step++
+		return simpleToolCall("status", "{}", s.step), nil
+	case s.step == wraparoundStatusChecks+1:
+		status := strings.TrimPrefix(lastTool, "[C64 BASIC status]: ")
+		if status != "READY" && status != "READY." {
+			return llm.Message{}, fmt.Errorf("step %d: expected final READY while wrapping ids, got %q", s.step, lastTool)
+		}
+		return llm.Message{Role: "assistant", Content: "BURN-IN WRAPAROUND COMPLETE."}, nil
 	default:
 		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
 	}
@@ -898,6 +935,11 @@ func burninInputs(scenario string) []string {
 		return []string{
 			"Hi",
 			"run a slow exec",
+		}
+	case "wraparound":
+		return []string{
+			"Hi",
+			"wrap ids",
 		}
 	default:
 		return []string{"Hi"}

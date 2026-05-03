@@ -27,8 +27,8 @@ func TestSupportedBurninScenarios(t *testing.T) {
 		"overlap-running20": 20,
 		"overlap-running24": 24,
 	}
-	if len(burninScenarios) != len(tests)+4 {
-		t.Fatalf("len(burninScenarios) = %d, want %d", len(burninScenarios), len(tests)+4)
+	if len(burninScenarios) != len(tests)+5 {
+		t.Fatalf("len(burninScenarios) = %d, want %d", len(burninScenarios), len(tests)+5)
 	}
 	for scenario, wantRuns := range tests {
 		gotRuns, ok := overlapScenarioRuns(scenario)
@@ -46,7 +46,7 @@ func TestSupportedBurninScenarios(t *testing.T) {
 		}
 	}
 
-	for _, scenario := range []string{"stop-screen", "screen-repeat", "direct-exec", "slow-exec"} {
+	for _, scenario := range []string{"stop-screen", "screen-repeat", "direct-exec", "slow-exec", "wraparound"} {
 		if !supportedBurninScenario(scenario) {
 			t.Fatalf("supportedBurninScenario(%q) = false", scenario)
 		}
@@ -75,8 +75,11 @@ func TestPrintBurninScenarios(t *testing.T) {
 	if lines[1] != "gate-session" {
 		t.Fatalf("second scenario = %q, want gate-session", lines[1])
 	}
-	if lines[len(lines)-1] != "overlap-running24" {
-		t.Fatalf("last scenario = %q, want overlap-running24", lines[len(lines)-1])
+	if lines[6] != "wraparound" {
+		t.Fatalf("wraparound scenario = %q, want wraparound", lines[6])
+	}
+	if lines[7] != "overlap-msg" {
+		t.Fatalf("first overlap scenario = %q, want overlap-msg", lines[7])
 	}
 }
 
@@ -135,6 +138,17 @@ func TestScriptedBurninSlowExecCompletesWhilePolling(t *testing.T) {
 	s := &scriptedBurnin{scenario: "slow-exec", step: 3}
 
 	assertCompleteText(t, s, []llm.Message{{Role: "tool", Content: "[C64 screen output]: \"\nSLOW DONE\n\nREADY."}}, "BURN-IN slow-exec complete.")
+}
+
+func TestScriptedBurninWraparound(t *testing.T) {
+	s := &scriptedBurnin{scenario: "wraparound"}
+
+	assertCompleteText(t, s, []llm.Message{{Role: "user", Content: "Hi"}}, "READY FOR WRAPAROUND.")
+	assertToolCall(t, s, []llm.Message{{Role: "user", Content: "wrap ids"}}, "status", "{}")
+	for s.step <= wraparoundStatusChecks {
+		assertToolCall(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: READY."}}, "status", "{}")
+	}
+	assertCompleteText(t, s, []llm.Message{{Role: "tool", Content: "[C64 BASIC status]: READY."}}, "BURN-IN WRAPAROUND COMPLETE.")
 }
 
 func assertToolCall(t *testing.T, s *scriptedBurnin, messages []llm.Message, wantName, wantArgs string) {
