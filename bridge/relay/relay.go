@@ -90,6 +90,7 @@ const bridgeFrameBodyMax = bridgeFramePayloadMax - 1
 const ackTimeout = 3 * time.Second
 const toolFrameTimeout = 5 * time.Second
 const ackQuietWindow = 150 * time.Millisecond
+const c64AckHandoffQuietWindow = 100 * time.Millisecond
 const runningAckQuietWindow = 3 * time.Second
 const runningRecvQuietWindow = 1 * time.Second
 const gateHandoffQuietWindow = 250 * time.Millisecond
@@ -1271,6 +1272,12 @@ func transportIDAhead(id, last byte) bool {
 // Called in recvFromC64 before the select (quiet window) and before
 // bridge→C64 sends to prevent ACK deadlocks.
 func (r *Relay) flushPendingAcks() {
+	if len(r.pendingAcks) > 0 && !r.lastC64FrameAt.IsZero() {
+		if remain := c64AckHandoffQuietWindow - time.Since(r.lastC64FrameAt); remain > 0 {
+			time.Sleep(remain)
+		}
+	}
+
 	sent := false
 	for _, id := range r.pendingAcks {
 		log.Printf("%s", flowLine("", "→", "C64", "ACK", fmt.Sprintf("id=%d", id)))
@@ -1405,6 +1412,7 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			deadline = time.Now().Add(timeout)
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
 			if semanticConfirmsDelivery(name, f.Type) {
+				r.rememberLateAck(id)
 				r.flushPendingAcks()
 				return true, nil
 			}

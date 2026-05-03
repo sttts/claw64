@@ -1324,7 +1324,7 @@ build_ack_frame:
         sta ack_buf+1
         lda #1
         sta ack_buf+2
-        lda rx_last_id
+        lda ack_id
         sta ack_buf+3
 
         // checksum = type ^ length ^ id
@@ -1926,8 +1926,7 @@ fd_stale:
         beq fd_dup_ack
         rts
 fd_dup_ack:
-        lda #1
-        sta ack_pending
+        jsr queue_ack_current
         rts
 
 fd_accept:
@@ -1940,8 +1939,7 @@ fd_accept:
         beq fd_dispatch
         cmp #FRAME_EXEC
         beq fd_dispatch
-        lda #1
-        sta ack_pending
+        jsr queue_ack_current
         jmp fd_dispatch
 
 fd_no_id:
@@ -2011,6 +2009,8 @@ fd_text_accept:
         lda frame_len
         sta exec_len
         jsr copy_exec_from_rxbuf
+        lda fd_cur_id
+        sta ack_id
         lda #1
         sta deferred_ack
         lda #1
@@ -2097,16 +2097,21 @@ fd_not_stop:
         sta exec_len
         jsr copy_exec_from_rxbuf
         jsr detect_program_line
-        lda #1
-        sta ack_pending
+        jsr queue_ack_current
         jmp fd_exec_start
 
 fd_exec_busy:
         jsr queue_state_busy
-        lda #1
-        sta ack_pending
+        jsr queue_ack_current
 
 fd_done:
+        rts
+
+queue_ack_current:
+        lda fd_cur_id
+        sta ack_id
+        lda #1
+        sta ack_pending
         rts
 
 fd_exec_start:
@@ -2289,6 +2294,7 @@ text_pending: .byte 0   // 1 = forward TEXT to user via drip-send
 tx_ack_tick:  .byte 0   // last seen KERNAL jiffy low byte while waiting ACK
 exec_len:      .byte 0  // saved EXEC payload length in exec_buf
 ack_pending:  .byte 0   // 1 = send FRAME_ACK echo for current bridge frame
+ack_id:       .byte 0   // transport id to echo in the next FRAME_ACK
 deferred_ack: .byte 0   // 1 = current inbound TEXT is not safe to ACK yet
 ack_pos:      .byte 0   // current position in ack_buf during paced send
 ack_total:    .byte 0   // total bytes in ack_buf (0 or 5)
