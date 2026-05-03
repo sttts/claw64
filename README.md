@@ -145,6 +145,28 @@ This opens the device as raw `2400,0,0` / 8N1 with no flow control. The
 underlying bridge flag is `--serial-port`; setting it implies
 `--spawn-vice=false`.
 
+For real hardware bring-up, the top-left screen character is a startup
+checkpoint. Start `make bridge-serial` first, then start the C64 program. When
+the character reaches `M`, RS232 is configured and the C64 is sending the
+handshake byte. If the bridge still says `waiting for C64 handshake` after `M`
+appears, check the serial device, Bluetooth pairing, wiring, and baud settings.
+
+| Character | Startup phase |
+| --- | --- |
+| `A` | loader entered |
+| `B` | splash visible |
+| `C` | resident agent copied |
+| `D` | guarded helper copied |
+| `E` | busy-color table seeded |
+| `F` | READY table seeded |
+| `G` | status text seeded |
+| `H` | text screen restored |
+| `I` | sprite copy starting |
+| `J` | sprite data copied |
+| `K` | resident agent install entered |
+| `L` | vectors and sprites installed |
+| `M` | RS232 configured; handshake is being sent |
+
 The physical setup currently uses a user port RS232 adapter based on Jan
 Klingel's [Commodore 64/128 to PC serial guide](https://janklingel.de/2025/03/21/connecting-commodore-64-128-to-pc/)
 with an [HC-05 serial Bluetooth module](https://www.amazon.de/dp/B07J66PR6B?ref=ppx_yo2ov_dt_b_fed_asin_title).

@@ -320,6 +320,9 @@ cp_bas_wr:
         lda #$03
         sta $2F
         sta $31
+        // Startup checkpoint M: RS232 is configured and the handshake is next.
+        inc SCREEN_RAM
+
         // ---- Send handshake byte before switching to RAM mode ----
         // Match the later RS232 send path's file-table repair.
         lda LDTND
@@ -335,9 +338,6 @@ hs_chrout:
         lda #$21                // '!' handshake
         jsr CHROUT              // send via RS232 (not screen)
         jsr CLRCHN              // reset I/O
-
-        // Startup checkpoint M: serial handshake sent.
-        inc SCREEN_RAM
 
         // System prompt is sent on first MSG (needs echo for VICE TX)
 
