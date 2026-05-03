@@ -753,7 +753,7 @@ func runBurninScenarios(cfg CLI, scenarios []string) {
 		}
 	}
 
-	link, viceCmd, cleanupLoader, err := startSerialLink(cfg)
+	link, viceCmd, cleanupLoader, err := startSerialLink(ctx, cfg)
 	if err != nil {
 		log.Fatalf("serial: %v", err)
 	}

@@ -230,7 +230,7 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 		log.Fatalf("setup: %v", err)
 	}
 
-	link, viceCmd, cleanupLoader, err := startSerialLink(cfg)
+	link, viceCmd, cleanupLoader, err := startSerialLink(ctx, cfg)
 	if err != nil {
 		log.Fatalf("serial: %v", err)
 	}
@@ -300,9 +300,9 @@ func (v *runningVICE) wait() error {
 	return v.err
 }
 
-func startSerialLink(cfg CLI) (*serial.Link, *runningVICE, func(), error) {
+func startSerialLink(ctx context.Context, cfg CLI) (*serial.Link, *runningVICE, func(), error) {
 	if cfg.SerialPort != "" {
-		link, err := serial.OpenDevice(cfg.SerialPort)
+		link, err := serial.OpenDeviceContext(ctx, cfg.SerialPort)
 		return link, nil, func() {}, err
 	}
 	if cfg.SerialAddr == "" || cfg.MonitorAddr == "" {

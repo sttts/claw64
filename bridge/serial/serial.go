@@ -3,12 +3,15 @@
 package serial
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -83,8 +86,17 @@ func Listen(addr string) (*Link, error) {
 
 // OpenDevice opens a real serial device and waits for the C64 handshake.
 func OpenDevice(path string) (*Link, error) {
+	return OpenDeviceContext(context.Background(), path)
+}
+
+// OpenDeviceContext opens a real serial device and waits for the C64 handshake.
+func OpenDeviceContext(ctx context.Context, path string) (*Link, error) {
 	openedOnce := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		conn, err := openDevice(path)
 		if err != nil {
 			if !openedOnce {
@@ -97,14 +109,21 @@ func OpenDevice(path string) (*Link, error) {
 		openedOnce = true
 		log.Printf("serial: opened %s at 2400,0,0 — waiting for C64 handshake", path)
 
-		link, err := waitForHandshakeByte(path, conn)
+		link, err := waitForHandshakeByte(ctx, path, conn)
 		if err == nil {
 			log.Printf("serial: C64 agent ready (handshake '!')")
 			return link, nil
 		}
 		conn.Close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		log.Printf("serial: handshake on %s failed: %v; reopening", path, err)
-		time.Sleep(time.Second)
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 }
 
@@ -235,22 +254,22 @@ func waitForHandshake(ln net.Listener) (*Link, error) {
 	}
 }
 
-func waitForHandshakeByte(path string, conn io.ReadWriteCloser) (*Link, error) {
+func waitForHandshakeByte(ctx context.Context, path string, conn io.ReadWriteCloser) (*Link, error) {
+	if file, ok := conn.(*os.File); ok {
+		return waitForHandshakeFile(ctx, path, file)
+	}
+
 	buf := make([]byte, 1)
-	started := time.Now()
 	done := make(chan struct{})
 	defer close(done)
+	stopLog := startHandshakeWaitLog(path)
+	defer stopLog()
 
 	go func() {
-		tick := time.NewTicker(5 * time.Second)
-		defer tick.Stop()
-		for {
-			select {
-			case <-tick.C:
-				log.Printf("serial: still waiting for C64 handshake on %s after %s", path, time.Since(started).Round(time.Second))
-			case <-done:
-				return
-			}
+		select {
+		case <-ctx.Done():
+			conn.Close()
+		case <-done:
 		}
 	}()
 
@@ -268,6 +287,69 @@ func waitForHandshakeByte(path string, conn io.ReadWriteCloser) (*Link, error) {
 		}
 		log.Printf("serial: unexpected byte 0x%02X, waiting for handshake", buf[0])
 	}
+}
+
+func waitForHandshakeFile(ctx context.Context, path string, file *os.File) (*Link, error) {
+	fd := int(file.Fd())
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return nil, fmt.Errorf("handshake set nonblock: %w", err)
+	}
+	defer syscall.SetNonblock(fd, false)
+
+	buf := make([]byte, 1)
+	stopLog := startHandshakeWaitLog(path)
+	defer stopLog()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		n, err := file.Read(buf)
+		if n == 1 {
+			if buf[0] == 0x21 {
+				if err := syscall.SetNonblock(fd, false); err != nil {
+					return nil, fmt.Errorf("handshake clear nonblock: %w", err)
+				}
+				l := &Link{conn: file}
+				l.Debug = os.Getenv("CLAW64_SERIAL_DEBUG") != ""
+				if l.Debug {
+					log.Println("serial: DEBUG mode — logging all bytes")
+				}
+				return l, nil
+			}
+			log.Printf("serial: unexpected byte 0x%02X, waiting for handshake", buf[0])
+		}
+		if err != nil && !errors.Is(err, syscall.EAGAIN) {
+			return nil, fmt.Errorf("handshake: %w", err)
+		}
+
+		select {
+		case <-time.After(50 * time.Millisecond):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+func startHandshakeWaitLog(path string) func() {
+	started := time.Now()
+	done := make(chan struct{})
+	go func() {
+		tick := time.NewTicker(5 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				log.Printf("serial: still waiting for C64 handshake on %s after %s", path, time.Since(started).Round(time.Second))
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 // Send writes a frame to the C64 byte-by-byte with delays.
