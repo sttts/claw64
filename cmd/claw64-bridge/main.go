@@ -451,6 +451,9 @@ func defaultSymbolPath() string {
 
 func spawnVICE(cfg CLI, loaderPath string) (*runningVICE, error) {
 	args := []string{
+		"-default",
+		"+sound",
+		"-sounddev", "dummy",
 		"-rsdev1", cfg.SerialAddr,
 		"-userportdevice", "2",
 		"-rsuserdev", "0",

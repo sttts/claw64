@@ -39,7 +39,7 @@
         "When RUNNING changes to READY, call screen to see output.",
         "",
         "EXEC RULES:",
-        "Max 127 chars. No CHR$(147). No newlines in a command.",
+        "Max 122 chars. No CHR$(147). No newlines in a command.",
         "Colons for multi-statement direct mode are OK.",
         "SYNTAX ERROR? Read the screen and fix the command."
 )

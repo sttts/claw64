@@ -4,8 +4,8 @@
 
 // Agent memory layout
 // Code grows up from $C000. The fixed buffers live in the remaining
-// space below $D000. Frame payloads are capped at 127 bytes, so the
-// receive buffer needs 128 bytes. The transmit buffer must hold one
+// space below $D000. Bridge-to-C64 frame payloads stay below the
+// sync-like length range ($7c-$7f). The transmit buffer must hold one
 // fully encoded reliable outbound frame, including a 120-byte SYSTEM
 // chunk plus framing overhead.
 .const AGENT_BASE      = $C000  // agent code starts here
@@ -15,6 +15,7 @@
 .const AGENT_TXBUF     = $CF60  // transmit / inject buffer
 .const AGENT_RXBUF_LEN = 128
 .const AGENT_TXBUF_LEN = $A0
+.const BRIDGE_FRAME_MAX = $7B  // reserve $7c-$7f length bytes for parser resync
 
 // Planned protected-RAM reservations.
 // Guarded helper code plus queue/heartbeat live in protected high BASIC RAM.

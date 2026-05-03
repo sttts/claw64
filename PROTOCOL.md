@@ -65,6 +65,8 @@ Wire overhead is comparatively cheap:
 
 - adding a 1-byte id costs little
 - keeping `ACK` payloads minimal saves bytes overall
+- bridge-to-C64 payload lengths are capped at `0x7b` so `0x7c..0x7f`
+  remain sync-like resynchronization bytes for the C64 parser
 
 The protocol must therefore prefer:
 
@@ -89,6 +91,8 @@ Where:
 - `ID` is 1 byte at first
 - ids are scoped per direction
 - sender increments in the 7-bit-clean range `1..127` and skips `0`
+- bridge-to-C64 frame bodies are capped at 122 bytes because the transport
+  ID consumes one byte of the `0x7b` inbound payload budget
 
 This transport state is not agent state. It is the minimum key needed to make
 retries and duplicate suppression safe on the C64.

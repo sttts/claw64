@@ -11,7 +11,7 @@ var BasicExecTool = Tool{
 			Properties: map[string]Property{
 				"command": {
 					Type:        "string",
-					Description: "C64 BASIC input, max 127 chars. Colons and numbered program lines allowed. Numbered lines return STORED and are not run. No newlines.",
+					Description: "C64 BASIC input, max 122 chars. Colons and numbered program lines allowed. Numbered lines return STORED and are not run. No newlines.",
 				},
 			},
 			Required: []string{"command"},

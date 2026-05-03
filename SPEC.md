@@ -133,9 +133,9 @@ at a time, letting the KERNAL screen editor process each batch. ASCII
 lowercase is folded to uppercase (subtract $20 for $61-$7A). A carriage
 return ($0D) is appended to trigger execution.
 
-Maximum `exec` input length: 127 characters (the frame payload limit; the
-agent appends the final RETURN locally). Text messages (MSG, TEXT,
-LLM_MSG frames) can be longer — up to 200 characters via multi-frame.
+Maximum `exec` input length: 122 characters (the bridge-to-C64 body limit; the
+agent appends the final RETURN locally). C64-to-bridge text can be longer via
+multi-frame chunks.
 
 #### Screen scraping
 
@@ -254,7 +254,7 @@ overrides that embedded image.
 
 #### Tools
 
-- `exec(command)` — send BASIC input and return the resulting screen output. Immediate commands, colon-separated statements, and numbered program lines are allowed, up to 127 characters. Numbered program lines return `STORED` and are not executed; run them with a later `exec("RUN")`.
+- `exec(command)` — send BASIC input and return the resulting screen output. Immediate commands, colon-separated statements, and numbered program lines are allowed, up to 122 characters. Numbered program lines return `STORED` and are not executed; run them with a later `exec("RUN")`.
 - `screen()` — return the current visible text screen without running BASIC.
 - `status()` — return whether BASIC is still running or back at `READY.`.
 - `stop()` — request a RUN/STOP break for the currently running BASIC program.

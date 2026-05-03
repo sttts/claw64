@@ -1810,7 +1810,9 @@ fr_sub:
 // XOR it into the running checksum. If length is 0, skip directly
 // to state 4 (CHK) since there are no payload bytes.
 fr_len:
-        and #$7F                // strip bit 7 (max 127 bytes per frame)
+        and #$7F                // strip bit 7 before inbound length checks
+        cmp #BRIDGE_FRAME_MAX+1 // $7c-$7f are sync-like, not valid inbound lengths
+        bcs fr_len_resync
         sta frame_len           // store payload length
         eor frame_chk           // XOR length into running checksum
         sta frame_chk           // update checksum
@@ -1822,6 +1824,11 @@ fr_len:
         sta parse_state
         rts
 fr_l1:  inc parse_state         // advance to state 3 (PAY)
+        rts
+
+fr_len_resync:
+        lda #1                  // treat a sync-like LEN as a fresh frame start
+        sta parse_state
         rts
 
 // State 3: PAY — accumulate payload bytes into AGENT_RXBUF
@@ -1847,11 +1854,16 @@ fr_pay:
 fr_chk:
         and #$7F                // strip bit 7 from received checksum
         cmp frame_chk           // compare with computed (also 7-bit)
-        bne fr_bad              // mismatch → bad frame
+        bne fr_chk_bad          // mismatch → bad frame
         jsr frame_dispatch      // match → valid frame! handle it
 fr_bad: lda #0                  // reset parser state to HUNT
         sta parse_state         // ready for next frame
         rts
+
+fr_chk_bad:
+        cmp #BRIDGE_FRAME_MAX+1 // checksum byte may actually be the next SYNC
+        bcs fr_len_resync
+        bcc fr_bad
 
 // ---------------------------------------------------------
 // Frame dispatch — handle a fully parsed and validated frame

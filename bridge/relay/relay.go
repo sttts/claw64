@@ -81,6 +81,8 @@ type queuedFrame struct {
 }
 
 const textChunkMax = 62
+const bridgeFramePayloadMax = 0x7B
+const bridgeFrameBodyMax = bridgeFramePayloadMax - 1
 
 // ackTimeout is the universal timeout for any reliable frame ACK.
 // With ID-based delivery, ACKs always arrive promptly regardless of
@@ -487,6 +489,9 @@ type basicExecArgs struct {
 // user-visible text.
 func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text string, emit func(string) error) error {
 	text = serial.ToASCII(text)
+	if len(text) > bridgeFrameBodyMax {
+		text = text[:bridgeFrameBodyMax]
+	}
 
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
 	if r.overlapQueueAtCapacity() {
@@ -924,8 +929,8 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) (bool, error
 		if i := strings.IndexAny(cmd, "\n\r"); i >= 0 {
 			cmd = cmd[:i]
 		}
-		if len(cmd) > 127 {
-			cmd = cmd[:127]
+		if len(cmd) > bridgeFrameBodyMax {
+			cmd = cmd[:bridgeFrameBodyMax]
 		}
 		logStream(r.streamOut(), "%s ", flowLabel("LLM", "→", "C64", "EXEC"))
 		if err := r.sendExec(ctx, []byte(cmd)); err != nil {
@@ -1072,7 +1077,9 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 			return err
 		}
 
-		_, err := r.waitForAckID(ctx, id, false)
+		waitCtx, cancel := context.WithTimeout(ctx, ackTimeout)
+		_, err := r.waitForAckID(waitCtx, id, false)
+		cancel()
 		if err == nil {
 			return nil
 		}
