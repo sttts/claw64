@@ -44,7 +44,7 @@
 .const TMPBUF   = $5000
 
 // Buffer for building outgoing serial frames before burst-sending.
-// Located at $C900 (AGENT_TXBUF), above the receive buffer.
+// Located at AGENT_TXBUF, above the receive buffer.
 .const send_buf = AGENT_TXBUF
 
 // Keep EXEC staging separate from the reliable outbound frame buffer.
