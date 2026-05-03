@@ -179,6 +179,22 @@ ldr_cp: lda (LDR_SRC_LO),y
         jsr copy_block
 }
 
+.macro copy_setup_reverse(src, dst, len) {
+        lda #<src
+        sta LDR_SRC_LO
+        lda #>src
+        sta LDR_SRC_HI
+        lda #<dst
+        sta LDR_DST_LO
+        lda #>dst
+        sta LDR_DST_HI
+        lda #<len
+        sta LDR_LEN_LO
+        lda #>len
+        sta LDR_LEN_HI
+        jsr copy_block_reverse
+}
+
 .macro loader_checkpoint(code) {
         lda #code
         sta SCREEN_RAM
@@ -263,6 +279,9 @@ show_logo:
         // Copy sources from highest address first so the screen write
         // ($4400) cannot corrupt data that hasn't been read yet.
         // Hires screen overlay goes last (after screen, to overlay it).
+        lda startup_logo_bg
+        sta $D020
+        sta $D021
 
         // 1. Bitmap → $6000
         :copy_setup(startup_logo_bitmap, DST_MC_BMP, LEN_MC_BMP)
@@ -274,14 +293,10 @@ show_logo:
         :copy_setup(startup_logo_color, DST_MC_COL, LEN_MC_COL)
 
         // 4. Screen → $4400
-        :copy_setup(startup_logo_screen, DST_MC_SCR, LEN_MC_SCR)
+        :copy_setup_reverse(startup_logo_screen, DST_MC_SCR, LEN_MC_SCR)
 
         // 5. Hires screen overlay → $46A8
         :copy_setup(startup_hires_screen, DST_HR_SCR, LEN_HR_SCR)
-
-        lda startup_logo_bg
-        sta $D020
-        sta $D021
 
         // Force the VIC bank select lines on CIA2 to output.
         lda $DD02
@@ -431,6 +446,55 @@ cb_dec_lo:
         dec LDR_LEN_LO
         jmp copy_block
 cb_done:
+        rts
+
+// ---------------------------------------------------------
+// Copy len_hi:len_lo bytes backwards for overlapping ranges.
+// ---------------------------------------------------------
+copy_block_reverse:
+        lda LDR_LEN_LO
+        ora LDR_LEN_HI
+        beq cbr_done
+
+        // Point source and destination at the final byte.
+        clc
+        lda LDR_SRC_LO
+        adc LDR_LEN_LO
+        sta LDR_SRC_LO
+        lda LDR_SRC_HI
+        adc LDR_LEN_HI
+        sta LDR_SRC_HI
+        clc
+        lda LDR_DST_LO
+        adc LDR_LEN_LO
+        sta LDR_DST_LO
+        lda LDR_DST_HI
+        adc LDR_LEN_HI
+        sta LDR_DST_HI
+
+cbr_loop:
+        lda LDR_SRC_LO
+        bne cbr_src_ok
+        dec LDR_SRC_HI
+cbr_src_ok:
+        dec LDR_SRC_LO
+        lda LDR_DST_LO
+        bne cbr_dst_ok
+        dec LDR_DST_HI
+cbr_dst_ok:
+        dec LDR_DST_LO
+        ldy #0
+        lda (LDR_SRC_LO),y
+        sta (LDR_DST_LO),y
+        lda LDR_LEN_LO
+        bne cbr_dec_lo
+        dec LDR_LEN_HI
+cbr_dec_lo:
+        dec LDR_LEN_LO
+        lda LDR_LEN_LO
+        ora LDR_LEN_HI
+        bne cbr_loop
+cbr_done:
         rts
 
 vic_d011_save:  .byte 0
