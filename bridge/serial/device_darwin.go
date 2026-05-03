@@ -42,5 +42,5 @@ func configureDevice(fd int) error {
 	if err := unix.IoctlSetTermios(fd, unix.TIOCSETAF, t); err != nil {
 		return err
 	}
-	return unix.IoctlSetInt(fd, unix.TIOCFLUSH, unix.TCIOFLUSH)
+	return unix.IoctlSetPointerInt(fd, unix.TIOCFLUSH, unix.TCIOFLUSH)
 }
