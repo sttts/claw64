@@ -3,7 +3,6 @@
 package serial
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -239,23 +238,25 @@ func waitForHandshake(ln net.Listener) (*Link, error) {
 func waitForHandshakeByte(path string, conn io.ReadWriteCloser) (*Link, error) {
 	buf := make([]byte, 1)
 	started := time.Now()
-	for {
-		if rd, ok := conn.(readDeadliner); ok {
-			if err := rd.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-				log.Printf("serial: cannot set handshake read deadline on %s: %v", path, err)
-			}
-		}
-		if _, err := io.ReadFull(conn, buf); err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		tick := time.NewTicker(5 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
 				log.Printf("serial: still waiting for C64 handshake on %s after %s", path, time.Since(started).Round(time.Second))
-				continue
+			case <-done:
+				return
 			}
-			return nil, fmt.Errorf("handshake: %w", err)
 		}
-		if rd, ok := conn.(readDeadliner); ok {
-			if err := rd.SetReadDeadline(time.Time{}); err != nil {
-				log.Printf("serial: cannot clear handshake read deadline on %s: %v", path, err)
-			}
+	}()
+
+	for {
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return nil, fmt.Errorf("handshake: %w", err)
 		}
 		if buf[0] == 0x21 {
 			l := &Link{conn: conn}

@@ -1,6 +1,7 @@
 package serial
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -10,6 +11,9 @@ import (
 func openDevice(path string) (*os.File, error) {
 	fd, err := unix.Open(path, unix.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
+		if errors.Is(err, unix.EBUSY) {
+			return nil, fmt.Errorf("open serial port %s: %w%s", path, err, serialDeviceBusyHint(path))
+		}
 		return nil, fmt.Errorf("open serial port %s: %w", path, err)
 	}
 	if err := unix.SetNonblock(fd, false); err != nil {
