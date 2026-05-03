@@ -280,8 +280,7 @@ show_logo:
         // ($4400) cannot corrupt data that hasn't been read yet.
         // Hires screen overlay goes last (after screen, to overlay it).
         lda startup_logo_bg
-        sta $D020
-        sta $D021
+        sta startup_bg_save
 
         // 1. Bitmap → $6000
         :copy_setup(startup_logo_bitmap, DST_MC_BMP, LEN_MC_BMP)
@@ -307,6 +306,10 @@ show_logo:
         and #%11111100
         ora #%00000010          // VIC bank 1: $4000-$7FFF
         sta $DD00
+
+        lda startup_bg_save
+        sta $D020
+        sta $D021
 
         lda #$18                // screen=$4400, bitmap=$6000 within bank 1
         sta $D018
@@ -508,6 +511,7 @@ cursor_col_save: .byte 0
 cursor_row_save: .byte 0
 vic_d016_multi:  .byte 0     // $D016 value with MCM set
 vic_d016_hires:  .byte 0     // $D016 value with MCM clear
+startup_bg_save: .byte 0
 
 // Agent code stored inline — assembled as if at $C000
 #define LOADER_MODE
