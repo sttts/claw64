@@ -193,7 +193,7 @@ func newLLM(cfg CLI) (llm.Completer, string) {
 		}
 		model := cfg.Model
 		if model == "" {
-			model = "gpt-4o"
+			model = "gpt-5.5"
 		}
 		return &llm.OpenAIClient{URL: url, APIKey: cfg.LLMKey, Model: model},
 			fmt.Sprintf("openai url=%s model=%s", url, model)

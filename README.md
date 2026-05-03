@@ -114,7 +114,7 @@ export OPENAI_API_KEY=sk-proj-...
 go run ./cmd/claw64-bridge auth set-key
 export ANTHROPIC_API_KEY=sk-ant-...
 go run ./cmd/claw64-bridge --llm openai --llm-key ... stdin
-go run ./cmd/claw64-bridge --llm openai --llm-key ... --model gpt-4o stdin
+go run ./cmd/claw64-bridge --llm openai --llm-key ... --model gpt-5.5 stdin
 go run ./cmd/claw64-bridge --llm ollama --llm-url http://localhost:11434/v1/chat/completions stdin
 ```
 

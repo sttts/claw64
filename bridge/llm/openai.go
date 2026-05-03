@@ -146,7 +146,7 @@ func (c *OpenAIClient) Preflight(context.Context) error {
 	}
 	c.codex = creds
 	if c.Model == "" || c.Model == "gpt-4o" {
-		c.Model = "gpt-5.1"
+		c.Model = "gpt-5.5"
 	}
 	return nil
 }
