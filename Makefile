@@ -19,14 +19,14 @@ KICKASS_ZIP  = build/KickAssembler.zip
 
 # Source files
 ASM_SRC     = c64/agent.asm
-ASM_OUT     = c64/agent.prg
+ASM_OUT     = c64/claw64.prg
 LOADER_SRC  = c64/loader.asm
 LOADER_OUT  = cmd/claw64-bridge/claw64.prg
 ECHO_SRC    = c64/echotest.asm
 ECHO_OUT    = c64/echotest.prg
 VEC_SRC     = c64/vectest.asm
 VEC_OUT     = c64/vectest.prg
-D64_OUT     = c64/agent.d64
+D64_OUT     = c64/claw64.d64
 
 BURNIN_REPEAT ?= 3
 
@@ -95,7 +95,7 @@ assemble: $(KICKASS_JAR)
 	java -jar $(KICKASS_JAR) -o $(ASM_OUT) $(ASM_SRC)
 	java -jar $(KICKASS_JAR) -o $(LOADER_OUT) $(LOADER_SRC)
 
-# create a D64 disk image with agent.prg
+# create a D64 disk image with claw64.prg
 d64: assemble
 	c1541 -format "claw64,01" d64 $(D64_OUT) -write $(ASM_OUT) agent
 

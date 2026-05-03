@@ -1,5 +1,9 @@
 version: 2
 
+before:
+  hooks:
+    - make d64
+
 builds:
   - id: claw64-bridge
     dir: .
@@ -36,4 +40,5 @@ checksum:
 release:
   extra_files:
     - glob: cmd/claw64-bridge/claw64.prg
-    - glob: c64/agent.prg
+    - glob: c64/claw64.prg
+    - glob: c64/claw64.d64
