@@ -1,6 +1,7 @@
 build/
 c64/*.prg
 c64/*.sym
+c64/*.d64
 /claw64-bridge
 /debug/
 /.claude/
