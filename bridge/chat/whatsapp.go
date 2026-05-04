@@ -117,14 +117,18 @@ func (w *WhatsAppChannel) Typing(ctx context.Context, user string, active bool) 
 		return fmt.Errorf("whatsapp: parse JID %q: %w", user, err)
 	}
 
-	state := types.ChatPresencePaused
-	if active {
-		state = types.ChatPresenceComposing
-	}
+	state := whatsappTypingState(active)
 	if err := w.client.SendChatPresence(ctx, jid, state, types.ChatPresenceMediaText); err != nil {
 		return fmt.Errorf("whatsapp: typing: %w", err)
 	}
 	return nil
+}
+
+func whatsappTypingState(active bool) types.ChatPresence {
+	if active {
+		return types.ChatPresenceComposing
+	}
+	return types.ChatPresencePaused
 }
 
 // Stop disconnects the WhatsApp client.

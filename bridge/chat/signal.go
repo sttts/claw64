@@ -106,18 +106,22 @@ func formatSignalMessage(text string) string {
 }
 
 func (s *SignalChannel) Typing(ctx context.Context, user string, active bool) error {
-	args := s.baseArgs()
-	args = append(args, "sendTyping")
-	if !active {
-		args = append(args, "--stop")
-	}
-	args = appendSignalRecipient(args, user)
+	args := s.signalTypingArgs(user, active)
 
 	out, err := exec.CommandContext(ctx, "signal-cli", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("signal typing: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func (s *SignalChannel) signalTypingArgs(user string, active bool) []string {
+	args := s.baseArgs()
+	args = append(args, "sendTyping")
+	if !active {
+		args = append(args, "--stop")
+	}
+	return appendSignalRecipient(args, user)
 }
 
 func appendSignalRecipient(args []string, user string) []string {

@@ -1,6 +1,9 @@
 package chat
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestSignalPrivateTargetDoesNotRequireJoystickTrigger(t *testing.T) {
 	ch := NewSignal("+491700000000", "", "user:+491711111111")
@@ -46,5 +49,37 @@ func TestFormatSignalMessageDoesNotAddJoystickQuote(t *testing.T) {
 	got := formatSignalMessage(" HALLO! BEREIT. \n")
 	if got != "HALLO! BEREIT." {
 		t.Fatalf("signal message = %q, want plain trimmed text", got)
+	}
+}
+
+func TestSignalTypingArgsForUser(t *testing.T) {
+	ch := NewSignal("+491700000000", ".signal-cli", "user:+491711111111")
+
+	got := ch.signalTypingArgs("user:+491711111111", true)
+	want := []string{"--config", ".signal-cli", "--output", "json", "--account", "+491700000000", "sendTyping", "+491711111111"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("typing start args = %#v, want %#v", got, want)
+	}
+
+	got = ch.signalTypingArgs("user:+491711111111", false)
+	want = []string{"--config", ".signal-cli", "--output", "json", "--account", "+491700000000", "sendTyping", "--stop", "+491711111111"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("typing stop args = %#v, want %#v", got, want)
+	}
+}
+
+func TestSignalTypingArgsForGroup(t *testing.T) {
+	ch := NewSignal("+491700000000", "", "group:abc")
+
+	got := ch.signalTypingArgs("group:abc", true)
+	want := []string{"--output", "json", "--account", "+491700000000", "sendTyping", "--group-id", "abc"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("group typing start args = %#v, want %#v", got, want)
+	}
+
+	got = ch.signalTypingArgs("group:abc", false)
+	want = []string{"--output", "json", "--account", "+491700000000", "sendTyping", "--stop", "--group-id", "abc"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("group typing stop args = %#v, want %#v", got, want)
 	}
 }
