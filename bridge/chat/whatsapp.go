@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"go.mau.fi/whatsmeow"
@@ -162,9 +163,8 @@ func (w *WhatsAppChannel) onEvent(evt interface{}) {
 			text = ext.GetText()
 		}
 	}
-	var triggered bool
-	text, triggered = stripJoystickTrigger(text)
-	if !triggered {
+	text, ok = w.incomingText(text)
+	if !ok {
 		return
 	}
 
@@ -179,4 +179,23 @@ func (w *WhatsAppChannel) onEvent(evt interface{}) {
 		log.Printf("whatsapp: handler error for %s: %v", sender, err)
 		return
 	}
+}
+
+func (w *WhatsAppChannel) incomingText(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	if isWhatsAppGroupJID(w.target) {
+		return stripJoystickTrigger(text)
+	}
+	return text, true
+}
+
+func isWhatsAppGroupJID(jid string) bool {
+	parsed, err := types.ParseJID(jid)
+	if err != nil {
+		return strings.HasSuffix(jid, "@g.us")
+	}
+	return parsed.Server == types.GroupServer
 }

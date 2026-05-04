@@ -230,9 +230,9 @@ Implementations:
   exactly with `:joystick: ` or `:joystick::`. Replies are rendered with
   quoted `:joystick:` prefixes to match Slack shortcode rendering.
 - **WhatsApp**: whatsmeow multi-device backend. Pairs one WhatsApp account and
-  listens only in one explicit private or group chat JID. Only messages in that
-  target are handled, and only if they begin exactly with `🕹️ ` or `🕹️:`.
-  Sends typing presence while a reply is in progress.
+  listens only in one explicit private or group chat JID. Private chats accept
+  every message from that chat. Group chats require messages to begin exactly
+  with `🕹️ ` or `🕹️:`. Sends typing presence while a reply is in progress.
 - **Signal**: signal-cli subprocess backend. Binds to one account, polls with
   `receive`, and listens only for one explicit target, `user:<phone>` or
   `group:<group-id>`. Private targets accept every message from that chat.

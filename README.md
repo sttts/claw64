@@ -89,9 +89,10 @@ go run ./cmd/claw64-bridge whatsapp 120363123456789012@g.us
 ```
 
 On first run, scan the QR code shown by the bridge. After pairing, the bridge
-only listens in the explicit target chat JID, and only for messages that start
-exactly with `🕹️ ` or `🕹️:`. While Claw is working on a reply, the backend sends
-WhatsApp typing presence for that chat.
+only listens in the explicit target chat JID. Private chats accept every
+message from that chat. Group chats require messages to start exactly with
+`🕹️ ` or `🕹️:`. While Claw is working on a reply, the backend sends WhatsApp
+typing presence for that chat.
 
 ### Signal
 
