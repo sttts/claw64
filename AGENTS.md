@@ -47,8 +47,15 @@ bridge/
 Module: `github.com/sttts/claw64`
 
 ## Tasks
-- Use the task system (TaskCreate/TaskUpdate/TaskList) for everything the user asks.
-- Mark tasks in_progress before starting, completed when done.
+- Use `bd` as the project task database. Do not let user-requested work disappear into memory files or chat summaries.
+- The bd database uses the `claw64` issue prefix. New manually created issues must keep that prefix.
+- The root project epic is `claw64-qq9`: `Deliver real Claw64 demo with C64-owned agent architecture`.
+- Use epics for major goal branches and child issues for concrete work: `bd create "Specific task title" --parent <epic-id> --type task`.
+- Use speaking issue names: action-oriented, specific, and understandable without opening the issue, e.g. `Fix real hardware TEXT replies that lose deferred ACK`, not `Fix bug` or `Transport work`.
+- Before starting work, inspect `bd ready` and the tree with `bd children claw64-qq9`.
+- Mark work `in_progress` when starting: `bd update <id> --status in_progress`.
+- Close work when finished: `bd close <id> --reason "implemented"`.
+- Keep the hierarchy current when the user asks for bigger goals or task trees.
 
 ## Commit Rules
 - Title convention: `area/subarea: short what has been done`
