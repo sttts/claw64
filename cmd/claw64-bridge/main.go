@@ -66,6 +66,7 @@ type CLI struct {
 	LLMKey      string `name:"llm-key" help:"API key for direct API backends."`
 	SpawnVICE   bool   `name:"spawn-vice" default:"true" help:"Spawn VICE automatically."`
 	ViceBin     string `name:"vice-bin" default:"x64sc" help:"VICE binary to launch when spawning."`
+	ViceConsole bool   `name:"vice-console" help:"Start VICE in console mode for headless burn-in runs."`
 	LoaderPRG   string `name:"loader-prg" help:"Override the embedded loader PRG path."`
 	Say         bool   `name:"say" help:"Speak every outgoing backend message with macOS say -v Zarvox."`
 
@@ -562,6 +563,9 @@ func spawnVICE(cfg CLI, loaderPath string) (*runningVICE, error) {
 	}
 
 	args := []string{"-default"}
+	if cfg.ViceConsole {
+		args = append(args, "-console")
+	}
 	if dataDir := viceDataDir(viceBin); dataDir != "" {
 		args = append(args, "-directory", dataDir)
 	}

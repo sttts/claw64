@@ -60,7 +60,7 @@ endef
 define RUN_BURNIN
 	STATUS=0; \
 	STALL_BEFORE=$$(ls -t debug/stall-*.log 2>/dev/null | head -1); \
-	go run ./cmd/claw64-bridge --vice-bin $(VICE) burnin $(1) || STATUS=$$?; \
+	go run ./cmd/claw64-bridge --vice-bin $(VICE) --vice-console burnin $(1) || STATUS=$$?; \
 	if [ "$$STATUS" -ne 0 ]; then \
 	  echo "burnin failed: scenario=$(1)" >&2; \
 	  STALL_AFTER=$$(ls -t debug/stall-*.log 2>/dev/null | head -1); \
