@@ -104,7 +104,7 @@ func (s *SignalChannel) Send(ctx context.Context, user, text string) error {
 	args = append(args, "send", "--message-from-stdin")
 	args = appendSignalRecipient(args, user)
 
-	cmd := exec.CommandContext(ctx, "signal-cli", args...)
+	cmd := signalCommand(ctx, args...)
 	cmd.Stdin = strings.NewReader(formatSignalMessage(text))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -124,7 +124,7 @@ func (s *SignalChannel) Typing(ctx context.Context, user string, active bool) er
 
 	args := s.signalTypingArgs(user, active)
 
-	out, err := exec.CommandContext(ctx, "signal-cli", args...).CombinedOutput()
+	out, err := signalCommand(ctx, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("signal typing: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -217,7 +217,7 @@ func (s *SignalChannel) runJSONRPC(ctx context.Context, events chan<- signalEven
 		"--ignore-stories",
 	)
 
-	cmd := exec.CommandContext(ctx, "signal-cli", args...)
+	cmd := signalCommand(ctx, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("signal jsonRpc stdout: %w", err)
@@ -515,4 +515,12 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func signalCommand(ctx context.Context, args ...string) *exec.Cmd {
+	path, err := exec.LookPath("signal-cli")
+	if err != nil {
+		path = "signal-cli"
+	}
+	return exec.CommandContext(ctx, path, args...)
 }
