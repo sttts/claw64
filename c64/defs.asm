@@ -31,6 +31,11 @@
 .const GUARD_CLEAR_STALE_STATUS_WAIT = GUARD_CODE_BASE + $FF
 .const GUARD_SET_BRF_SRC_EXEC = GUARD_CODE_BASE + $139
 .const GUARD_SET_BRF_SRC_RXBUF = GUARD_CODE_BASE + $144
+.const GUARD_CHECKPOINT = GUARD_CODE_BASE + $14F
+.const GUARD_CHECKPOINT_OUT = GUARD_CODE_BASE + $156
+.const GUARD_CHECKPOINT_EXEC_RETURN = GUARD_CODE_BASE + $16A
+.const GUARD_CHECKPOINT_EXEC_STORED = GUARD_CODE_BASE + $171
+.const GUARD_CHECKPOINT_ACK_OUT = GUARD_CODE_BASE + $178
 .const HEARTBEAT_BASE  = GUARD_CODE_LIMIT
 .const USERQ_BASE      = $9200
 .const USERQ_LIMIT     = $9500
@@ -107,6 +112,8 @@
 .const CURSOR_ROW   = $D6    // cursor row
 .const INSERT_COUNT = $D8    // pending screen editor insert count
 .const SCREEN_RAM   = $0400  // screen RAM start (40x25 = 1000 bytes)
+.const COLOR_RAM    = $D800  // color RAM start (40x25 = 1000 nybbles)
+.const CHECKPOINT_COLOR = 11  // dark gray: visible but unobtrusive
 .const BORDER_COLOR = $D020  // border color register
 .const BG_COLOR     = $D021  // background color register
 

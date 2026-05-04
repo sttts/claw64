@@ -193,3 +193,34 @@ guard_set_brf_src_rxbuf:
         lda #>(AGENT_RXBUF+1)
         sta brf_src+2
         rts
+
+guard_checkpoint:
+        sta SCREEN_RAM
+        stx SCREEN_RAM+1
+        rts
+
+guard_checkpoint_out:
+        sec
+        sbc #FRAME_RESULT
+        tax
+        lda guard_checkpoint_out_types,x
+        ldx #$0F                // O: outbound queued
+        jmp guard_checkpoint
+
+guard_checkpoint_out_types:
+        .byte $12, $13, $11, $0C, $08, $18, $15, $01 // R,S,Q,L,H,X,U,A
+
+guard_checkpoint_exec_return:
+        lda #$05
+        ldx #$12
+        jmp guard_checkpoint
+
+guard_checkpoint_exec_stored:
+        lda #$05
+        ldx #$1A
+        jmp guard_checkpoint
+
+guard_checkpoint_ack_out:
+        lda #$01
+        ldx #$0F
+        jmp guard_checkpoint

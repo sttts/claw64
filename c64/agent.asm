@@ -489,11 +489,9 @@ bl_inj_check:
         jmp bl_kb               // buffer still has keys → skip, let KERNAL process them
 
 bl_inj_do:
-        // Stuff up to 10 chars at once into the keyboard buffer.
-        // The KERNAL processes ALL buffered keys when bl_key runs.
-        // When RETURN ($0D) is in the batch, BASIC executes the line.
-        ldy #0                  // Y = position in KBUF
-bl_fill:
+        // Stuff one char at a time into the keyboard buffer. The emulator
+        // tolerates full-buffer bursts, but real KERNAL editor timing is
+        // less forgiving around RETURN and numbered program-line storage.
         ldx inj_pos
         cpx inj_len
         beq bl_fill_done        // all chars stuffed
@@ -506,15 +504,12 @@ bl_fill:
         sec
         sbc #$20                // lowercase → uppercase
 bl_nofold:
-        sta KBUF,y
-        iny
+        sta KBUF
         inc inj_pos
-        cpy #10                 // buffer full?
-        bne bl_fill
+        lda #1
+        sta KBUF_LEN
 
 bl_fill_done:
-        sty KBUF_LEN
-
         // Check if all chars have been injected
         ldx inj_pos
         cpx inj_len
@@ -524,6 +519,7 @@ bl_fill_done:
         // All injected (including RETURN) → wait for either READY. or
         // a stored numbered program line to settle.
 bl_inj_complete:
+        jsr GUARD_CHECKPOINT_EXEC_RETURN
         lda #0
         sta ready_timer
         lda progline_pending
@@ -631,21 +627,6 @@ bl_scan_next:
 bl_wait_not_ready:
         jmp bl_kb
 
-        // READY. not found on any line — check if we've timed out
-        lda ready_timer
-        cmp #240                // 240 iterations ≈ 4 seconds at 60 Hz
-        bcc bl_kb               // not timed out yet → keep waiting
-
-        // ---- Timeout! Send ERROR frame to bridge ----
-        // BASIC didn't print READY. within 4 seconds. The command may
-        // have hung or produced unexpected output. Send an error frame
-        // so the bridge knows the command failed.
-        jsr send_error          // send ERROR frame with zero-length payload
-        lda #AG_IDLE
-        sta agent_state
-        lda #0
-        sta busy                // stop border animation on timeout
-
 bl_kb:
         // ---- Step 4: Keyboard management & KERNAL key processing ----
         //
@@ -716,6 +697,7 @@ imain_hook:
         sta progline_pending
         sta busy
         jsr queue_state_stored
+        jsr GUARD_CHECKPOINT_EXEC_STORED
         lda #AG_IDLE
         sta agent_state
 ih_main_done:
@@ -1063,12 +1045,16 @@ so_done:
 service_startup_handshake:
         lda rx_last_id
         bne ssh_done
+ssh_send:
         lda $A2
         sec
         sbc tx_ack_tick
         bpl ssh_done
         lda $A2
         sta tx_ack_tick
+        lda #$20
+        tax
+        jsr GUARD_CHECKPOINT
         lda #$21                // '!' handshake
         jmp so_chrout
 ssh_done:
@@ -1322,6 +1308,8 @@ bsf_done:
 // Uses a dedicated buffer so ACKs can be sent even when send_buf holds
 // a reliable frame waiting for retransmit.
 build_ack_frame:
+        jsr GUARD_CHECKPOINT_ACK_OUT
+
         lda #SYNC_BYTE
         sta ack_buf+0
         lda #FRAME_ACK
@@ -1348,6 +1336,9 @@ build_ack_frame:
 // Shifts payload right by 1, inserts tx_next_id at send_buf+3,
 // increments LEN and send_total, fixes the checksum, advances tx_next_id.
 inject_tx_id:
+        lda send_buf+1
+        jsr GUARD_CHECKPOINT_OUT
+
         // shift payload+checksum right by 1 byte (from end to start)
         ldx send_buf+2          // X = old payload length
 iti_shift:
@@ -1951,10 +1942,12 @@ fd_dup_ack:
 
 fd_accept:
         // New reliable frame — store newest (id, type) and queue ACK.
+        lda frame_sub
+        and #$1F                // runtime checkpoint: accepted message type
+        ldx #$01                // A: accepted
+        jsr GUARD_CHECKPOINT
         lda fd_cur_id
         sta rx_last_id
-        lda #$20
-        sta SCREEN_RAM
         lda tx_ack_wait
         beq fd_accept_confirmed
         lda send_total

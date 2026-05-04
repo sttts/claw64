@@ -199,9 +199,11 @@ ldr_cp: lda (LDR_SRC_LO),y
         lda #code
         sta SCREEN_RAM
         sta SAVE_SCREEN
-        lda #1
-        sta $D800
+        lda #CHECKPOINT_COLOR
+        sta COLOR_RAM
+        sta COLOR_RAM+1
         sta SAVE_COLOR
+        sta SAVE_COLOR+1
 }
 
 // ---------------------------------------------------------

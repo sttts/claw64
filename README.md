@@ -158,11 +158,11 @@ waiting. If macOS opens the device while Bluetooth is not actually connected,
 the bridge logs a periodic `still waiting for C64 handshake` message instead
 of blocking silently.
 
-For real hardware bring-up, the top-left screen character is a startup
-checkpoint. Start `make bridge-serial` first, then start the C64 program. When
+For real hardware bring-up, the top-left screen cells show dim dark-gray
+checkpoints. Start `make bridge-serial` first, then start the C64 program. When
 the character reaches `M`, RS232 is configured. The C64 keeps sending the
 handshake byte until the first valid bridge frame arrives, then clears `M` back
-to a space. If the bridge still says `waiting for C64 handshake` after `M`
+to spaces. If the bridge still says `waiting for C64 handshake` after `M`
 appears, check the serial device, Bluetooth pairing, wiring, and baud settings.
 
 | Character | Startup phase |
@@ -180,6 +180,27 @@ appears, check the serial device, Bluetooth pairing, wiring, and baud settings.
 | `K` | resident agent install entered |
 | `L` | vectors and sprites installed |
 | `M` | RS232 configured; handshake is being repeated |
+
+Runtime checkpoints use two characters: first the message type, then the
+stage.
+
+| Pair | Runtime phase |
+| --- | --- |
+| `M A` | MSG frame accepted |
+| `E A` | EXEC frame accepted |
+| `T A` | TEXT frame accepted |
+| `Q A` | STATUS request accepted |
+| `P A` | SCREENSHOT request accepted |
+| `K A` | STOP request accepted |
+| `E R` | EXEC RETURN injected |
+| `E Z` | numbered BASIC line stored |
+| `R O` | RESULT frame queued for bridge |
+| `S O` | SYSTEM frame queued for bridge |
+| `Q O` | STATUS frame queued for bridge |
+| `L O` | LLM event frame queued for bridge |
+| `X O` | ERROR frame queued for bridge |
+| `U O` | USER text frame queued for bridge |
+| `A O` | ACK frame queued for bridge |
 
 The physical setup currently uses a user port RS232 adapter based on Jan
 Klingel's [Commodore 64/128 to PC serial guide](https://janklingel.de/2025/03/21/connecting-commodore-64-128-to-pc/)
