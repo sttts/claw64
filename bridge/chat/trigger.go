@@ -41,19 +41,6 @@ func stripSlackJoystickTrigger(text string) (string, bool) {
 	return "", false
 }
 
-func formatJoystickQuote(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-
-	lines := []string{"> " + joystickTrigger}
-	for _, line := range strings.Split(text, "\n") {
-		lines = append(lines, "> "+line)
-	}
-	return strings.Join(lines, "\n")
-}
-
 func formatSlackJoystickQuote(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {

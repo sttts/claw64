@@ -36,7 +36,7 @@ func (s *SignalChannel) Name() string { return "signal" }
 
 // Start polls signal-cli receive and dispatches incoming messages.
 func (s *SignalChannel) Start(ctx context.Context, handler MessageHandler) error {
-	log.Printf("signal: ready on %s target=%s trigger=%q", s.account, s.target, "🕹️")
+	log.Printf("signal: ready on %s target=%s trigger=%s", s.account, s.target, s.triggerLogValue())
 
 	for {
 		if ctx.Err() != nil {
@@ -52,7 +52,7 @@ func (s *SignalChannel) Start(ctx context.Context, handler MessageHandler) error
 				continue
 			}
 
-			text, ok := stripJoystickTrigger(evt.text)
+			text, ok := s.incomingText(evt.text)
 			if !ok {
 				continue
 			}
@@ -66,6 +66,24 @@ func (s *SignalChannel) Start(ctx context.Context, handler MessageHandler) error
 			}
 		}
 	}
+}
+
+func (s *SignalChannel) incomingText(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	if strings.HasPrefix(s.target, signalGroupPrefix) {
+		return stripJoystickTrigger(text)
+	}
+	return text, true
+}
+
+func (s *SignalChannel) triggerLogValue() string {
+	if strings.HasPrefix(s.target, signalGroupPrefix) {
+		return fmt.Sprintf("%q", joystickTrigger)
+	}
+	return "none"
 }
 
 // Send sends a text reply to a Signal user or group.
@@ -83,12 +101,16 @@ func (s *SignalChannel) Send(ctx context.Context, user, text string) error {
 	}
 
 	cmd := exec.CommandContext(ctx, "signal-cli", args...)
-	cmd.Stdin = strings.NewReader(formatJoystickQuote(text))
+	cmd.Stdin = strings.NewReader(formatSignalMessage(text))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("signal send: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func formatSignalMessage(text string) string {
+	return strings.TrimSpace(text)
 }
 
 func (s *SignalChannel) Stop() error { return nil }
