@@ -297,10 +297,9 @@ Examples:
 
 - `HEARTBEAT`
 
-The wire type exists, but heartbeat-triggered LLM turns are not implemented in
-the current C64 agent. The planned behavior is documented in
-`CLAW_DESIGN.md`: the C64 TSR will originate idle heartbeat events, and the
-bridge will only forward them.
+The C64 TSR emits `HEARTBEAT` after a silent `DONE` completion as a
+fire-and-forget liveness event. It is not reliable, does not carry a transport
+ID, and must not create bridge agent behavior by itself.
 
 ## Duplicate Suppression
 

@@ -75,6 +75,7 @@ type Relay struct {
 	msgRetryMax      time.Duration
 	DeliveryRetry    func(name string, attempt int, err error)
 	C64Duplicate     func(name string, id byte, newest byte)
+	Heartbeat        func()
 }
 
 type recvResult struct {
@@ -1481,6 +1482,12 @@ func (r *Relay) noteC64Duplicate(frameType byte, id byte, newest byte) {
 	}
 }
 
+func (r *Relay) noteHeartbeat() {
+	if r.Heartbeat != nil {
+		r.Heartbeat()
+	}
+}
+
 func transportIDAhead(id, last byte) bool {
 	if id == last {
 		return false
@@ -1875,6 +1882,7 @@ func (r *Relay) recvFromSocketOnly(ctx context.Context, waitingTextAck bool) (se
 			}
 			stallDumped = false
 			if res.frame.Type == serial.FrameHeartbeat {
+				r.noteHeartbeat()
 				continue
 			}
 			r.lastC64FrameAt = time.Now()
@@ -1949,6 +1957,7 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 			}
 			stallDumped = false
 			if res.frame.Type == serial.FrameHeartbeat {
+				r.noteHeartbeat()
 				continue
 			}
 			r.lastC64FrameAt = time.Now()

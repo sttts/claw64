@@ -48,6 +48,8 @@ func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ [
 		return s.completeStopScreen(messages)
 	case "screen-repeat":
 		return s.completeScreenRepeat(messages)
+	case "heartbeat":
+		return s.completeSilentCompletion(messages)
 	case "silent-completion":
 		return s.completeSilentCompletion(messages)
 	case "direct-exec":
@@ -69,6 +71,7 @@ type burninScenario struct {
 var burninScenarios = []burninScenario{
 	{name: "stop-screen"},
 	{name: "screen-repeat"},
+	{name: "heartbeat"},
 	{name: "silent-completion"},
 	{name: "direct-exec"},
 	{name: "slow-exec"},
@@ -90,7 +93,7 @@ var burninScenarios = []burninScenario{
 	{name: "overlap-running24", overlapRuns: 24},
 }
 
-var burninGateScenarios = []string{"silent-completion", "direct-exec", "slow-exec", "wraparound", "overlap-running24"}
+var burninGateScenarios = []string{"heartbeat", "silent-completion", "direct-exec", "slow-exec", "wraparound", "overlap-running24"}
 var burninSessionGateScenarios = []string{"direct-exec", "overlap-running24"}
 
 const wraparoundReliableChecks = 20
@@ -826,6 +829,14 @@ func runBurninScenario(ctx context.Context, rl *relay.Relay, scenario string) {
 	}
 	log.Printf("burnin: scenario %s starting", scenario)
 
+	if scenario == "heartbeat" {
+		runHeartbeatBurnin(ctx, rl)
+		failOnUnexpectedDeliveryRetries(scenario, deliveryRetries)
+		failOnUnexpectedC64Duplicates(scenario, c64Duplicates)
+		log.Printf("burnin: scenario %s completed", scenario)
+		return
+	}
+
 	if _, ok := overlapScenarioRuns(scenario); ok {
 		runOverlapBurnin(ctx, rl, scenario)
 		failOnUnexpectedDeliveryRetries(scenario, deliveryRetries)
@@ -855,6 +866,52 @@ func runBurninScenario(ctx context.Context, rl *relay.Relay, scenario string) {
 	failOnUnexpectedDeliveryRetries(scenario, deliveryRetries)
 	failOnUnexpectedC64Duplicates(scenario, c64Duplicates)
 	log.Printf("burnin: scenario %s completed", scenario)
+}
+
+func runHeartbeatBurnin(ctx context.Context, rl *relay.Relay) {
+	heartbeatCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	seen := make(chan struct{}, 1)
+	rl.Heartbeat = func() {
+		select {
+		case seen <- struct{}{}:
+		default:
+		}
+	}
+	defer func() {
+		rl.Heartbeat = nil
+	}()
+
+	if err := rl.HandleMessageStream(ctx, "burnin", "stay silent", func(message string) error {
+		return fmt.Errorf("heartbeat burn-in expected no user-visible text, got %q", message)
+	}); err != nil {
+		log.Fatalf("burnin heartbeat: %v", err)
+	}
+
+	select {
+	case <-seen:
+		return
+	default:
+	}
+
+	drained := make(chan error, 1)
+	go func() {
+		drained <- rl.DrainTransport(heartbeatCtx, 10*time.Second, 10*time.Second)
+	}()
+
+	select {
+	case <-seen:
+		cancel()
+		<-drained
+	case err := <-drained:
+		if err != nil {
+			log.Fatalf("burnin heartbeat: %v", err)
+		}
+		log.Fatalf("burnin heartbeat: no HEARTBEAT observed")
+	case <-ctx.Done():
+		log.Fatalf("burnin heartbeat: %v", ctx.Err())
+	}
 }
 
 func failOnUnexpectedDeliveryRetries(scenario string, retries map[string]int) {

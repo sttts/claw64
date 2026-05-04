@@ -77,9 +77,6 @@ install:
         // the memory map and patch KERNAL code.
         sei
 
-        // Startup checkpoint K: resident agent install entered.
-        inc SCREEN_RAM
-
         // Set processor port to $37 = normal memory map with ROMs
         // visible. We need KERNAL ROM readable at $E000-$FFFF so
         // we can copy its contents into the underlying RAM.
@@ -321,7 +318,6 @@ cp_bas_wr:
         sta $2F
         sta $31
         // Startup checkpoint M: RS232 is configured and the handshake is next.
-        inc SCREEN_RAM
         lda #$20
         sta SCREEN_RAM
 
@@ -1080,7 +1076,6 @@ so_chr_ok:
         jsr CLRCHN
         lda #0
         sta busy_timer
-        sta dot_dir
         clc
         rts
 so_chr_fail:

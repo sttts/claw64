@@ -27,8 +27,8 @@ func TestSupportedBurninScenarios(t *testing.T) {
 		"overlap-running20": 20,
 		"overlap-running24": 24,
 	}
-	if len(burninScenarios) != len(tests)+6 {
-		t.Fatalf("len(burninScenarios) = %d, want %d", len(burninScenarios), len(tests)+6)
+	if len(burninScenarios) != len(tests)+7 {
+		t.Fatalf("len(burninScenarios) = %d, want %d", len(burninScenarios), len(tests)+7)
 	}
 	for scenario, wantRuns := range tests {
 		gotRuns, ok := overlapScenarioRuns(scenario)
@@ -46,7 +46,7 @@ func TestSupportedBurninScenarios(t *testing.T) {
 		}
 	}
 
-	for _, scenario := range []string{"stop-screen", "screen-repeat", "silent-completion", "direct-exec", "slow-exec", "wraparound"} {
+	for _, scenario := range []string{"stop-screen", "screen-repeat", "heartbeat", "silent-completion", "direct-exec", "slow-exec", "wraparound"} {
 		if !supportedBurninScenario(scenario) {
 			t.Fatalf("supportedBurninScenario(%q) = false", scenario)
 		}
@@ -75,16 +75,16 @@ func TestPrintBurninScenarios(t *testing.T) {
 	if lines[1] != "gate-session" {
 		t.Fatalf("second scenario = %q, want gate-session", lines[1])
 	}
-	if lines[7] != "wraparound" {
-		t.Fatalf("wraparound scenario = %q, want wraparound", lines[7])
+	if lines[8] != "wraparound" {
+		t.Fatalf("wraparound scenario = %q, want wraparound", lines[8])
 	}
-	if lines[8] != "overlap-msg" {
-		t.Fatalf("first overlap scenario = %q, want overlap-msg", lines[8])
+	if lines[9] != "overlap-msg" {
+		t.Fatalf("first overlap scenario = %q, want overlap-msg", lines[9])
 	}
 }
 
 func TestGateIncludesProtocolReliabilityScenarios(t *testing.T) {
-	want := []string{"silent-completion", "direct-exec", "slow-exec", "wraparound", "overlap-running24"}
+	want := []string{"heartbeat", "silent-completion", "direct-exec", "slow-exec", "wraparound", "overlap-running24"}
 	if strings.Join(burninGateScenarios, ",") != strings.Join(want, ",") {
 		t.Fatalf("burninGateScenarios = %v, want %v", burninGateScenarios, want)
 	}

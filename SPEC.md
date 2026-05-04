@@ -134,8 +134,9 @@ Durable memory is not implemented yet. `$A800-$BFFF` is reserved as a staging
 window for planned floppy-backed `MEMORY_SUMMARY` / `MEMORY_FULL` traffic, not
 as durable state by itself.
 
-Heartbeat is a protocol and design reservation, not current C64 behavior. The
-C64 agent does not yet schedule idle heartbeat LLM turns.
+The C64 TSR emits a heartbeat frame after a silent `DONE` completion as a
+liveness event. The bridge may observe or forward it, but heartbeat policy and
+agent behavior remain C64 owned.
 
 #### KERNAL integration
 

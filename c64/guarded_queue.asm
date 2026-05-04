@@ -244,4 +244,20 @@ guard_done:
         sta ack_id
         lda #1
         sta ack_pending
+        jmp guard_heartbeat
+
+guard_heartbeat:
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda #FRAME_HBEAT
+        sta send_buf+1
+        lda #0
+        sta send_buf+2
+        lda #FRAME_HBEAT
+        sta send_buf+3
+        lda #4
+        sta send_total
+        lda #0
+        sta send_pos
+        sec
         rts
