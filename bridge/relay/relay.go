@@ -40,6 +40,10 @@ type Relay struct {
 	textBuf          []byte // accumulates multi-frame TEXT chunks (receive)
 	textOutQueue     []byte // pending TEXT data to send in chunks (send)
 	textInFlight     []byte // current TEXT chunk sent, waiting for forwarded ack
+	textAckWaitID    byte
+	textAckWaitSince time.Time
+	textAckWaitSeen  int
+	textAckWaitLast  string
 	toolInFlight     []byte // current tool payload sent, waiting for RESULT/ERROR
 	waitingTool      bool
 	lastToolCallID   string
@@ -1531,6 +1535,11 @@ func (r *Relay) unwrapAcceptedFrame(f *serial.Frame, accepted bool, ackNow bool)
 }
 
 func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) (serial.Frame, error) {
+	if waitingTextAck {
+		r.startTextAckDiagnostics(id)
+		defer r.clearTextAckDiagnostics()
+	}
+
 	for {
 		f, err := r.recvFromSocketOnly(ctx, waitingTextAck)
 		if err != nil {
@@ -1540,6 +1549,9 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) 
 		case serial.FrameAck:
 			fmt.Fprintln(r.streamOut())
 			ackID, ok := serial.ExtractAckID(f.Payload)
+			if waitingTextAck {
+				r.noteTextAckFrame(fmt.Sprintf("ACK id=%d", ackID))
+			}
 			if ok && ackID == id {
 				return f, nil
 			}
@@ -1550,6 +1562,9 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) 
 			continue
 		case serial.FrameUser, serial.FrameSystem, serial.FrameStatus,
 			serial.FrameResult, serial.FrameError, serial.FrameLLM:
+			if waitingTextAck {
+				r.noteTextAckFrame(fmt.Sprintf("%s len=%d", serial.TypeName(f.Type), len(f.Payload)))
+			}
 			acceptedDuplicate := false
 			if waitingTextAck {
 				acceptedDuplicate = r.acceptC64Frame(&f, true)
@@ -1562,11 +1577,36 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) 
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
 			continue
 		case serial.FrameHeartbeat:
+			if waitingTextAck {
+				r.noteTextAckFrame("HEARTBEAT")
+			}
 			continue
 		default:
+			if waitingTextAck {
+				r.noteTextAckFrame(serial.TypeName(f.Type))
+			}
 			return serial.Frame{}, fmt.Errorf("unexpected frame while waiting for ACK: %s", serial.TypeName(f.Type))
 		}
 	}
+}
+
+func (r *Relay) startTextAckDiagnostics(id byte) {
+	r.textAckWaitID = id
+	r.textAckWaitSince = time.Now()
+	r.textAckWaitSeen = 0
+	r.textAckWaitLast = "none"
+}
+
+func (r *Relay) clearTextAckDiagnostics() {
+	r.textAckWaitID = 0
+	r.textAckWaitSince = time.Time{}
+	r.textAckWaitSeen = 0
+	r.textAckWaitLast = ""
+}
+
+func (r *Relay) noteTextAckFrame(desc string) {
+	r.textAckWaitSeen++
+	r.textAckWaitLast = desc
 }
 
 func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.Duration, name string) (bool, error) {
@@ -1878,6 +1918,7 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 }
 
 func (r *Relay) dumpTextAckStall() {
+	logErrorf("     ! text ack stall detail: %s", r.currentTextAckDiagnostics())
 	filename, err := writeStallDump(
 		r.DebugDir,
 		r.MonitorAddr,
@@ -1891,6 +1932,20 @@ func (r *Relay) dumpTextAckStall() {
 		return
 	}
 	logErrorf("     ! text ack stall; wrote debug dump to %s", filename)
+}
+
+func (r *Relay) currentTextAckDiagnostics() string {
+	id := r.textAckWaitID
+	age := "unknown"
+	if !r.textAckWaitSince.IsZero() {
+		age = fmt.Sprintf("%dms", time.Since(r.textAckWaitSince).Milliseconds())
+	}
+	last := r.textAckWaitLast
+	if last == "" {
+		last = "none"
+	}
+	chunk := truncate(string(r.currentTextChunk()), 80)
+	return fmt.Sprintf("id=%d age=%s seen_frames=%d last=%s chunk=%q", id, age, r.textAckWaitSeen, last, chunk)
 }
 
 func (r *Relay) currentTextChunk() []byte {
@@ -1988,6 +2043,7 @@ func (r *Relay) currentRelayState() []string {
 		fmt.Sprintf("relay.pending_acks: %d", len(r.pendingAcks)),
 		fmt.Sprintf("relay.text_out_queue: %d", len(r.textOutQueue)),
 		fmt.Sprintf("relay.text_in_flight: %d", len(r.textInFlight)),
+		fmt.Sprintf("relay.text_ack_wait: %s", r.currentTextAckDiagnostics()),
 		fmt.Sprintf("relay.overlap_busy: %t", overlapBusy),
 		fmt.Sprintf("relay.msg_gate_busy: %t", msgGateBusy),
 		fmt.Sprintf("relay.msg_gate_waiters: %d", msgGateWaiters),
