@@ -13,6 +13,13 @@ var asciiReplacer = strings.NewReplacer(
 	"—", "-",
 	"…", "...",
 	"\u00a0", " ",
+	"ä", "ae",
+	"ö", "oe",
+	"ü", "ue",
+	"Ä", "Ae",
+	"Ö", "Oe",
+	"Ü", "Ue",
+	"ß", "ss",
 )
 
 // ToASCII converts text to a conservative 7-bit transport form for the C64 link.
