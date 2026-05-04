@@ -36,6 +36,7 @@
 .const GUARD_CHECKPOINT_EXEC_RETURN = GUARD_CODE_BASE + $17F
 .const GUARD_CHECKPOINT_EXEC_STORED = GUARD_CODE_BASE + $186
 .const GUARD_CHECKPOINT_ACK_OUT = GUARD_CODE_BASE + $18D
+.const GUARD_DONE = GUARD_CODE_BASE + $194
 .const HEARTBEAT_BASE  = GUARD_CODE_LIMIT
 .const USERQ_BASE      = $9200
 .const USERQ_LIMIT     = $9500
@@ -136,6 +137,7 @@
 .const FRAME_STATUSQ = $51   // 'Q' — ask whether BASIC is RUNNING or READY
 .const FRAME_SCREEN = $50    // 'P' — request current text screen snapshot
 .const FRAME_TEXT   = $54    // 'T' — LLM's final answer into the C64 agent
+.const FRAME_DONE   = $44    // 'D' — LLM cycle completed without user text
 .const FRAME_ACK_IN = $42    // 'B' — bridge ACK for C64 reliable frames
 //
 // C64 -> Bridge:

@@ -330,6 +330,8 @@ This document only states the architectural contract:
   `STATUS "STORED"`, `STATUS "RUNNING"`, `RESULT ...`, `STATUS "READY"`, or `ERROR`.
 - TEXT responses still flow LLM→bridge→C64→bridge→user. The bridge does not
   shortcut around the C64.
+- Silent LLM completion flows LLM→bridge→C64 as an internal `DONE` frame.
+  `DONE` ends the C64-visible cycle without creating user-visible text.
 - The bridge stays a pure relay. It owns transport, history, and API calls,
   not agent behavior.
 

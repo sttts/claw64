@@ -322,6 +322,8 @@ cp_bas_wr:
         sta $31
         // Startup checkpoint M: RS232 is configured and the handshake is next.
         inc SCREEN_RAM
+        lda #$20
+        sta SCREEN_RAM
 
         // The idle loop sends handshakes until the first bridge frame arrives.
 
@@ -1052,9 +1054,6 @@ ssh_send:
         bpl ssh_done
         lda $A2
         sta tx_ack_tick
-        lda #$20
-        tax
-        jsr GUARD_CHECKPOINT
         lda #$21                // '!' handshake
         jmp so_chrout
 ssh_done:
@@ -1942,10 +1941,6 @@ fd_dup_ack:
 
 fd_accept:
         // New reliable frame — store newest (id, type) and queue ACK.
-        lda frame_sub
-        and #$1F                // runtime checkpoint: accepted message type
-        ldx #$01                // A: accepted
-        jsr GUARD_CHECKPOINT
         lda fd_cur_id
         sta rx_last_id
         lda tx_ack_wait
@@ -2011,6 +2006,12 @@ claw_done:
         rts
 
 fd_not_msg:
+        // ---- Check for DONE frame ($44 = 'D') ----
+        cmp #FRAME_DONE
+        bne fd_not_done
+        jmp GUARD_DONE
+
+fd_not_done:
         // ---- Check for TEXT frame ($54 = 'T') ----
         cmp #FRAME_TEXT         // is it a TEXT frame (LLM's final answer)?
         bne fd_not_text         // no → check next type

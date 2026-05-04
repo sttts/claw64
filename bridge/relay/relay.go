@@ -123,6 +123,11 @@ const textAckTimeout = 7 * time.Second
 // STATUS/RESULT confirmation from BASIC.
 const execAckTimeout = toolFrameTimeout
 
+// msgAdmissionAckTimeout waits for the C64 to admit a user message into its
+// event queue. This is queue admission, not ordinary idle transport ACK
+// latency, because previous C64 TX/ACK handoff can still be draining.
+const msgAdmissionAckTimeout = c64FrameTimeout
+
 var reliableRetryDelays = []time.Duration{
 	500 * time.Millisecond,
 	1 * time.Second,
@@ -595,12 +600,12 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 
 func (r *Relay) sendMSG(ctx context.Context, msgFrame serial.Frame) error {
 	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
-	return r.sendVerified(ctx, msgFrame, "MSG")
+	return r.sendVerifiedWithTimeout(ctx, msgFrame, "MSG", msgAdmissionAckTimeout)
 }
 
 func (r *Relay) sendOverlappingMSG(ctx context.Context, msgFrame serial.Frame) error {
 	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
-	return r.sendVerifiedWithAckWaiter(ctx, msgFrame, "MSG")
+	return r.sendVerifiedWithAckWaiter(ctx, msgFrame, "MSG", msgAdmissionAckTimeout)
 }
 
 // eventLoop waits for C64 frames and reacts.
@@ -938,6 +943,12 @@ func (r *Relay) callAndDispatch(ctx context.Context, userID string) (bool, error
 	if len(resp.ToolCalls) == 0 {
 		if resp.Content == "" {
 			log.Printf("%s", flowLine("LLM", "←", "", "response", "silent completion"))
+			logStream(r.streamOut(), "%s ", flowLabel("LLM", "→", "C64", "DONE"))
+			fmt.Fprintln(r.streamOut())
+			doneFrame := serial.Frame{Type: serial.FrameDone}
+			if err := r.sendVerified(ctx, doneFrame, "DONE"); err != nil {
+				return false, fmt.Errorf("send DONE: %w", err)
+			}
 			return true, nil
 		}
 
@@ -1169,6 +1180,10 @@ func (r *Relay) sendExec(ctx context.Context, cmd []byte) error {
 }
 
 func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name string) error {
+	return r.sendVerifiedWithTimeout(ctx, frame, name, ackTimeout)
+}
+
+func (r *Relay) sendVerifiedWithTimeout(ctx context.Context, frame serial.Frame, name string, timeout time.Duration) error {
 	retryDelays := reliableRetryDelays
 	id, frame, err := r.sendNewReliableBridgeFrame(frame)
 	if err != nil {
@@ -1182,7 +1197,7 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 			}
 		}
 
-		waitCtx, cancel := context.WithTimeout(ctx, ackTimeout)
+		waitCtx, cancel := context.WithTimeout(ctx, timeout)
 		_, err := r.waitForAckID(waitCtx, id, false)
 		cancel()
 		if err == nil {
@@ -1197,7 +1212,7 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 	return fmt.Errorf("%s delivery could not be verified after %d attempts", name, len(retryDelays))
 }
 
-func (r *Relay) sendVerifiedWithAckWaiter(ctx context.Context, frame serial.Frame, name string) error {
+func (r *Relay) sendVerifiedWithAckWaiter(ctx context.Context, frame serial.Frame, name string, timeout time.Duration) error {
 	retryDelays := reliableRetryDelays
 	id, frame, err := r.sendNewReliableBridgeFrame(frame)
 	if err != nil {
@@ -1213,7 +1228,7 @@ func (r *Relay) sendVerifiedWithAckWaiter(ctx context.Context, frame serial.Fram
 			}
 		}
 
-		waitCtx, cancel := context.WithTimeout(ctx, ackTimeout)
+		waitCtx, cancel := context.WithTimeout(ctx, timeout)
 		err := r.waitForAckWaiter(waitCtx, waiter, id)
 		cancel()
 		if err == nil {
@@ -1439,6 +1454,9 @@ func (r *Relay) acceptC64FrameWith(f *serial.Frame, ackNow bool, flush bool) boo
 		r.queueAckToC64(id)
 		if flush {
 			r.flushPendingAcks()
+			if f.Type == serial.FrameUser {
+				r.resendAckToC64(id)
+			}
 		}
 	}
 	f.Payload = body
@@ -1531,6 +1549,17 @@ func (r *Relay) flushPendingAcksLocked() {
 	r.pendingAcks = r.pendingAcks[:0]
 	if sent {
 		r.lastAckSentAt = time.Now()
+	}
+}
+
+func (r *Relay) resendAckToC64(id byte) {
+	time.Sleep(c64AckHandoffQuietWindow)
+	r.txMu.Lock()
+	defer r.txMu.Unlock()
+
+	ack := serial.Frame{Type: serial.FrameAckToC64, Payload: []byte{id}}
+	if err := r.Link.Send(ack); err != nil {
+		logErrorf("     ! failed to resend ACK(%d) to C64: %v", id, err)
 	}
 }
 
@@ -1641,6 +1670,9 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			fmt.Fprintln(r.streamOut())
 			ackID, ok := serial.ExtractAckID(f.Payload)
 			if ok && ackID == id {
+				if requiresSemanticConfirmation(name) {
+					continue
+				}
 				return true, nil
 			}
 			if ok && r.consumeLateAck(ackID) {
@@ -1688,6 +1720,15 @@ func semanticConfirmsDelivery(name string, frameType byte) bool {
 		return frameType == serial.FrameResult || frameType == serial.FrameError
 	case "STATUS", "STOP":
 		return frameType == serial.FrameStatus || frameType == serial.FrameError
+	default:
+		return false
+	}
+}
+
+func requiresSemanticConfirmation(name string) bool {
+	switch name {
+	case "EXEC", "SCREENSHOT", "STATUS", "STOP":
+		return true
 	default:
 		return false
 	}

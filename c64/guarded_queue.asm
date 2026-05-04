@@ -235,3 +235,13 @@ guard_checkpoint_ack_out:
         lda #$01
         ldx #$0F
         jmp guard_checkpoint
+
+guard_done:
+        lda #0
+        sta busy                // silent completion — internal cycle end only
+        sta text_pending
+        lda fd_cur_id
+        sta ack_id
+        lda #1
+        sta ack_pending
+        rts

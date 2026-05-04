@@ -48,6 +48,8 @@ func (s *scriptedBurnin) Complete(_ context.Context, messages []llm.Message, _ [
 		return s.completeStopScreen(messages)
 	case "screen-repeat":
 		return s.completeScreenRepeat(messages)
+	case "silent-completion":
+		return s.completeSilentCompletion(messages)
 	case "direct-exec":
 		return s.completeDirectExec(messages)
 	case "slow-exec":
@@ -67,6 +69,7 @@ type burninScenario struct {
 var burninScenarios = []burninScenario{
 	{name: "stop-screen"},
 	{name: "screen-repeat"},
+	{name: "silent-completion"},
 	{name: "direct-exec"},
 	{name: "slow-exec"},
 	{name: "wraparound"},
@@ -87,7 +90,7 @@ var burninScenarios = []burninScenario{
 	{name: "overlap-running24", overlapRuns: 24},
 }
 
-var burninGateScenarios = []string{"direct-exec", "slow-exec", "wraparound", "overlap-running24"}
+var burninGateScenarios = []string{"silent-completion", "direct-exec", "slow-exec", "wraparound", "overlap-running24"}
 var burninSessionGateScenarios = []string{"direct-exec", "overlap-running24"}
 
 const wraparoundReliableChecks = 20
@@ -387,6 +390,21 @@ func (s *scriptedBurnin) completeSlowExec(messages []llm.Message) (llm.Message, 
 			return llm.Message{}, fmt.Errorf("step %d: expected slow EXEC final screen, got %q", s.step, lastTool)
 		}
 		return llm.Message{Role: "assistant", Content: "BURN-IN slow-exec complete."}, nil
+	default:
+		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
+	}
+}
+
+func (s *scriptedBurnin) completeSilentCompletion(messages []llm.Message) (llm.Message, error) {
+	lastUser := strings.ToLower(lastUserMessage(messages))
+
+	switch s.step {
+	case 0:
+		if !strings.Contains(lastUser, "silent") {
+			return llm.Message{}, fmt.Errorf("step %d: expected silent request, got %q", s.step, lastUser)
+		}
+		s.step++
+		return llm.Message{}, nil
 	default:
 		return llm.Message{}, fmt.Errorf("unexpected scripted step %d", s.step)
 	}
@@ -957,6 +975,8 @@ func burninInputs(scenario string) []string {
 	}
 
 	switch scenario {
+	case "silent-completion":
+		return []string{"stay silent"}
 	case "direct-exec":
 		return []string{
 			"Hi",

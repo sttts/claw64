@@ -31,6 +31,11 @@ type Link struct {
 	Debug bool // log every byte on the wire
 }
 
+// NewTestLink creates a Link around an in-memory connection for package tests.
+func NewTestLink(conn io.ReadWriteCloser) *Link {
+	return &Link{conn: conn}
+}
+
 type readDeadliner interface {
 	SetReadDeadline(time.Time) error
 }
@@ -209,6 +214,7 @@ func ListenAndStartUntilTimeout(addr string, start func() (<-chan error, error),
 func waitForHandshake(ln net.Listener) (*Link, error) {
 
 	l := &Link{ln: ln}
+	ready := make(chan net.Conn, 1)
 
 	// VICE makes multiple TCP connections:
 	//   1. Boot-time probe (before PRG loads) — drops on C64 RESET
@@ -218,25 +224,8 @@ func waitForHandshake(ln net.Listener) (*Link, error) {
 	// IMPORTANT: never close old connections — VICE's RS232 layer
 	// treats any TCP close as EOF and kills the channel.
 	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			ln.Close()
-			return nil, fmt.Errorf("accept: %w", err)
-		}
-		log.Printf("serial: connected from %s", conn.RemoteAddr())
-
-		// wait up to 30s for handshake byte from C64 agent
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-		buf := make([]byte, 1)
-		_, err = conn.Read(buf)
-		conn.SetReadDeadline(time.Time{})
-
-		if err != nil {
-			log.Printf("serial: no handshake, waiting for next connection")
-			continue
-		}
-
-		if buf[0] == 0x21 {
+		select {
+		case conn := <-ready:
 			// disable Nagle — VICE needs individual TCP segments
 			if tc, ok := conn.(*net.TCPConn); ok {
 				tc.SetNoDelay(true)
@@ -248,9 +237,52 @@ func waitForHandshake(ln net.Listener) (*Link, error) {
 			}
 			log.Printf("serial: C64 agent ready (handshake '!')")
 			return l, nil
+		default:
 		}
 
-		log.Printf("serial: unexpected byte 0x%02X, waiting for next", buf[0])
+		if tl, ok := ln.(*net.TCPListener); ok {
+			_ = tl.SetDeadline(time.Now().Add(500 * time.Millisecond))
+		}
+		conn, err := ln.Accept()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			ln.Close()
+			return nil, fmt.Errorf("accept: %w", err)
+		}
+		log.Printf("serial: connected from %s", conn.RemoteAddr())
+
+		// VICE can leave the RS232 side passive until host traffic exists.
+		// A non-sync byte is harmless to the C64 parser and wakes the link.
+		_, _ = conn.Write([]byte{0})
+		go waitForTCPHandshakeByte(conn, ready)
+	}
+}
+
+func waitForTCPHandshakeByte(conn net.Conn, ready chan<- net.Conn) {
+	buf := make([]byte, 1)
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+		_, err := conn.Read(buf)
+		_ = conn.SetReadDeadline(time.Time{})
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			log.Printf("serial: no handshake, waiting for next connection")
+			return
+		}
+
+		if buf[0] == 0x21 {
+			select {
+			case ready <- conn:
+			default:
+			}
+			return
+		}
+
+		log.Printf("serial: unexpected byte 0x%02X, waiting for handshake", buf[0])
 	}
 }
 
@@ -409,7 +441,7 @@ func (l *Link) Recv() (Frame, error) {
 		// Skip bridge→C64 command frames. User-visible C64 text now uses
 		// its own frame type, so inbound TEXT can be skipped safely here.
 		switch f.Type {
-		case FrameMsg, FrameExec, FrameStop, FrameStatusReq, FrameScreenshot, FrameText, FrameAckToC64:
+		case FrameMsg, FrameExec, FrameStop, FrameStatusReq, FrameScreenshot, FrameText, FrameDone, FrameAckToC64:
 			continue
 		}
 		return f, nil

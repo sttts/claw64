@@ -145,6 +145,10 @@ For `TEXT`, this means ACK must not be sent until the C64 has absorbed the
 chunk into durable outbound/user state so the next TEXT chunk cannot clobber
 the first one.
 
+For `DONE`, this means ACK must not be sent until the C64 has ended the
+current LLM cycle internally. `DONE` never creates user-visible text; it is
+the reliable silent-completion boundary.
+
 For `EXEC`, this means:
 
 - the C64 first copies the command into C64-owned execution storage
@@ -275,6 +279,7 @@ Examples:
 - `STOP`
 - `STATUS`
 - `TEXT`
+- `DONE`
 - `SCREENSHOT`
 - `ACK` (`B`)
 

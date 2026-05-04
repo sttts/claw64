@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,12 +22,36 @@ func (s stubCompleter) Complete(ctx context.Context, messages []llm.Message, too
 	return s.resp, s.err
 }
 
-func TestCallAndDispatchSilentCompletionIsIdleWithoutHistoryMutation(t *testing.T) {
-	r := &Relay{
-		LLM:          stubCompleter{resp: llm.Message{}},
+func newAckingRelay(t *testing.T, resp llm.Message) (*Relay, <-chan serial.Frame) {
+	t.Helper()
+	bridgeConn, c64Conn := net.Pipe()
+	frames := make(chan serial.Frame, 1)
+	t.Cleanup(func() {
+		_ = bridgeConn.Close()
+		_ = c64Conn.Close()
+	})
+	go func() {
+		f, err := serial.Decode(c64Conn)
+		if err != nil {
+			return
+		}
+		frames <- f
+		id, _, ok := serial.StripID(f.Payload)
+		if !ok {
+			return
+		}
+		_, _ = c64Conn.Write(serial.Encode(serial.Frame{Type: serial.FrameAck, Payload: []byte{id}}))
+	}()
+	return &Relay{
+		Link:         serial.NewTestLink(bridgeConn),
+		LLM:          stubCompleter{resp: resp},
 		History:      NewHistory(),
 		SystemPrompt: "soul",
-	}
+	}, frames
+}
+
+func TestCallAndDispatchSilentCompletionIsIdleWithoutHistoryMutation(t *testing.T) {
+	r, _ := newAckingRelay(t, llm.Message{})
 	r.History.Append("u", llm.Message{Role: "user", Content: "Hi"})
 
 	idle, err := r.callAndDispatch(context.Background(), "u")
@@ -68,6 +93,33 @@ func TestCompletionGraceWindow(t *testing.T) {
 	r.basicRunning = true
 	if got := r.completionGraceWindow(true, false); got != 0 {
 		t.Fatalf("grace window enabled while BASIC is still running")
+	}
+}
+
+func TestSilentCompletionSendsDoneFrameWithoutText(t *testing.T) {
+	r, frames := newAckingRelay(t, llm.Message{})
+	r.History.Append("u", llm.Message{Role: "user", Content: "Hi"})
+
+	idle, err := r.callAndDispatch(context.Background(), "u")
+	if err != nil {
+		t.Fatalf("callAndDispatch error = %v", err)
+	}
+	if !idle {
+		t.Fatalf("idle = false, want true")
+	}
+	f := <-frames
+	if f.Type != serial.FrameDone {
+		t.Fatalf("frame type = %s, want DONE", serial.TypeName(f.Type))
+	}
+	id, payload, ok := serial.StripID(f.Payload)
+	if !ok || id != 1 {
+		t.Fatalf("DONE payload = % x, want id=1", f.Payload)
+	}
+	if len(payload) != 0 {
+		t.Fatalf("DONE body len = %d, want 0", len(payload))
+	}
+	if len(r.textOutQueue) != 0 {
+		t.Fatalf("textOutQueue len = %d, want 0", len(r.textOutQueue))
 	}
 }
 
@@ -131,6 +183,19 @@ func TestSemanticConfirmsDeliveryForToolResponses(t *testing.T) {
 	}
 	if semanticConfirmsDelivery("STATUS", serial.FrameSystem) {
 		t.Fatalf("SYSTEM response should not confirm STATUS delivery")
+	}
+}
+
+func TestToolRequestsRequireSemanticConfirmation(t *testing.T) {
+	for _, name := range []string{"EXEC", "SCREENSHOT", "STATUS", "STOP"} {
+		if !requiresSemanticConfirmation(name) {
+			t.Fatalf("%s should require semantic confirmation", name)
+		}
+	}
+	for _, name := range []string{"MSG", "TEXT", "DONE"} {
+		if requiresSemanticConfirmation(name) {
+			t.Fatalf("%s should not require semantic confirmation", name)
+		}
 	}
 }
 
@@ -650,6 +715,12 @@ func TestWaitForAckWaiterAcceptsMatchingAck(t *testing.T) {
 
 	if err := r.waitForAckWaiter(ctx, waiter, 3); err != nil {
 		t.Fatalf("waitForAckWaiter error = %v", err)
+	}
+}
+
+func TestOverlappingMSGUsesQueueAdmissionAckWindow(t *testing.T) {
+	if msgAdmissionAckTimeout <= ackTimeout {
+		t.Fatalf("msgAdmissionAckTimeout = %v, want above idle ackTimeout %v", msgAdmissionAckTimeout, ackTimeout)
 	}
 }
 

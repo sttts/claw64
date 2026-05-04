@@ -30,6 +30,7 @@ const (
 	FrameStop       byte = 0x4B // 'K' — request RUN/STOP for current BASIC program
 	FrameStatusReq  byte = 0x51 // 'Q' — ask whether BASIC is running or READY
 	FrameText       byte = 0x54 // 'T' — LLM's final answer, forward to user
+	FrameDone       byte = 0x44 // 'D' — LLM cycle completed without user text
 	FrameScreenshot byte = 0x50 // 'P' — request current text screen snapshot
 	FrameAckToC64   byte = 0x42 // 'B' — bridge ACK for C64 reliable frames
 
@@ -85,7 +86,7 @@ func readFiltered(r io.Reader) (byte, error) {
 
 func isKnownType(typ byte) bool {
 	return typ == FrameMsg || typ == FrameExec || typ == FrameStop ||
-		typ == FrameStatusReq || typ == FrameText || typ == FrameScreenshot ||
+		typ == FrameStatusReq || typ == FrameText || typ == FrameDone || typ == FrameScreenshot ||
 		typ == FrameAckToC64 || typ == FrameAck || typ == FrameResult ||
 		typ == FrameStatus || typ == FrameUser || typ == FrameLLM || typ == FrameError ||
 		typ == FrameHeartbeat ||
@@ -197,6 +198,8 @@ func TypeName(t byte) string {
 		return "STATUS"
 	case FrameText:
 		return "TEXT"
+	case FrameDone:
+		return "DONE"
 	case FrameAckToC64:
 		return "ACK_TO_C64"
 	case FrameUser:
