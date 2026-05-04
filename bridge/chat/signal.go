@@ -90,15 +90,7 @@ func (s *SignalChannel) triggerLogValue() string {
 func (s *SignalChannel) Send(ctx context.Context, user, text string) error {
 	args := s.baseArgs()
 	args = append(args, "send", "--message-from-stdin")
-
-	switch {
-	case strings.HasPrefix(user, signalGroupPrefix):
-		args = append(args, "--group-id", strings.TrimPrefix(user, signalGroupPrefix))
-	case strings.HasPrefix(user, signalUserPrefix):
-		args = append(args, strings.TrimPrefix(user, signalUserPrefix))
-	default:
-		args = append(args, user)
-	}
+	args = appendSignalRecipient(args, user)
 
 	cmd := exec.CommandContext(ctx, "signal-cli", args...)
 	cmd.Stdin = strings.NewReader(formatSignalMessage(text))
@@ -111,6 +103,32 @@ func (s *SignalChannel) Send(ctx context.Context, user, text string) error {
 
 func formatSignalMessage(text string) string {
 	return strings.TrimSpace(text)
+}
+
+func (s *SignalChannel) Typing(ctx context.Context, user string, active bool) error {
+	args := s.baseArgs()
+	args = append(args, "sendTyping")
+	if !active {
+		args = append(args, "--stop")
+	}
+	args = appendSignalRecipient(args, user)
+
+	out, err := exec.CommandContext(ctx, "signal-cli", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("signal typing: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func appendSignalRecipient(args []string, user string) []string {
+	switch {
+	case strings.HasPrefix(user, signalGroupPrefix):
+		return append(args, "--group-id", strings.TrimPrefix(user, signalGroupPrefix))
+	case strings.HasPrefix(user, signalUserPrefix):
+		return append(args, strings.TrimPrefix(user, signalUserPrefix))
+	default:
+		return append(args, user)
+	}
 }
 
 func (s *SignalChannel) Stop() error { return nil }

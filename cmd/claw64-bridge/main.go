@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -66,6 +67,7 @@ type CLI struct {
 	SpawnVICE   bool   `name:"spawn-vice" default:"true" help:"Spawn VICE automatically."`
 	ViceBin     string `name:"vice-bin" default:"x64sc" help:"VICE binary to launch when spawning."`
 	LoaderPRG   string `name:"loader-prg" help:"Override the embedded loader PRG path."`
+	Say         bool   `name:"say" help:"Speak every outgoing backend message with macOS say -v Zarvox."`
 
 	Stdin      StdinCmd      `cmd:"" help:"Chat in the local terminal."`
 	Slack      SlackCmd      `cmd:"" help:"Chat over Slack."`
@@ -266,8 +268,12 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, serialLabel(cfg))
 
 	err = ch.Start(ctx, func(ctx context.Context, userID, text string) error {
+		typing := startTypingIndicator(ctx, ch, userID)
+		defer typing.Stop()
+
 		err := rl.HandleMessageStream(ctx, userID, text, func(message string) error {
-			return ch.Send(ctx, userID, message)
+			typing.Stop()
+			return sendBackendMessage(ctx, cfg, ch, userID, message)
 		})
 		if err != nil {
 			log.Printf("     ! error: %v", err)
@@ -278,6 +284,77 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, chat.ErrInterrupted) && ctx.Err() == nil {
 		log.Fatalf("chat: %v", err)
 	}
+}
+
+type typingSession struct {
+	stop func()
+}
+
+func (t typingSession) Stop() {
+	if t.stop != nil {
+		t.stop()
+	}
+}
+
+func startTypingIndicator(ctx context.Context, ch chat.Channel, userID string) typingSession {
+	indicator, ok := ch.(chat.TypingIndicator)
+	if !ok {
+		return typingSession{}
+	}
+
+	typingCtx, cancel := context.WithCancel(ctx)
+	var once sync.Once
+
+	sendTypingState(ctx, indicator, userID, true)
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-typingCtx.Done():
+				return
+			case <-ticker.C:
+				sendTypingState(typingCtx, indicator, userID, true)
+			}
+		}
+	}()
+
+	return typingSession{stop: func() {
+		once.Do(func() {
+			cancel()
+			sendTypingState(context.Background(), indicator, userID, false)
+		})
+	}}
+}
+
+func sendTypingState(parent context.Context, indicator chat.TypingIndicator, userID string, active bool) {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	if err := indicator.Typing(ctx, userID, active); err != nil && parent.Err() == nil {
+		log.Printf("typing: %v", err)
+	}
+}
+
+func sendBackendMessage(ctx context.Context, cfg CLI, ch chat.Channel, userID, message string) error {
+	if cfg.Say {
+		sayZarvox(message)
+	}
+	return ch.Send(ctx, userID, message)
+}
+
+func sayZarvox(message string) {
+	if strings.TrimSpace(message) == "" {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+
+		if err := exec.CommandContext(ctx, "say", "-v", "Zarvox", message).Run(); err != nil {
+			log.Printf("say: %v", err)
+		}
+	}()
 }
 
 type runningVICE struct {

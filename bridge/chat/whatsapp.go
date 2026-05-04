@@ -111,6 +111,22 @@ func (w *WhatsAppChannel) Send(ctx context.Context, user string, text string) er
 	return nil
 }
 
+func (w *WhatsAppChannel) Typing(ctx context.Context, user string, active bool) error {
+	jid, err := types.ParseJID(user)
+	if err != nil {
+		return fmt.Errorf("whatsapp: parse JID %q: %w", user, err)
+	}
+
+	state := types.ChatPresencePaused
+	if active {
+		state = types.ChatPresenceComposing
+	}
+	if err := w.client.SendChatPresence(ctx, jid, state, types.ChatPresenceMediaText); err != nil {
+		return fmt.Errorf("whatsapp: typing: %w", err)
+	}
+	return nil
+}
+
 // Stop disconnects the WhatsApp client.
 func (w *WhatsAppChannel) Stop() error {
 	w.client.Disconnect()

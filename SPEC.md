@@ -232,10 +232,12 @@ Implementations:
 - **WhatsApp**: whatsmeow multi-device backend. Pairs one WhatsApp account and
   listens only in one explicit private or group chat JID. Only messages in that
   target are handled, and only if they begin exactly with `🕹️ ` or `🕹️:`.
+  Sends typing presence while a reply is in progress.
 - **Signal**: signal-cli subprocess backend. Binds to one account, polls with
   `receive`, and listens only for one explicit target, `user:<phone>` or
-  `group:<group-id>`. Only messages from that target are handled, and only if
-  they begin exactly with `🕹️ ` or `🕹️:`.
+  `group:<group-id>`. Private targets accept every message from that chat.
+  Group targets require messages to begin exactly with `🕹️ ` or `🕹️:`. Sends
+  typing indicators while a reply is in progress.
 - **stdin**: local terminal REPL backend with colored prompts/logs. No target
   filtering or joystick-prefix rule applies.
 
@@ -268,7 +270,12 @@ Global flags:
   --spawn-vice
   --vice-bin
   --loader-prg
+  --say
 ```
+
+`--say` mirrors every outgoing backend message to the local macOS
+`say -v Zarvox` command. It is optional and does not change chat delivery or
+C64 protocol behavior.
 
 With `--spawn-vice`, the bridge uses an embedded copy of `claw64.prg` by
 default and writes it to a temporary file for VICE `-autostart`. In the repo

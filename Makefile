@@ -7,6 +7,11 @@
 
 VICE        ?= x64sc
 SERIAL_DEVICE ?= /dev/cu.C64
+SAY ?= 0
+
+ifeq ($(SAY),1)
+SAY_FLAGS = --say
+endif
 
 # Per-worktree port file — allocates sticky serial + monitor ports so
 # multiple worktrees can run VICE concurrently without collisions.
@@ -137,6 +142,7 @@ run: assemble $(PORT_FILE)
 	$(KILL_PORTS)
 	@. ./$(PORT_FILE); \
 	go run ./cmd/claw64-bridge \
+	  $(SAY_FLAGS) \
 	  --serial-addr "127.0.0.1:$$SERIAL_PORT" \
 	  --monitor-addr "127.0.0.1:$$MONITOR_PORT" \
 	  --vice-bin $(VICE) stdin
@@ -146,6 +152,7 @@ bridge: $(PORT_FILE)
 	$(KILL_PORTS)
 	@. ./$(PORT_FILE); \
 	go run ./cmd/claw64-bridge \
+	  $(SAY_FLAGS) \
 	  --serial-addr "127.0.0.1:$$SERIAL_PORT" \
 	  --monitor-addr "127.0.0.1:$$MONITOR_PORT" \
 	  --spawn-vice=false stdin
@@ -153,6 +160,7 @@ bridge: $(PORT_FILE)
 # run the Go bridge against a physical C64 serial adapter
 bridge-serial:
 	go run ./cmd/claw64-bridge \
+	  $(SAY_FLAGS) \
 	  --serial-port "$(SERIAL_DEVICE)" stdin
 
 # run all Go package tests

@@ -61,11 +61,14 @@ Those four tools are the whole interface. The bridge exposes them, but the C64 d
 
 ```bash
 go run ./cmd/claw64-bridge stdin
+go run ./cmd/claw64-bridge --say stdin
+make run SAY=1
 ```
 
 Starts the local terminal chat. This is the default and the fastest way to
 get a working setup. `stdin` does not use chat-target filtering or the `🕹️`
-message trigger.
+message trigger. Add `--say` to speak every outgoing backend message locally
+with macOS `say -v Zarvox`; it works with `stdin`, Slack, WhatsApp, and Signal.
 
 ### Slack
 
@@ -87,7 +90,8 @@ go run ./cmd/claw64-bridge whatsapp 120363123456789012@g.us
 
 On first run, scan the QR code shown by the bridge. After pairing, the bridge
 only listens in the explicit target chat JID, and only for messages that start
-exactly with `🕹️ ` or `🕹️:`.
+exactly with `🕹️ ` or `🕹️:`. While Claw is working on a reply, the backend sends
+WhatsApp typing presence for that chat.
 
 ### Signal
 
@@ -102,8 +106,10 @@ Optional:
 go run ./cmd/claw64-bridge signal +49... user:+491701234567 --config ~/.local/share/signal-cli
 ```
 
-The bridge only listens in the explicit Signal target, and only for messages
-that start exactly with `🕹️ ` or `🕹️:`.
+The bridge only listens in the explicit Signal target. Private `user:<phone>`
+targets accept every message in that chat. Group targets require messages to
+start exactly with `🕹️ ` or `🕹️:`. While Claw is working on a reply, the backend
+sends Signal typing indicators and refreshes them until the reply is ready.
 
 ### LLM Provider
 
@@ -139,6 +145,8 @@ For a physical C64 serial adapter, start the bridge without VICE:
 ```bash
 make bridge-serial                         # uses /dev/cu.C64
 make bridge-serial SERIAL_DEVICE=/dev/ttyUSB0
+make bridge-serial SAY=1                   # speak replies with Zarvox
+go run ./cmd/claw64-bridge --say --serial-port /dev/cu.C64 stdin
 ```
 
 This opens the device as raw `2400,0,0` / 8N1 with no flow control. The
@@ -396,8 +404,9 @@ Uses [signal-cli](https://github.com/AsamK/signal-cli) as a subprocess.
 The current backend polls with `receive` and replies with `send`.
 The first positional argument is the Signal account / phone number used by
 `signal-cli`. The second positional argument is the explicit target,
-`user:<phone>` or `group:<group-id>`. Only messages from that target are
-considered, and only if they start exactly with `🕹️ ` or `🕹️:`.
+`user:<phone>` or `group:<group-id>`. Private `user:<phone>` targets accept
+every message from that chat. Group targets require messages to start exactly
+with `🕹️ ` or `🕹️:`. Signal typing indicators are sent while Claw is working.
 `--config` is optional.
 
 ### stdin

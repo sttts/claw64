@@ -27,6 +27,11 @@ type Channel interface {
 	Stop() error
 }
 
+// TypingIndicator is implemented by backends that can show remote typing state.
+type TypingIndicator interface {
+	Typing(ctx context.Context, user string, active bool) error
+}
+
 // Preflighter is implemented by backends that need setup before serial or VICE startup.
 type Preflighter interface {
 	Preflight(ctx context.Context) error
