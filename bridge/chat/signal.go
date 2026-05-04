@@ -2,15 +2,14 @@ package chat
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os/exec"
 	"strings"
 	"sync"
-	"time"
 )
 
 const (
@@ -34,20 +33,26 @@ func NewSignal(account, config, target string) *SignalChannel {
 
 func (s *SignalChannel) Name() string { return "signal" }
 
-// Start polls signal-cli receive and dispatches incoming messages.
+// Start streams signal-cli receive and dispatches incoming messages.
 func (s *SignalChannel) Start(ctx context.Context, handler MessageHandler) error {
 	log.Printf("signal: ready on %s target=%s trigger=%s", s.account, s.target, s.triggerLogValue())
 
-	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
+	events := make(chan signalEvent, 32)
+	errs := make(chan error, 1)
+	go func() {
+		errs <- s.receiveStream(ctx, events)
+	}()
 
-		events, err := s.receiveBatch(ctx)
-		if err != nil {
-			return err
-		}
-		for _, evt := range events {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-errs:
+			if err != nil {
+				return err
+			}
+			return nil
+		case evt := <-events:
 			if evt.userID != s.target {
 				continue
 			}
@@ -157,77 +162,103 @@ type signalEnvelope struct {
 	} `json:"envelope"`
 }
 
-func (s *SignalChannel) receiveBatch(ctx context.Context) ([]signalEvent, error) {
+func (s *SignalChannel) receiveStream(ctx context.Context, events chan<- signalEvent) error {
 	args := s.baseArgs()
 	args = append(args,
 		"receive",
-		"--timeout", "5",
-		"--max-messages", "100",
+		"--timeout", "-1",
 		"--ignore-attachments",
 		"--ignore-stories",
 	)
 
 	cmd := exec.CommandContext(ctx, "signal-cli", args...)
-	out, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		text := strings.TrimSpace(string(out))
-		if text == "" {
-			text = err.Error()
-		}
-		return nil, fmt.Errorf("signal receive: %s", text)
+		return fmt.Errorf("signal receive stdout: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("signal receive stderr: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("signal receive start: %w", err)
 	}
 
-	var events []signalEvent
-	scanner := bufio.NewScanner(bytes.NewReader(out))
+	stderrDone := make(chan string, 1)
+	go func() {
+		data, _ := io.ReadAll(stderr)
+		stderrDone <- strings.TrimSpace(string(data))
+	}()
+
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		evt, ok := parseSignalLine(scanner.Text())
+		if !ok {
 			continue
 		}
-
-		var env signalEnvelope
-		if err := json.Unmarshal([]byte(line), &env); err != nil {
-			log.Printf("signal: ignoring unparsable line: %s", line)
-			continue
-		}
-		if env.Envelope.SyncMessage != nil {
-			continue
-		}
-		if env.Envelope.DataMessage == nil {
-			continue
-		}
-
-		text := strings.TrimSpace(env.Envelope.DataMessage.Message)
-		if text == "" {
-			continue
-		}
-
-		userID := signalUserPrefix + firstNonEmpty(env.Envelope.SourceNumber, env.Envelope.Source)
-		if group := env.Envelope.DataMessage.GroupInfo; group != nil && group.GroupID != "" {
-			userID = signalGroupPrefix + group.GroupID
-		}
-		if userID == signalUserPrefix {
-			continue
-		}
-
-		events = append(events, signalEvent{userID: userID, text: text})
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("signal scan: %w", err)
-	}
-
-	// Avoid a busy loop when no messages arrived.
-	if len(events) == 0 {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(250 * time.Millisecond):
+			_ = cmd.Wait()
+			return ctx.Err()
+		case events <- evt:
 		}
 	}
-	return events, nil
+	if err := scanner.Err(); err != nil {
+		_ = cmd.Wait()
+		stderrText := <-stderrDone
+		if stderrText != "" {
+			return fmt.Errorf("signal scan: %w: %s", err, stderrText)
+		}
+		return fmt.Errorf("signal scan: %w", err)
+	}
+
+	err = cmd.Wait()
+	stderrText := <-stderrDone
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		if stderrText == "" {
+			stderrText = err.Error()
+		}
+		return fmt.Errorf("signal receive: %s", stderrText)
+	}
+	return fmt.Errorf("signal receive stopped")
+}
+
+func parseSignalLine(raw string) (signalEvent, bool) {
+	line := strings.TrimSpace(raw)
+	if line == "" {
+		return signalEvent{}, false
+	}
+
+	var env signalEnvelope
+	if err := json.Unmarshal([]byte(line), &env); err != nil {
+		log.Printf("signal: ignoring unparsable line: %s", line)
+		return signalEvent{}, false
+	}
+	if env.Envelope.SyncMessage != nil {
+		return signalEvent{}, false
+	}
+	if env.Envelope.DataMessage == nil {
+		return signalEvent{}, false
+	}
+
+	text := strings.TrimSpace(env.Envelope.DataMessage.Message)
+	if text == "" {
+		return signalEvent{}, false
+	}
+
+	userID := signalUserPrefix + firstNonEmpty(env.Envelope.SourceNumber, env.Envelope.Source)
+	if group := env.Envelope.DataMessage.GroupInfo; group != nil && group.GroupID != "" {
+		userID = signalGroupPrefix + group.GroupID
+	}
+	if userID == signalUserPrefix {
+		return signalEvent{}, false
+	}
+
+	return signalEvent{userID: userID, text: text}, true
 }
 
 func (s *SignalChannel) baseArgs() []string {

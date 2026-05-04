@@ -423,7 +423,8 @@ or `🕹️:`.
 ### Signal
 
 Uses [signal-cli](https://github.com/AsamK/signal-cli) as a subprocess.
-The current backend polls with `receive` and replies with `send`.
+The current backend keeps a long-running `receive --timeout -1` stream open
+and replies with `send`.
 The first positional argument is the Signal account / phone number used by
 `signal-cli`. The second positional argument is the explicit target,
 `user:<phone>` or `group:<group-id>`. Private `user:<phone>` targets accept

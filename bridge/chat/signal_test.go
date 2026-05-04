@@ -83,3 +83,47 @@ func TestSignalTypingArgsForGroup(t *testing.T) {
 		t.Fatalf("group typing stop args = %#v, want %#v", got, want)
 	}
 }
+
+func TestParseSignalLine(t *testing.T) {
+	line := `{"envelope":{"sourceNumber":"+491711111111","dataMessage":{"message":" hello "}}}`
+
+	evt, ok := parseSignalLine(line)
+	if !ok {
+		t.Fatal("signal line was ignored")
+	}
+	if evt.userID != "user:+491711111111" {
+		t.Fatalf("userID = %q", evt.userID)
+	}
+	if evt.text != "hello" {
+		t.Fatalf("text = %q", evt.text)
+	}
+}
+
+func TestParseSignalLineUsesGroupTarget(t *testing.T) {
+	line := `{"envelope":{"sourceNumber":"+491711111111","dataMessage":{"message":" 🕹️: hello group ","groupInfo":{"groupId":"abc","type":"DELIVER"}}}}`
+
+	evt, ok := parseSignalLine(line)
+	if !ok {
+		t.Fatal("signal group line was ignored")
+	}
+	if evt.userID != "group:abc" {
+		t.Fatalf("userID = %q", evt.userID)
+	}
+	if evt.text != "🕹️: hello group" {
+		t.Fatalf("text = %q", evt.text)
+	}
+}
+
+func TestParseSignalLineIgnoresNonMessages(t *testing.T) {
+	cases := []string{
+		``,
+		`{"envelope":{"syncMessage":{}}}`,
+		`{"envelope":{"sourceNumber":"+491711111111","dataMessage":{"message":"   "}}}`,
+	}
+
+	for _, line := range cases {
+		if evt, ok := parseSignalLine(line); ok {
+			t.Fatalf("line %q parsed as %#v", line, evt)
+		}
+	}
+}
