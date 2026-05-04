@@ -932,7 +932,7 @@ so_chk_ack_wait:
         inc tx_ack_timer
 so_ack_tick_same:
         lda tx_ack_timer
-        cmp #180                // 3 seconds covers a full 120-byte frame at 2400 baud
+        cmp #240                // 4 seconds covers ACK jitter after a full frame at 2400 baud
         bcs so_ack_retry
         jmp so_send_check       // still waiting — don't build next frame
 

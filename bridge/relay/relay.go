@@ -119,9 +119,9 @@ const (
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
 const textAckTimeout = 7 * time.Second
 
-// execAckTimeout covers EXEC transport confirmation. BASIC completion is
-// handled later through RESULT/STATUS/ERROR tool frames.
-const execAckTimeout = ackTimeout
+// execAckTimeout covers EXEC transport confirmation or early semantic
+// STATUS/RESULT confirmation from BASIC.
+const execAckTimeout = toolFrameTimeout
 
 var reliableRetryDelays = []time.Duration{
 	500 * time.Millisecond,
