@@ -122,11 +122,13 @@ of it sits under ROM in the normal C64 memory map. Assembly assertions verify
 that guarded helpers, queue storage, staging reservations, resident code, and
 fixed RX/TX buffers do not overlap.
 
-The user-message queue is a fixed ring buffer on the C64. It has three
-256-byte slots at `$9200-$94FF`; if all slots are occupied, the guarded enqueue
-helper advances the head and overwrites the oldest pending message. The bridge
-therefore preserves ordering while limiting overlap to the C64's real queue
-capacity; excess chat messages wait outside the serial path.
+The event queue is a fixed ring buffer on the C64. It has three 256-byte slots
+at `$9200-$94FF`; each slot stores an event type, payload length, and payload.
+The current event type is `EVENT_MSG`, used for queued chat messages. If all
+slots are occupied, the guarded enqueue helper advances the head and overwrites
+the oldest pending event. The bridge therefore preserves ordering while
+limiting overlap to the C64's real queue capacity; excess chat messages wait
+outside the serial path.
 
 Durable memory is not implemented yet. `$A800-$BFFF` is reserved as a staging
 window for planned floppy-backed `MEMORY_SUMMARY` / `MEMORY_FULL` traffic, not

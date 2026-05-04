@@ -1,8 +1,8 @@
 #import "defs.asm"
 
-// Guarded BASIC-RAM queue helpers.
-// This code is staged into protected high BASIC RAM and kept inert until
-// runtime call sites are introduced in a later slice.
+// Guarded BASIC-RAM event queue helpers.
+// Slots store event type, payload length, then payload bytes. Current runtime
+// uses EVENT_MSG; heartbeat and future async events can reuse the same queue.
 
 guard_userq_enqueue_from_rxbuf:
         lda USERQ_COUNT_PTR
@@ -19,6 +19,9 @@ guq_have_space:
         sta guq_store_body+2
 
         ldy #0
+        lda #EVENT_MSG
+        sta $9200,y
+        iny
         lda USERQ_STAGE_LEN
 guq_store_len:
         sta $9200,y
@@ -49,6 +52,10 @@ guard_userq_load_head_to_rxbuf:
         ldy #0
 guq_load_len:
         lda $9200,y
+        cmp #EVENT_MSG
+        bne guq_load_unsupported
+        iny
+        lda $9200,y
         sta llm_len
         iny
         ldx #0
@@ -70,6 +77,10 @@ guq_load_done:
         sta dot_dir
         lda #0
         sta busy_timer
+        rts
+guq_load_unsupported:
+        jsr guard_userq_advance_head
+        dec USERQ_COUNT_PTR
         rts
 
 guard_userq_advance_head:

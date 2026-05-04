@@ -379,7 +379,7 @@ init_tail:
         dex
         bpl init_tail
 
-        // Initialize inert queue metadata in guarded BASIC RAM.
+        // Initialize guarded event-queue metadata.
         sta USERQ_STAGE_LEN
         sta USERQ_HEAD_PTR
         sta USERQ_TAIL_PTR
