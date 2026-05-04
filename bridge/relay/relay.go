@@ -123,6 +123,22 @@ const textAckTimeout = 7 * time.Second
 // handled later through RESULT/STATUS/ERROR tool frames.
 const execAckTimeout = ackTimeout
 
+var reliableRetryDelays = []time.Duration{
+	500 * time.Millisecond,
+	1 * time.Second,
+	2 * time.Second,
+	3 * time.Second,
+	5 * time.Second,
+}
+
+var execRetryDelays = []time.Duration{
+	1 * time.Second,
+	2 * time.Second,
+	3 * time.Second,
+	5 * time.Second,
+	8 * time.Second,
+}
+
 func (r *Relay) frameWaitTimeout(waitingTextAck bool) time.Duration {
 	if waitingTextAck {
 		return textAckTimeout
@@ -1099,7 +1115,7 @@ func (r *Relay) drainC64OutboundBeforeText(ctx context.Context) error {
 
 func (r *Relay) sendTextChunk(ctx context.Context, chunk []byte) error {
 	frame := serial.Frame{Type: serial.FrameText, Payload: chunk}
-	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
+	retryDelays := reliableRetryDelays
 	logStream(r.streamOut(), "%s ", flowLabel("LLM", "→", "C64", "TEXT"))
 	id, frame, err := r.sendNewReliableBridgeFrame(frame)
 	if err != nil {
@@ -1141,7 +1157,7 @@ func (r *Relay) sendExec(ctx context.Context, cmd []byte) error {
 		execFrame,
 		"EXEC",
 		execAckTimeout,
-		[]time.Duration{1 * time.Second, 2 * time.Second},
+		execRetryDelays,
 	); err != nil {
 		return err
 	}
@@ -1153,7 +1169,7 @@ func (r *Relay) sendExec(ctx context.Context, cmd []byte) error {
 }
 
 func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name string) error {
-	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
+	retryDelays := reliableRetryDelays
 	id, frame, err := r.sendNewReliableBridgeFrame(frame)
 	if err != nil {
 		return err
@@ -1182,7 +1198,7 @@ func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name strin
 }
 
 func (r *Relay) sendVerifiedWithAckWaiter(ctx context.Context, frame serial.Frame, name string) error {
-	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
+	retryDelays := reliableRetryDelays
 	id, frame, err := r.sendNewReliableBridgeFrame(frame)
 	if err != nil {
 		return err
@@ -1229,7 +1245,7 @@ func (r *Relay) waitForAckWaiter(ctx context.Context, waiter <-chan serial.Frame
 }
 
 func (r *Relay) sendVerifiedOrSemantic(ctx context.Context, frame serial.Frame, name string) error {
-	return r.sendVerifiedOrSemanticWith(ctx, frame, name, ackTimeout, []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second})
+	return r.sendVerifiedOrSemanticWith(ctx, frame, name, ackTimeout, reliableRetryDelays)
 }
 
 func (r *Relay) sendVerifiedOrSemanticWith(ctx context.Context, frame serial.Frame, name string, timeout time.Duration, retryDelays []time.Duration) error {
@@ -1271,7 +1287,7 @@ func (r *Relay) sendVerifiedOrSemanticWith(ctx context.Context, frame serial.Fra
 }
 
 func (r *Relay) sendStatusProbe(ctx context.Context, frame serial.Frame) error {
-	retryDelays := []time.Duration{500 * time.Millisecond, 1 * time.Second, 2 * time.Second}
+	retryDelays := reliableRetryDelays
 	for attempt := 0; attempt < len(retryDelays); attempt++ {
 		if err := r.sendUnreliableBridgeFrame(frame); err != nil {
 			return err
