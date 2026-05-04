@@ -233,11 +233,11 @@ Implementations:
   listens only in one explicit private or group chat JID. Private chats accept
   every message from that chat. Group chats require messages to begin exactly
   with `🕹️ ` or `🕹️:`. Sends typing presence while a reply is in progress.
-- **Signal**: signal-cli subprocess backend. Binds to one account, polls with
-  `receive`, and listens only for one explicit target, `user:<phone>` or
+- **Signal**: signal-cli JSON-RPC subprocess backend. Binds to one account and
+  uses one long-running `jsonRpc` process for receive, send, and typing
+  indicators. It listens only for one explicit target, `user:<phone>` or
   `group:<group-id>`. Private targets accept every message from that chat.
-  Group targets require messages to begin exactly with `🕹️ ` or `🕹️:`. Sends
-  typing indicators while a reply is in progress.
+  Group targets require messages to begin exactly with `🕹️ ` or `🕹️:`.
 - **stdin**: local terminal REPL backend with colored prompts/logs. No target
   filtering or joystick-prefix rule applies.
 

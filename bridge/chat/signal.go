@@ -8,8 +8,10 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -23,7 +25,8 @@ type SignalChannel struct {
 	config  string
 	target  string
 
-	mu sync.Mutex
+	mu  sync.Mutex
+	rpc *signalRPC
 }
 
 // NewSignal creates a Signal backend bound to one signal-cli account.
@@ -33,14 +36,14 @@ func NewSignal(account, config, target string) *SignalChannel {
 
 func (s *SignalChannel) Name() string { return "signal" }
 
-// Start streams signal-cli receive and dispatches incoming messages.
+// Start runs signal-cli JSON-RPC and dispatches incoming messages.
 func (s *SignalChannel) Start(ctx context.Context, handler MessageHandler) error {
 	log.Printf("signal: ready on %s target=%s trigger=%s", s.account, s.target, s.triggerLogValue())
 
 	events := make(chan signalEvent, 32)
 	errs := make(chan error, 1)
 	go func() {
-		errs <- s.receiveStream(ctx, events)
+		errs <- s.runJSONRPC(ctx, events)
 	}()
 
 	for {
@@ -93,6 +96,10 @@ func (s *SignalChannel) triggerLogValue() string {
 
 // Send sends a text reply to a Signal user or group.
 func (s *SignalChannel) Send(ctx context.Context, user, text string) error {
+	if rpc := s.currentRPC(); rpc != nil {
+		return rpc.call(ctx, "send", signalMessageParams(user, text))
+	}
+
 	args := s.baseArgs()
 	args = append(args, "send", "--message-from-stdin")
 	args = appendSignalRecipient(args, user)
@@ -111,6 +118,10 @@ func formatSignalMessage(text string) string {
 }
 
 func (s *SignalChannel) Typing(ctx context.Context, user string, active bool) error {
+	if rpc := s.currentRPC(); rpc != nil {
+		return rpc.call(ctx, "sendTyping", signalTypingParams(user, active))
+	}
+
 	args := s.signalTypingArgs(user, active)
 
 	out, err := exec.CommandContext(ctx, "signal-cli", args...).CombinedOutput()
@@ -147,26 +158,61 @@ type signalEvent struct {
 	text   string
 }
 
-type signalEnvelope struct {
-	Envelope struct {
-		Source       string `json:"source"`
-		SourceNumber string `json:"sourceNumber"`
-		DataMessage  *struct {
-			Message   string `json:"message"`
-			GroupInfo *struct {
-				GroupID string `json:"groupId"`
-				Type    string `json:"type"`
-			} `json:"groupInfo"`
-		} `json:"dataMessage"`
-		SyncMessage interface{} `json:"syncMessage"`
-	} `json:"envelope"`
+type signalRPC struct {
+	stdin io.WriteCloser
+
+	mu      sync.Mutex
+	nextID  uint64
+	pending map[string]chan signalRPCResponse
 }
 
-func (s *SignalChannel) receiveStream(ctx context.Context, events chan<- signalEvent) error {
+type signalRPCResponse struct {
+	Result json.RawMessage `json:"result"`
+	Error  *signalRPCError `json:"error"`
+}
+
+type signalRPCError struct {
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
+}
+
+type signalEnvelope struct {
+	Envelope signalEnvelopeEnvelope `json:"envelope"`
+}
+
+type signalJSONRPCLine struct {
+	ID     json.RawMessage `json:"id"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
+	Result json.RawMessage `json:"result"`
+	Error  *signalRPCError `json:"error"`
+}
+
+type signalReceiveParams struct {
+	Envelope *signalEnvelopeEnvelope `json:"envelope"`
+	Result   *struct {
+		Envelope *signalEnvelopeEnvelope `json:"envelope"`
+	} `json:"result"`
+}
+
+type signalEnvelopeEnvelope struct {
+	Source       string `json:"source"`
+	SourceNumber string `json:"sourceNumber"`
+	DataMessage  *struct {
+		Message   string `json:"message"`
+		GroupInfo *struct {
+			GroupID string `json:"groupId"`
+			Type    string `json:"type"`
+		} `json:"groupInfo"`
+	} `json:"dataMessage"`
+	SyncMessage interface{} `json:"syncMessage"`
+}
+
+func (s *SignalChannel) runJSONRPC(ctx context.Context, events chan<- signalEvent) error {
 	args := s.baseArgs()
 	args = append(args,
-		"receive",
-		"--timeout", "-1",
+		"jsonRpc",
 		"--ignore-attachments",
 		"--ignore-stories",
 	)
@@ -174,15 +220,27 @@ func (s *SignalChannel) receiveStream(ctx context.Context, events chan<- signalE
 	cmd := exec.CommandContext(ctx, "signal-cli", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("signal receive stdout: %w", err)
+		return fmt.Errorf("signal jsonRpc stdout: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("signal receive stderr: %w", err)
+		return fmt.Errorf("signal jsonRpc stderr: %w", err)
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("signal jsonRpc stdin: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("signal receive start: %w", err)
+		return fmt.Errorf("signal jsonRpc start: %w", err)
 	}
+
+	rpc := &signalRPC{
+		stdin:   stdin,
+		pending: map[string]chan signalRPCResponse{},
+	}
+	s.setRPC(rpc)
+	defer s.setRPC(nil)
+	defer rpc.closePending("signal jsonRpc stopped")
 
 	stderrDone := make(chan string, 1)
 	go func() {
@@ -193,7 +251,12 @@ func (s *SignalChannel) receiveStream(ctx context.Context, events chan<- signalE
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
-		evt, ok := parseSignalLine(scanner.Text())
+		line := scanner.Text()
+		if rpc.dispatchResponse(line) {
+			continue
+		}
+
+		evt, ok := parseSignalLine(line)
 		if !ok {
 			continue
 		}
@@ -208,9 +271,9 @@ func (s *SignalChannel) receiveStream(ctx context.Context, events chan<- signalE
 		_ = cmd.Wait()
 		stderrText := <-stderrDone
 		if stderrText != "" {
-			return fmt.Errorf("signal scan: %w: %s", err, stderrText)
+			return fmt.Errorf("signal jsonRpc scan: %w: %s", err, stderrText)
 		}
-		return fmt.Errorf("signal scan: %w", err)
+		return fmt.Errorf("signal jsonRpc scan: %w", err)
 	}
 
 	err = cmd.Wait()
@@ -222,15 +285,19 @@ func (s *SignalChannel) receiveStream(ctx context.Context, events chan<- signalE
 		if stderrText == "" {
 			stderrText = err.Error()
 		}
-		return fmt.Errorf("signal receive: %s", stderrText)
+		return fmt.Errorf("signal jsonRpc: %s", stderrText)
 	}
-	return fmt.Errorf("signal receive stopped")
+	return fmt.Errorf("signal jsonRpc stopped")
 }
 
 func parseSignalLine(raw string) (signalEvent, bool) {
 	line := strings.TrimSpace(raw)
 	if line == "" {
 		return signalEvent{}, false
+	}
+
+	if evt, ok := parseSignalJSONRPCNotification(line); ok {
+		return evt, true
 	}
 
 	var env signalEnvelope
@@ -259,6 +326,174 @@ func parseSignalLine(raw string) (signalEvent, bool) {
 	}
 
 	return signalEvent{userID: userID, text: text}, true
+}
+
+func parseSignalJSONRPCNotification(line string) (signalEvent, bool) {
+	var msg signalJSONRPCLine
+	if err := json.Unmarshal([]byte(line), &msg); err != nil {
+		return signalEvent{}, false
+	}
+	if msg.Method != "receive" || len(msg.Params) == 0 {
+		return signalEvent{}, false
+	}
+
+	var params signalReceiveParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		log.Printf("signal: ignoring unparsable receive notification: %s", line)
+		return signalEvent{}, false
+	}
+
+	env := params.Envelope
+	if env == nil && params.Result != nil {
+		env = params.Result.Envelope
+	}
+	if env == nil || env.SyncMessage != nil || env.DataMessage == nil {
+		return signalEvent{}, false
+	}
+
+	text := strings.TrimSpace(env.DataMessage.Message)
+	if text == "" {
+		return signalEvent{}, false
+	}
+
+	userID := signalUserPrefix + firstNonEmpty(env.SourceNumber, env.Source)
+	if group := env.DataMessage.GroupInfo; group != nil && group.GroupID != "" {
+		userID = signalGroupPrefix + group.GroupID
+	}
+	if userID == signalUserPrefix {
+		return signalEvent{}, false
+	}
+
+	return signalEvent{userID: userID, text: text}, true
+}
+
+func (s *SignalChannel) setRPC(rpc *signalRPC) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rpc = rpc
+}
+
+func (s *SignalChannel) currentRPC() *signalRPC {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rpc
+}
+
+func (r *signalRPC) call(ctx context.Context, method string, params map[string]interface{}) error {
+	id := strconv.FormatUint(atomic.AddUint64(&r.nextID, 1), 10)
+	ch := make(chan signalRPCResponse, 1)
+
+	r.mu.Lock()
+	r.pending[id] = ch
+	req := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  params,
+	}
+	line, err := json.Marshal(req)
+	if err == nil {
+		_, err = fmt.Fprintf(r.stdin, "%s\n", line)
+	}
+	if err != nil {
+		delete(r.pending, id)
+		r.mu.Unlock()
+		return fmt.Errorf("signal jsonRpc %s: %w", method, err)
+	}
+	r.mu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		r.removePending(id)
+		return ctx.Err()
+	case resp := <-ch:
+		if resp.Error != nil {
+			return fmt.Errorf("signal jsonRpc %s: %s", method, resp.Error.Message)
+		}
+		return nil
+	}
+}
+
+func (r *signalRPC) dispatchResponse(raw string) bool {
+	var msg signalJSONRPCLine
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &msg); err != nil {
+		return false
+	}
+	if len(msg.ID) == 0 {
+		return false
+	}
+
+	id, ok := decodeJSONRPCID(msg.ID)
+	if !ok {
+		return false
+	}
+
+	r.mu.Lock()
+	ch := r.pending[id]
+	delete(r.pending, id)
+	r.mu.Unlock()
+	if ch == nil {
+		return true
+	}
+
+	ch <- signalRPCResponse{Result: msg.Result, Error: msg.Error}
+	return true
+}
+
+func (r *signalRPC) removePending(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.pending, id)
+}
+
+func (r *signalRPC) closePending(message string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, ch := range r.pending {
+		delete(r.pending, id)
+		ch <- signalRPCResponse{Error: &signalRPCError{Message: message}}
+	}
+}
+
+func decodeJSONRPCID(raw json.RawMessage) (string, bool) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, true
+	}
+
+	var n uint64
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return strconv.FormatUint(n, 10), true
+	}
+	return "", false
+}
+
+func signalMessageParams(user, text string) map[string]interface{} {
+	params := map[string]interface{}{
+		"message": formatSignalMessage(text),
+	}
+	addSignalRPCRecipient(params, user)
+	return params
+}
+
+func signalTypingParams(user string, active bool) map[string]interface{} {
+	params := map[string]interface{}{}
+	if !active {
+		params["stop"] = true
+	}
+	addSignalRPCRecipient(params, user)
+	return params
+}
+
+func addSignalRPCRecipient(params map[string]interface{}, user string) {
+	switch {
+	case strings.HasPrefix(user, signalGroupPrefix):
+		params["groupId"] = strings.TrimPrefix(user, signalGroupPrefix)
+	case strings.HasPrefix(user, signalUserPrefix):
+		params["recipient"] = []string{strings.TrimPrefix(user, signalUserPrefix)}
+	default:
+		params["recipient"] = []string{user}
+	}
 }
 
 func (s *SignalChannel) baseArgs() []string {

@@ -127,3 +127,69 @@ func TestParseSignalLineIgnoresNonMessages(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSignalLineJSONRPCReceive(t *testing.T) {
+	line := `{"jsonrpc":"2.0","method":"receive","params":{"envelope":{"sourceNumber":"+491711111111","dataMessage":{"message":" hello rpc "}}}}`
+
+	evt, ok := parseSignalLine(line)
+	if !ok {
+		t.Fatal("signal jsonrpc receive line was ignored")
+	}
+	if evt.userID != "user:+491711111111" {
+		t.Fatalf("userID = %q", evt.userID)
+	}
+	if evt.text != "hello rpc" {
+		t.Fatalf("text = %q", evt.text)
+	}
+}
+
+func TestParseSignalLineJSONRPCReceiveSubscription(t *testing.T) {
+	line := `{"jsonrpc":"2.0","method":"receive","params":{"subscription":0,"result":{"envelope":{"sourceNumber":"+491711111111","dataMessage":{"message":" hello sub ","groupInfo":{"groupId":"abc","type":"DELIVER"}}}}}}`
+
+	evt, ok := parseSignalLine(line)
+	if !ok {
+		t.Fatal("signal jsonrpc subscription receive line was ignored")
+	}
+	if evt.userID != "group:abc" {
+		t.Fatalf("userID = %q", evt.userID)
+	}
+	if evt.text != "hello sub" {
+		t.Fatalf("text = %q", evt.text)
+	}
+}
+
+func TestSignalRPCParamsForUserAndGroup(t *testing.T) {
+	msg := signalMessageParams("user:+491711111111", " hello ")
+	if got := msg["message"]; got != "hello" {
+		t.Fatalf("message param = %#v", got)
+	}
+	if !reflect.DeepEqual(msg["recipient"], []string{"+491711111111"}) {
+		t.Fatalf("recipient param = %#v", msg["recipient"])
+	}
+
+	groupTyping := signalTypingParams("group:abc", false)
+	if got := groupTyping["groupId"]; got != "abc" {
+		t.Fatalf("groupId param = %#v", got)
+	}
+	if got := groupTyping["stop"]; got != true {
+		t.Fatalf("stop param = %#v", got)
+	}
+}
+
+func TestDecodeJSONRPCID(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{`"42"`, "42"},
+		{`42`, "42"},
+	} {
+		got, ok := decodeJSONRPCID([]byte(tc.raw))
+		if !ok {
+			t.Fatalf("id %s was not decoded", tc.raw)
+		}
+		if got != tc.want {
+			t.Fatalf("id %s = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
