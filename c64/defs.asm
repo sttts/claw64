@@ -23,23 +23,26 @@
 .const COLD_CODE_LIMIT = $A400
 .const GUARD_CODE_BASE = BASIC_GUARD_BASE
 .const GUARD_CODE_LIMIT = $9200
-.const EXEC_STAGE_BASE = $9600
+.const EXEC_STAGE_BASE = $9700
 .const EXEC_STAGE_LIMIT = EXEC_STAGE_BASE + $80
 .const GUARD_USERQ_ENQUEUE = GUARD_CODE_BASE
 .const GUARD_USERQ_LOAD = GUARD_CODE_BASE + $41
-.const GUARD_BSOUT_DRAIN = GUARD_CODE_BASE + $AE
-.const GUARD_CLEAR_STALE_STATUS_WAIT = GUARD_CODE_BASE + $114
-.const GUARD_SET_BRF_SRC_EXEC = GUARD_CODE_BASE + $14E
-.const GUARD_SET_BRF_SRC_RXBUF = GUARD_CODE_BASE + $159
-.const GUARD_CHECKPOINT = GUARD_CODE_BASE + $164
-.const GUARD_CHECKPOINT_OUT = GUARD_CODE_BASE + $16B
-.const GUARD_CHECKPOINT_EXEC_RETURN = GUARD_CODE_BASE + $17F
-.const GUARD_CHECKPOINT_EXEC_STORED = GUARD_CODE_BASE + $186
-.const GUARD_CHECKPOINT_ACK_OUT = GUARD_CODE_BASE + $18D
-.const GUARD_DONE = GUARD_CODE_BASE + $194
-.const HEARTBEAT_BASE  = GUARD_CODE_LIMIT
-.const USERQ_BASE      = $9200
-.const USERQ_LIMIT     = $9500
+.const GUARD_BSOUT_DRAIN = GUARD_CODE_BASE + $B3
+.const GUARD_RING_WRITE_BYTE = GUARD_CODE_BASE + $FB
+.const GUARD_CLEAR_STALE_STATUS_WAIT = GUARD_CODE_BASE + $119
+.const GUARD_SET_BRF_SRC_EXEC = GUARD_CODE_BASE + $139
+.const GUARD_SET_BRF_SRC_RXBUF = GUARD_CODE_BASE + $144
+.const GUARD_CHECKPOINT = GUARD_CODE_BASE + $14F
+.const GUARD_CHECKPOINT_OUT = GUARD_CODE_BASE + $156
+.const GUARD_CHECKPOINT_EXEC_RETURN = GUARD_CODE_BASE + $16A
+.const GUARD_CHECKPOINT_EXEC_STORED = GUARD_CODE_BASE + $171
+.const GUARD_CHECKPOINT_ACK_OUT = GUARD_CODE_BASE + $178
+.const GUARD_BUILD_LLM_MSG = GUARD_CODE_BASE + $17F
+.const GUARD_LLM_ACK_DRAIN = GUARD_CODE_BASE + $1CB
+.const GUARD_DONE = GUARD_CODE_BASE + $1DB
+.const GUARD_IDLE_LLM_TICK = GUARD_CODE_BASE + $1FA
+.const USERQ_BASE      = $9300
+.const USERQ_LIMIT     = $9600
 .const USERQ_SLOTS     = 3
 .const USERQ_SLOT_SIZE = $100
 .const USERQ_BYTES     = USERQ_LIMIT - USERQ_BASE
@@ -137,7 +140,7 @@
 .const FRAME_STATUSQ = $51   // 'Q' — ask whether BASIC is RUNNING or READY
 .const FRAME_SCREEN = $50    // 'P' — request current text screen snapshot
 .const FRAME_TEXT   = $54    // 'T' — LLM's final answer into the C64 agent
-.const FRAME_DONE   = $44    // 'D' — LLM cycle completed without user text
+.const FRAME_DONE   = $44    // 'D' — LLM call completed without C64 action
 .const FRAME_ACK_IN = $42    // 'B' — bridge ACK for C64 reliable frames
 //
 // C64 -> Bridge:
@@ -145,12 +148,13 @@
 .const FRAME_SYSTEM = $61    // 'a' — system prompt chunk
 .const FRAME_STATUS = $62    // 'b' — BASIC state / long-running status text
 .const FRAME_LLM    = $63    // 'c' — context message for the LLM
-.const FRAME_HBEAT  = $64    // 'd' — heartbeat
 .const FRAME_ERROR  = $65    // 'e' — tool call timed out
 .const FRAME_USER   = $66    // 'f' — user-visible text emitted by the C64
 .const FRAME_ACK    = $67    // 'g' — C64 ACK for bridge reliable frames
 
 .const EVENT_MSG    = $01    // queued chat message event
+.const LLM_EVENT_USER = $01
+.const LLM_EVENT_HEARTBEAT = $02
 
 // Frame parser states
 .const STATE_HUNT   = 0      // hunting for SYNC byte

@@ -295,10 +295,10 @@ the agent-owned high-RAM areas. Current protected layout:
 | Range | Purpose |
 | --- | --- |
 | `$9000-$91FF` | guarded helper code copied by the loader |
-| `$9200-$94FF` | fixed C64-side user-message queue, 3 slots x 256 bytes |
-| `$9500-$9503` | user-queue metadata: staged length, head, tail, count |
-| `$9504+` | guarded busy/READY/status lookup tables |
-| `$9600-$967F` | EXEC staging buffer |
+| `$9300-$95FF` | fixed C64-side user-message queue, 3 slots x 256 bytes |
+| `$9600-$9603` | user-queue metadata: staged length, head, tail, count |
+| `$9604+` | guarded busy/READY/status lookup tables |
+| `$9700-$977F` | EXEC staging buffer |
 | `$9800+` | C64 soul / system prompt text |
 | `$A000-$A3FF` | cold helper-code reserve |
 | `$A800-$BFFF` | memory staging reserve for future durable-memory work |
@@ -307,17 +307,17 @@ the agent-owned high-RAM areas. Current protected layout:
 | `$CF80-$CFFF` | transmit / injection buffer |
 
 The queue is owned by the C64. While a relay cycle is busy, the bridge may
-deliver only bounded overlap up to those three slots. If the C64-side queue is
-full, the guarded enqueue helper drops the oldest pending message and keeps
-the newest one.
+deliver only bounded overlap up to those three slots. Excess chat messages wait
+in FIFO order outside the serial path before entering the C64 queue. If the
+C64-side queue is still full, the guarded enqueue helper defensively drops the
+oldest pending message and keeps the newest one.
 
 The durable-memory feature is still planned, not implemented. The current
 `$A800-$BFFF` region is only a staging reservation; durable memory is intended
 to live on C64-owned disk media, not as hidden bridge context.
 
-Heartbeat is also planned, not active behavior. The protocol has a heartbeat
-frame type, but the current C64 agent does not yet originate idle heartbeat
-LLM turns.
+Heartbeat is a C64-originated typed `LLM_MSG` after roughly two idle minutes,
+not a bridge-understood transport frame.
 
 ## Serial Protocol
 
@@ -328,6 +328,7 @@ At a high level:
 - the C64 communicates with the outside world via binary serial frames
 - the bridge translates those frames to HTTP/chat APIs, but does not decide anything
 - reliable frames use 1-byte transport ids with explicit ACKs
+- bridge -> C64 ACK payloads include the id plus its 7-bit complement
 - `EXEC` is the only execution request
 - TEXT responses still flow `LLM -> bridge -> C64 -> bridge -> user`
 - SYSTEM and RESULT use chunked text payloads above the frame transport

@@ -412,6 +412,7 @@ bloop:
         // Build/send queued frames before draining serial. This ensures
         // text_pending USER frames are built from RXBUF before new
         // incoming frames overwrite it.
+        jsr GUARD_CLEAR_STALE_STATUS_WAIT
         jsr service_outbound
 
         // ---- Step 1: Drain pending serial bytes ----
@@ -517,7 +518,6 @@ bl_fill_done:
         // All injected (including RETURN) → wait for either READY. or
         // a stored numbered program line to settle.
 bl_inj_complete:
-        jsr GUARD_CHECKPOINT_EXEC_RETURN
         lda #0
         sta ready_timer
         lda progline_pending
@@ -673,13 +673,6 @@ reenter:
         sta $0292               // original $E5D1 instruction
         lda $C6                 // check keyboard buffer
         bne reenter_keys        // keys waiting → let KERNAL process
-        lda basic_running
-        beq reenter_idle
-        jsr screen_has_ready_anywhere
-        bcc reenter_idle
-        // Let the prompt-idle loop own detached READY handoff so the
-        // stale-status check and RESULT transition stay single-sourced.
-reenter_idle:
         jsr service_outbound    // prompt-idle after KERNAL processed a line
         jmp bloop               // empty → run agent loop
 reenter_keys:
@@ -695,7 +688,6 @@ imain_hook:
         sta progline_pending
         sta busy
         jsr queue_state_stored
-        jsr GUARD_CHECKPOINT_EXEC_STORED
         lda #AG_IDLE
         sta agent_state
 ih_main_done:
@@ -873,13 +865,13 @@ csr_done:
 // frames. Serialize access so shared send/ack state is advanced by only one
 // context at a time.
 service_outbound:
-        inc tx_service_busy
         lda tx_service_busy
-        cmp #1
-        beq so_guard_acquired
-        dec tx_service_busy
+        beq so_guard_acquire
         rts
-so_guard_acquired:
+
+so_guard_acquire:
+        lda #1
+        sta tx_service_busy
         jsr service_outbound_inner
         lda #0
         sta tx_service_busy
@@ -930,17 +922,17 @@ so_chk_ack_wait:
         inc tx_ack_timer
 so_ack_tick_same:
         lda tx_ack_timer
-        cmp #240                // 4 seconds covers ACK jitter after a full frame at 2400 baud
+        cmp #250                // stale wait guard before retransmitting reliable frames
         bcs so_ack_retry
         jmp so_send_check       // still waiting — don't build next frame
 
-        // Timeout — check retry budget (3 retries max).
 so_ack_retry:
         lda tx_retries
         cmp #3
         bcs so_ack_give_up
 
-        // Retransmit: reset send_pos to resend the frame in send_buf.
+        // Retransmit the same reliable C64 frame; the bridge deduplicates
+        // accepted IDs, while corrupted frames were never ACKed.
         inc tx_retries
         lda #0
         sta send_pos
@@ -977,10 +969,9 @@ so_chk_llm:
         beq so_chk_text
         lda #0
         sta llm_pending
-        lda llm_len
-        sta frame_len           // restore saved MSG body length
-        lda #FRAME_LLM
-        jsr build_rxbuf_frame
+        lda llm_event_type
+        ldx llm_len
+        jsr GUARD_BUILD_LLM_MSG
         jsr inject_tx_id
         jmp so_send_check
 
@@ -1043,13 +1034,8 @@ so_done:
 service_startup_handshake:
         lda rx_last_id
         bne ssh_done
-ssh_send:
-        lda $A2
-        sec
-        sbc tx_ack_tick
-        bpl ssh_done
-        lda $A2
-        sta tx_ack_tick
+        inc tx_ack_tick
+        bne ssh_done
         lda #$21                // '!' handshake
         jmp so_chrout
 ssh_done:
@@ -1060,9 +1046,6 @@ ssh_done:
 so_chrout:
         pha
         lda LDTND
-        bne so_chr_ok
-        lda LAT
-        cmp #RS232_DEV
         bne so_chr_ok
         lda #1
         sta LDTND
@@ -1115,6 +1098,7 @@ build_reliable_outbound:
         lda #0
         sta state_pending
         jsr build_state_frame
+        jsr inject_tx_id
 
 bro_done:
         rts
@@ -1215,7 +1199,6 @@ irq_mark_running:
 
 irq_tx_check:
         jsr service_outbound
-
 irq_done_io:
         rts
 
@@ -1302,8 +1285,6 @@ bsf_done:
 // Uses a dedicated buffer so ACKs can be sent even when send_buf holds
 // a reliable frame waiting for retransmit.
 build_ack_frame:
-        jsr GUARD_CHECKPOINT_ACK_OUT
-
         lda #SYNC_BYTE
         sta ack_buf+0
         lda #FRAME_ACK
@@ -1331,8 +1312,6 @@ build_ack_frame:
 // increments LEN and send_total, fixes the checksum, advances tx_next_id.
 inject_tx_id:
         lda send_buf+1
-        jsr GUARD_CHECKPOINT_OUT
-
         // shift payload+checksum right by 1 byte (from end to start)
         ldx send_buf+2          // X = old payload length
 iti_shift:
@@ -1874,12 +1853,18 @@ frame_dispatch:
         cmp #FRAME_ACK_IN
         bne fd_inbound_gate
         lda frame_len
-        beq fd_ack_done
+        cmp #2
+        bne fd_ack_done
         lda AGENT_RXBUF         // ACK payload = id being acknowledged
         cmp tx_ack_id           // does it match our pending outbound id?
         bne fd_ack_done
+        lda AGENT_RXBUF
+        eor #$7F
+        cmp AGENT_RXBUF+1       // second ACK byte guards one-byte false ACKs
+        bne fd_ack_done
         lda #0
         sta tx_ack_wait         // ACK received — stop waiting
+        jsr GUARD_LLM_ACK_DRAIN
 fd_ack_done:
         rts
 
@@ -1938,13 +1923,12 @@ fd_accept:
         // New reliable frame — store newest (id, type) and queue ACK.
         lda fd_cur_id
         sta rx_last_id
-        lda tx_ack_wait
-        beq fd_accept_confirmed
-        lda send_total
-        sta send_pos            // inbound progress cancels pending retransmit
-fd_accept_confirmed:
+        lda send_pos
+        cmp send_total
+        bne fd_accept_type
         lda #0
-        sta tx_ack_wait         // inbound progress semantically confirms C64 delivery
+        sta tx_ack_wait
+fd_accept_type:
         lda frame_sub
         cmp #FRAME_TEXT
         beq fd_dispatch
@@ -1974,6 +1958,8 @@ fd_msg_no_prompt:
         bne fd_msg_queue_busy
         lda frame_len
         sta llm_len             // save MSG body length for later LLM frame
+        lda #LLM_EVENT_USER
+        sta llm_event_type
         lda #1
         sta busy
         sta llm_pending
@@ -2304,6 +2290,7 @@ cur_page:     .byte $A0 // current page during ROM copy, init to $A0
 // saved_border removed — agent never touches the border
 
 llm_pending:  .byte 0   // 1 = main loop should send LLM_MSG frame
+llm_event_type:.byte LLM_EVENT_USER // typed LLM_MSG payload kind
 llm_len:      .byte 0   // saved MSG body length for the LLM frame
 prompt_pending: .byte 0 // 1 = system prompt chunks still need sending
 result_pending: .byte 0 // 1 = RESULT chunks still need sending
@@ -2342,6 +2329,8 @@ old_bsout_hi: .byte 0   // saved BSOUT vector high byte
 anim_timer:   .byte 5   // frames between dot shifts
 dot_dir:      .byte 1   // 0=left (sending), 1=right (receiving)
 busy_timer:   .byte 0   // frames since last serial activity (auto-clear at 30)
+llm_idle_lo:  .byte 0   // idle frame counter for C64-originated heartbeat events
+llm_idle_hi:  .byte 0
 color_timer:  .byte 0   // free-running counter for lobster color pulse
 running_ticks_lo: .byte 0 // ISTOP-call timer low byte while BASIC runs
 running_ticks_hi: .byte 0 // ISTOP-call timer high byte while BASIC runs
@@ -2527,6 +2516,8 @@ irq_raster:
         lda agent_state
         cmp #AG_WAITING
         beq irq_service
+        lda text_pending
+        bne irq_service
 
         // Check if agent is busy (in a conversation cycle)
         lda busy
@@ -2628,6 +2619,7 @@ irq_hide_dots:
 
 irq_idle:
         // Not busy — hide dots, lobster back to red
+        jsr GUARD_IDLE_LLM_TICK
         lda #2
         sta $D027
         lda $D015

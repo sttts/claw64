@@ -2,7 +2,7 @@
 
 // Guarded BASIC-RAM event queue helpers.
 // Slots store event type, payload length, then payload bytes. Current runtime
-// uses EVENT_MSG; heartbeat and future async events can reuse the same queue.
+// uses EVENT_MSG for queued chat input.
 
 guard_userq_enqueue_from_rxbuf:
         lda USERQ_COUNT_PTR
@@ -71,6 +71,8 @@ guq_load_body:
 guq_load_done:
         jsr guard_userq_advance_head
         dec USERQ_COUNT_PTR
+        lda #LLM_EVENT_USER
+        sta llm_event_type
         lda #1
         sta busy
         sta llm_pending
@@ -165,17 +167,6 @@ grwb_full:
         rts
 
 guard_clear_stale_status_wait:
-        lda tx_ack_wait
-        beq gcsw_busy
-        lda send_pos
-        cmp send_total
-        bne gcsw_busy
-        lda RODBE
-        cmp RODBS
-        bne gcsw_busy
-        lda #0
-        sta tx_ack_wait
-gcsw_busy:
         lda tx_service_busy
         beq gcsw_done
         lda send_pos
@@ -236,28 +227,116 @@ guard_checkpoint_ack_out:
         ldx #$0F
         jmp guard_checkpoint
 
+guard_build_llm_msg:
+        sta send_buf+3          // LLM_MSG event type
+        stx frame_len           // event body length
+        lda #SYNC_BYTE
+        sta send_buf+0
+        lda #FRAME_LLM
+        sta send_buf+1
+        txa
+        clc
+        adc #1
+        sta send_buf+2
+        lda #FRAME_LLM
+        eor send_buf+2
+        eor send_buf+3
+        sta frame_chk
+        ldx #0
+gblm_loop:
+        cpx frame_len
+        beq gblm_done
+gblm_src: lda AGENT_RXBUF+1,x
+        sta send_buf+4,x
+        eor frame_chk
+        sta frame_chk
+        inx
+        jmp gblm_loop
+gblm_done:
+        lda frame_chk
+        sta send_buf+4,x
+        txa
+        clc
+        adc #5
+        sta send_total
+        lda #0
+        sta send_pos
+        rts
+
+guard_llm_ack_drain:
+        lda send_buf+1
+        cmp #FRAME_LLM
+        bne glad_done
+        lda USERQ_COUNT_PTR
+        beq glad_done
+        jmp guard_userq_load_head_to_rxbuf
+glad_done:
+        rts
+
 guard_done:
         lda #0
-        sta busy                // silent completion — internal cycle end only
+        sta busy
+        sta busy_timer
         sta text_pending
         lda fd_cur_id
         sta ack_id
         lda #1
         sta ack_pending
-        jmp guard_heartbeat
+        lda USERQ_COUNT_PTR
+        beq gd_done
+        jmp guard_userq_load_head_to_rxbuf
+gd_done:
+        rts
 
-guard_heartbeat:
-        lda #SYNC_BYTE
-        sta send_buf+0
-        lda #FRAME_HBEAT
-        sta send_buf+1
+guard_idle_llm_tick:
+        lda busy
+        bne gilt_reset
+        lda basic_running
+        bne gilt_reset
+        lda agent_state
+        bne gilt_reset
+        lda prompt_sent
+        beq gilt_reset
+        lda llm_pending
+        ora prompt_pending
+        ora result_pending
+        ora text_pending
+        ora state_pending
+        ora ack_pending
+        ora tx_ack_wait
+        bne gilt_reset
+        lda send_pos
+        cmp send_total
+        bne gilt_reset
+        lda ack_pos
+        cmp ack_total
+        bne gilt_reset
+
+        inc llm_idle_lo
+        bne gilt_check
+        inc llm_idle_hi
+gilt_check:
+        lda llm_idle_hi
+        cmp #$1C
+        bcc gilt_done
+        bne gilt_fire
+        lda llm_idle_lo
+        cmp #$20
+        bcc gilt_done
+gilt_fire:
         lda #0
-        sta send_buf+2
-        lda #FRAME_HBEAT
-        sta send_buf+3
-        lda #4
-        sta send_total
+        sta llm_idle_lo
+        sta llm_idle_hi
+        sta llm_len
+        lda #LLM_EVENT_HEARTBEAT
+        sta llm_event_type
+        lda #1
+        sta llm_pending
+        sta busy
+        rts
+gilt_reset:
         lda #0
-        sta send_pos
-        sec
+        sta llm_idle_lo
+        sta llm_idle_hi
+gilt_done:
         rts

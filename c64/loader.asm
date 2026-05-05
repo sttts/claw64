@@ -656,10 +656,24 @@ startup_hires_screen:
         .import binary "assets/startup-logo-lobster-screen-hires-bottom.bin"
 
 .assert "guarded BASIC RAM must stay below soul", BASIC_GUARD_BASE <= SOUL_BASE, true
-.assert "guarded helper code must fit before heartbeat region", GUARD_CODE_BASE + (guarded_end - guarded_data) <= HEARTBEAT_BASE, true
+.assert "guarded helper code must fit before user queue", GUARD_CODE_BASE + (guarded_end - guarded_data) <= USERQ_BASE, true
+.assert "guard enqueue vector must match guarded helper", GUARD_USERQ_ENQUEUE == guard_userq_enqueue_from_rxbuf, true
+.assert "guard load vector must match guarded helper", GUARD_USERQ_LOAD == guard_userq_load_head_to_rxbuf, true
+.assert "guard BSOUT drain vector must match guarded helper", GUARD_BSOUT_DRAIN == guard_bsout_drain, true
+.assert "guard ring writer vector must match guarded helper", GUARD_RING_WRITE_BYTE == guard_ring_write_byte, true
+.assert "guard stale-status vector must match guarded helper", GUARD_CLEAR_STALE_STATUS_WAIT == guard_clear_stale_status_wait, true
+.assert "guard source-exec vector must match guarded helper", GUARD_SET_BRF_SRC_EXEC == guard_set_brf_src_exec, true
+.assert "guard source-rxbuf vector must match guarded helper", GUARD_SET_BRF_SRC_RXBUF == guard_set_brf_src_rxbuf, true
+.assert "guard checkpoint vector must match guarded helper", GUARD_CHECKPOINT == guard_checkpoint, true
+.assert "guard checkpoint-out vector must match guarded helper", GUARD_CHECKPOINT_OUT == guard_checkpoint_out, true
+.assert "guard exec-return vector must match guarded helper", GUARD_CHECKPOINT_EXEC_RETURN == guard_checkpoint_exec_return, true
+.assert "guard exec-stored vector must match guarded helper", GUARD_CHECKPOINT_EXEC_STORED == guard_checkpoint_exec_stored, true
+.assert "guard ACK-out vector must match guarded helper", GUARD_CHECKPOINT_ACK_OUT == guard_checkpoint_ack_out, true
+.assert "guard LLM builder vector must match guarded helper", GUARD_BUILD_LLM_MSG == guard_build_llm_msg, true
+.assert "guard LLM ACK drain vector must match guarded helper", GUARD_LLM_ACK_DRAIN == guard_llm_ack_drain, true
+.assert "guard DONE vector must match guarded helper", GUARD_DONE == guard_done, true
+.assert "guard idle LLM vector must match guarded helper", GUARD_IDLE_LLM_TICK == guard_idle_llm_tick, true
 .assert "soul must fit below BASIC ROM shadow", SOUL_BASE + PROMPT_LEN <= COLD_CODE_BASE, true
-.assert "cold code region must end before heartbeat region", COLD_CODE_BASE < COLD_CODE_LIMIT, true
-.assert "heartbeat region must end before user queue region", HEARTBEAT_BASE <= USERQ_BASE, true
 .assert "user queue region must end before memory staging", USERQ_BASE < USERQ_LIMIT, true
 .assert "user queue storage must match 3 fixed 256-byte slots", USERQ_SLOTS * USERQ_SLOT_SIZE == USERQ_BYTES, true
 .assert "user queue metadata must stay below memory staging", USERQ_META_LIMIT <= MEM_STAGE_BASE, true

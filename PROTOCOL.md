@@ -100,13 +100,21 @@ retries and duplicate suppression safe on the C64.
 
 ## ACK By ID
 
-`ACK` payload is:
+Bridge -> C64 `ACK` payload is:
+
+```text
+ACK <id> <id XOR $7f>
+```
+
+C64 -> bridge `ACK` payload is:
 
 ```text
 ACK <id>
 ```
 
-Not payload echo.
+Neither form echoes the original payload. The guarded two-byte bridge -> C64
+ACK payload prevents a corrupted one-byte ACK from falsely acknowledging a
+different C64-originated reliable frame.
 
 The wire uses directional ACK type bytes so transport echoes cannot be
 misread as acknowledgments in the opposite direction:
@@ -146,8 +154,8 @@ chunk into durable outbound/user state so the next TEXT chunk cannot clobber
 the first one.
 
 For `DONE`, this means ACK must not be sent until the C64 has ended the
-current LLM cycle internally. `DONE` never creates user-visible text; it is
-the reliable silent-completion boundary.
+current in-flight LLM call internally. `DONE` never creates user-visible text;
+it is the reliable silent-completion boundary.
 
 For `EXEC`, this means:
 
@@ -244,7 +252,7 @@ sensitive phases.
 Normal mode may remain bidirectional:
 
 - bridge can send requests
-- C64 can emit `USER`, `STATUS`, `RESULT`, `LLM`, and `HEARTBEAT`
+- C64 can emit `USER`, `STATUS`, `RESULT`, `LLM`, and `SYSTEM`
 
 ### Sensitive Mode: Command Completion
 
@@ -293,13 +301,19 @@ Examples:
 - `LLM`
 - `SYSTEM`
 
-### Fire-And-Forget C64 -> Bridge
+`LLM` payloads are typed C64-originated messages for the LLM. The first payload
+byte is the event type; the remaining bytes are the event body:
 
-- `HEARTBEAT`
+- `$01` user message
+- `$02` heartbeat / idle event
+- `$03` status event
+- `$04` result event
+- `$05` error event
 
-The C64 TSR emits `HEARTBEAT` after a silent `DONE` completion as a
-fire-and-forget liveness event. It is not reliable, does not carry a transport
-ID, and must not create bridge agent behavior by itself.
+The bridge formats and forwards typed `LLM` payloads to the model. It must not
+attach policy to the event type. For example, a heartbeat is just an
+`LLM(type=heartbeat)` message emitted by the C64 after roughly two idle minutes;
+it is not a special bridge-side frame.
 
 ## Duplicate Suppression
 

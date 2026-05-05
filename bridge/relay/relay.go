@@ -71,11 +71,13 @@ type Relay struct {
 	msgGateMu        sync.Mutex
 	msgGateBusy      bool
 	msgGateWaiters   []chan struct{}
+	overflowMu       sync.Mutex
+	overflowBusy     bool
+	overflowWaiters  []chan struct{}
 	msgRetryBase     time.Duration
 	msgRetryMax      time.Duration
 	DeliveryRetry    func(name string, attempt int, err error)
 	C64Duplicate     func(name string, id byte, newest byte)
-	Heartbeat        func()
 }
 
 type recvResult struct {
@@ -97,9 +99,10 @@ const bridgeFrameBodyMax = bridgeFramePayloadMax - 1
 // whether BASIC is running — the C64 ACKs at transport level.
 const ackTimeout = 3 * time.Second
 const toolFrameTimeout = 5 * time.Second
-const ackQuietWindow = 150 * time.Millisecond
-const c64AckHandoffQuietWindow = 100 * time.Millisecond
+const ackQuietWindow = 800 * time.Millisecond
+const c64AckHandoffQuietWindow = 800 * time.Millisecond
 const c64TextHandoffQuietWindow = 1200 * time.Millisecond
+const c64LLMEventBatchQuietWindow = c64AckHandoffQuietWindow + 500*time.Millisecond
 const runningAckQuietWindow = 3 * time.Second
 const runningRecvQuietWindow = 1 * time.Second
 const runningStatusPollInterval = 3 * time.Second
@@ -119,10 +122,6 @@ const (
 // textAckTimeout allows one inbound TEXT chunk, the resulting USER frame,
 // and the bridge ACK back to the C64 to drain at 2400 baud before retrying.
 const textAckTimeout = 7 * time.Second
-
-// execAckTimeout covers EXEC transport confirmation or early semantic
-// STATUS/RESULT confirmation from BASIC.
-const execAckTimeout = toolFrameTimeout
 
 // msgAdmissionAckTimeout waits for the C64 to admit a user message into its
 // event queue. This is queue admission, not ordinary idle transport ACK
@@ -294,65 +293,6 @@ func (r *Relay) overlapQueueAtCapacity() bool {
 	return r.overlapQueueDepth() >= c64UserQueueSlots
 }
 
-func (r *Relay) overlapQueueFreshTurnReady() bool {
-	if r.canSendOverlappingMessage() {
-		return false
-	}
-	if r.waitingTool || len(r.pendingFrames) > 0 || len(r.textOutQueue) > 0 || len(r.textInFlight) > 0 {
-		return false
-	}
-
-	r.msgGateMu.Lock()
-	msgGateBusy := r.msgGateBusy
-	waiters := len(r.msgGateWaiters)
-	r.msgGateMu.Unlock()
-
-	r.overlapMu.Lock()
-	overlapBusy := r.overlapBusy
-	r.overlapMu.Unlock()
-
-	return !msgGateBusy && !overlapBusy && waiters == 0
-}
-
-func (r *Relay) overlapQueueFreshTurnReadyWithGateHeld() bool {
-	if r.canSendOverlappingMessage() {
-		return false
-	}
-	if r.waitingTool || len(r.pendingFrames) > 0 || len(r.textOutQueue) > 0 || len(r.textInFlight) > 0 {
-		return false
-	}
-
-	r.overlapMu.Lock()
-	overlapBusy := r.overlapBusy
-	r.overlapMu.Unlock()
-
-	return !overlapBusy
-}
-
-func (r *Relay) acquireFreshMessageGate(ctx context.Context) error {
-	if err := r.acquireMessageGate(ctx); err != nil {
-		return err
-	}
-	if r.overlapQueueFreshTurnReadyWithGateHeld() {
-		return nil
-	}
-
-	ticker := time.NewTicker(r.messageRetryBase())
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			r.releaseMessageGate()
-			return ctx.Err()
-		case <-ticker.C:
-			if r.overlapQueueFreshTurnReadyWithGateHeld() {
-				return nil
-			}
-		}
-	}
-}
-
 func (r *Relay) tryAcquireOverlapSend() bool {
 	r.overlapMu.Lock()
 	defer r.overlapMu.Unlock()
@@ -511,6 +451,24 @@ func (r *Relay) SetupProgress() {
 	}
 }
 
+// PrimeTransport verifies that the post-handshake serial path can carry a
+// request/response frame before user messages enter the C64.
+func (r *Relay) PrimeTransport(ctx context.Context) error {
+	frame := serial.Frame{Type: serial.FrameStatusReq}
+	for attempt := 0; attempt < len(reliableRetryDelays); attempt++ {
+		if err := r.sendUnreliableBridgeFrame(frame); err != nil {
+			return err
+		}
+		if err := r.waitForPrimeStatus(ctx, toolFrameTimeout); err == nil {
+			return nil
+		} else if attempt+1 == len(reliableRetryDelays) {
+			return err
+		}
+		time.Sleep(reliableRetryDelays[attempt])
+	}
+	return fmt.Errorf("transport prime failed")
+}
+
 func sendLogSkipsTransportID(typeName string) bool {
 	switch typeName {
 	case "MSG", "EXEC", "STOP", "STATUS", "TEXT", "SCREENSHOT":
@@ -536,8 +494,15 @@ func (r *Relay) HandleMessageStream(ctx context.Context, userID string, text str
 
 	msgFrame := serial.Frame{Type: serial.FrameMsg, Payload: []byte(text)}
 	if r.overlapQueueAtCapacity() {
-		if err := r.acquireFreshMessageGate(ctx); err != nil {
-			return fmt.Errorf("wait for fresh relay turn: %w", err)
+		if err := r.acquireOverflowLane(ctx); err != nil {
+			return fmt.Errorf("wait for overlap overflow lane: %w", err)
+		}
+		defer r.releaseOverflowLane()
+		if err := r.waitForOverlapQueueRoom(ctx); err != nil {
+			return fmt.Errorf("wait for overlap queue room: %w", err)
+		}
+		if err := r.acquireMessageGate(ctx); err != nil {
+			return fmt.Errorf("wait for relay idle: %w", err)
 		}
 		defer r.releaseMessageGate()
 		if err := r.sendMSG(ctx, msgFrame); err != nil {
@@ -604,9 +569,63 @@ func (r *Relay) sendMSG(ctx context.Context, msgFrame serial.Frame) error {
 	return r.sendVerifiedWithTimeout(ctx, msgFrame, "MSG", msgAdmissionAckTimeout)
 }
 
+func (r *Relay) waitForOverlapQueueRoom(ctx context.Context) error {
+	ticker := time.NewTicker(r.messageRetryBase())
+	defer ticker.Stop()
+
+	for r.overlapQueueAtCapacity() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+	return nil
+}
+
 func (r *Relay) sendOverlappingMSG(ctx context.Context, msgFrame serial.Frame) error {
 	logStream(r.streamOut(), "%s ", flowLabel("USER", "→", "C64", "MSG"))
 	return r.sendVerifiedWithAckWaiter(ctx, msgFrame, "MSG", msgAdmissionAckTimeout)
+}
+
+func (r *Relay) acquireOverflowLane(ctx context.Context) error {
+	r.overflowMu.Lock()
+	if !r.overflowBusy {
+		r.overflowBusy = true
+		r.overflowMu.Unlock()
+		return nil
+	}
+	waiter := make(chan struct{})
+	r.overflowWaiters = append(r.overflowWaiters, waiter)
+	r.overflowMu.Unlock()
+
+	select {
+	case <-ctx.Done():
+		r.overflowMu.Lock()
+		for i, ch := range r.overflowWaiters {
+			if ch == waiter {
+				r.overflowWaiters = append(r.overflowWaiters[:i], r.overflowWaiters[i+1:]...)
+				break
+			}
+		}
+		r.overflowMu.Unlock()
+		return ctx.Err()
+	case <-waiter:
+		return nil
+	}
+}
+
+func (r *Relay) releaseOverflowLane() {
+	r.overflowMu.Lock()
+	if len(r.overflowWaiters) > 0 {
+		waiter := r.overflowWaiters[0]
+		r.overflowWaiters = r.overflowWaiters[1:]
+		r.overflowMu.Unlock()
+		close(waiter)
+		return
+	}
+	r.overflowBusy = false
+	r.overflowMu.Unlock()
 }
 
 // eventLoop waits for C64 frames and reacts.
@@ -645,7 +664,7 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 		// SYSTEM is streamed during receive; the other frame types are
 		// logged only after full decode/unwrap.
 		if f.Type == serial.FrameLLM {
-			log.Printf("%s", flowLine("LLM", "←", "C64", "EVENT", string(f.Payload)))
+			log.Printf("%s", flowLine("LLM", "←", "C64", "EVENT", formatC64LLMEvent(f.Payload)))
 		}
 		if f.Type == serial.FrameUser {
 			log.Printf("%s", flowLine("USER", "←", "C64", "TEXT", fmt.Sprintf("len=%d text=%q", len(f.Payload), truncate(string(f.Payload), 60))))
@@ -658,8 +677,9 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 		switch f.Type {
 		case serial.FrameLLM:
 			fmt.Fprintln(r.streamOut()) // newline after streamed payload
-			r.appendC64LLMEvent(userID, string(f.Payload))
-			r.drainTrailingLLMMessages(userID)
+			payloads := [][]byte{append([]byte(nil), f.Payload...)}
+			payloads = append(payloads, r.drainTrailingLLMMessages()...)
+			r.appendC64LLMEvents(userID, payloads)
 			idle, err := r.callAndDispatch(ctx, userID)
 			if err != nil {
 				return err
@@ -780,9 +800,6 @@ func (r *Relay) eventLoop(ctx context.Context, userID string, emit func(string) 
 			logWarnf("%s", flowLine("", "←", "C64", "ACK", "unexpected"))
 			continue
 
-		case serial.FrameHeartbeat:
-			continue
-
 		default:
 			log.Printf("%s", flowLine("", "←", "C64", "malformed", fmt.Sprintf("unknown frame 0x%02X", f.Type)))
 		}
@@ -870,8 +887,6 @@ func (r *Relay) drainTrailingAfterUserText() {
 		case serial.FrameUser:
 			fmt.Fprintln(r.streamOut())
 			r.textBuf = append(r.textBuf, f.Payload...)
-		case serial.FrameHeartbeat:
-			continue
 		case serial.FrameSystem:
 			fmt.Fprintln(r.streamOut())
 			r.handleSystemFrame(f)
@@ -882,13 +897,14 @@ func (r *Relay) drainTrailingAfterUserText() {
 	}
 }
 
-func (r *Relay) drainTrailingLLMMessages(userID string) {
+func (r *Relay) drainTrailingLLMMessages() [][]byte {
+	var payloads [][]byte
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), c64LLMEventBatchQuietWindow)
 		f, accepted, err := r.recvFromC64(ctx, false)
 		cancel()
 		if err != nil {
-			return
+			return payloads
 		}
 
 		if consumed, unwrapped := r.unwrapAcceptedFrame(&f, accepted, true); consumed {
@@ -900,25 +916,65 @@ func (r *Relay) drainTrailingLLMMessages(userID string) {
 		switch f.Type {
 		case serial.FrameLLM:
 			fmt.Fprintln(r.streamOut())
-			log.Printf("%s", flowLine("LLM", "←", "C64", "EVENT", string(f.Payload)))
-			r.appendC64LLMEvent(userID, string(f.Payload))
-		case serial.FrameHeartbeat:
-			continue
+			log.Printf("%s", flowLine("LLM", "←", "C64", "EVENT", formatC64LLMEvent(f.Payload)))
+			payloads = append(payloads, append([]byte(nil), f.Payload...))
 		case serial.FrameSystem:
 			fmt.Fprintln(r.streamOut())
 			r.handleSystemFrame(f)
 		default:
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: accepted})
-			return
+			return payloads
 		}
 	}
 }
 
-// appendC64LLMEvent records a C64-originated LLM input event in backend history.
+// appendC64LLMEvents records C64-originated LLM input events in backend history.
 // Current LLM backends only understand standard chat roles, so these events are
-// serialized as user messages even though they originate on the C64 side.
-func (r *Relay) appendC64LLMEvent(userID, content string) {
-	r.History.Append(userID, llm.Message{Role: "user", Content: content})
+// serialized as one user message even though they originate on the C64 side.
+func (r *Relay) appendC64LLMEvents(userID string, payloads [][]byte) {
+	r.History.Append(userID, llm.Message{Role: "user", Content: formatC64LLMEvents(payloads)})
+}
+
+func (r *Relay) appendC64LLMEvent(userID string, payload []byte) {
+	r.appendC64LLMEvents(userID, [][]byte{payload})
+}
+
+func formatC64LLMEvents(payloads [][]byte) string {
+	if len(payloads) == 1 {
+		return formatC64LLMEvent(payloads[0])
+	}
+	var b strings.Builder
+	b.WriteString("[C64 event batch]")
+	for i, payload := range payloads {
+		label, body := parseC64LLMEvent(payload)
+		fmt.Fprintf(&b, "\n[%d:%s] %s", i+1, label, body)
+	}
+	return b.String()
+}
+
+func formatC64LLMEvent(payload []byte) string {
+	label, body := parseC64LLMEvent(payload)
+	return fmt.Sprintf("[C64 %s]\n%s", label, body)
+}
+
+func parseC64LLMEvent(payload []byte) (string, string) {
+	if len(payload) == 0 {
+		return "event", ""
+	}
+	label := "event"
+	switch payload[0] {
+	case 1:
+		label = "user"
+	case 2:
+		label = "heartbeat"
+	case 3:
+		label = "status"
+	case 4:
+		label = "result"
+	case 5:
+		label = "error"
+	}
+	return label, string(payload[1:])
 }
 
 // callAndDispatch calls the LLM and dispatches the response to the C64.
@@ -1101,7 +1157,7 @@ func (r *Relay) drainC64OutboundBeforeText(ctx context.Context) error {
 		}
 
 		switch f.Type {
-		case serial.FrameAck, serial.FrameHeartbeat:
+		case serial.FrameAck:
 			continue
 		case serial.FrameStatus:
 			if r.acceptC64FrameQueued(&f, true) {
@@ -1163,14 +1219,12 @@ func (r *Relay) startToolWait() {
 }
 
 func (r *Relay) sendExec(ctx context.Context, cmd []byte) error {
+	if err := r.drainC64OutboundBeforeText(ctx); err != nil {
+		return err
+	}
+
 	execFrame := serial.Frame{Type: serial.FrameExec, Payload: cmd}
-	if err := r.sendVerifiedOrSemanticWith(
-		ctx,
-		execFrame,
-		"EXEC",
-		execAckTimeout,
-		execRetryDelays,
-	); err != nil {
+	if err := r.sendVerifiedOrSemanticWith(ctx, execFrame, "EXEC", execAckTimeoutFor(len(cmd)), execRetryDelays); err != nil {
 		return err
 	}
 	fmt.Fprintln(r.streamOut())
@@ -1178,6 +1232,17 @@ func (r *Relay) sendExec(ctx context.Context, cmd []byte) error {
 	r.toolInFlight = append(r.toolInFlight[:0], cmd...)
 	r.startToolWait()
 	return nil
+}
+
+func execAckTimeoutFor(commandBytes int) time.Duration {
+	timeout := toolFrameTimeout + time.Duration(commandBytes/4)*time.Second
+	if timeout < toolFrameTimeout {
+		return toolFrameTimeout
+	}
+	if timeout > 25*time.Second {
+		return 25 * time.Second
+	}
+	return timeout
 }
 
 func (r *Relay) sendVerified(ctx context.Context, frame serial.Frame, name string) error {
@@ -1332,7 +1397,7 @@ func (r *Relay) waitForStatusSemantic(ctx context.Context, timeout time.Duration
 			return err
 		}
 		switch f.Type {
-		case serial.FrameAck, serial.FrameHeartbeat:
+		case serial.FrameAck:
 			continue
 		case serial.FrameStatus, serial.FrameError:
 			if r.acceptC64FrameQueued(&f, true) {
@@ -1347,6 +1412,35 @@ func (r *Relay) waitForStatusSemantic(ctx context.Context, timeout time.Duration
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
 		default:
 			return fmt.Errorf("unexpected frame while waiting for STATUS: %s", serial.TypeName(f.Type))
+		}
+	}
+}
+
+func (r *Relay) waitForPrimeStatus(ctx context.Context, timeout time.Duration) error {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	for {
+		f, err := r.recvFromSocketOnly(waitCtx, false)
+		if err != nil {
+			return err
+		}
+		switch f.Type {
+		case serial.FrameAck:
+			continue
+		case serial.FrameStatus, serial.FrameError:
+			if r.acceptC64FrameQueued(&f, true) {
+				continue
+			}
+			r.flushPendingAcks()
+			return nil
+		case serial.FrameUser, serial.FrameSystem, serial.FrameResult, serial.FrameLLM:
+			if r.acceptC64FrameQueued(&f, true) {
+				continue
+			}
+			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
+		default:
+			return fmt.Errorf("unexpected frame while priming transport: %s", serial.TypeName(f.Type))
 		}
 	}
 }
@@ -1440,9 +1534,6 @@ func (r *Relay) acceptC64FrameQueued(f *serial.Frame, ackNow bool) bool {
 }
 
 func (r *Relay) acceptC64FrameWith(f *serial.Frame, ackNow bool, flush bool) bool {
-	if f.Type == serial.FrameStatus && isExpectedStatus(string(f.Payload)) {
-		return false
-	}
 	if !serial.IsReliableC64(f.Type) {
 		return false
 	}
@@ -1479,12 +1570,6 @@ func (r *Relay) acceptC64FrameWith(f *serial.Frame, ackNow bool, flush bool) boo
 func (r *Relay) noteC64Duplicate(frameType byte, id byte, newest byte) {
 	if r.C64Duplicate != nil {
 		r.C64Duplicate(serial.TypeName(frameType), id, newest)
-	}
-}
-
-func (r *Relay) noteHeartbeat() {
-	if r.Heartbeat != nil {
-		r.Heartbeat()
 	}
 }
 
@@ -1541,7 +1626,7 @@ func (r *Relay) flushPendingAcksLocked() {
 	sent := false
 	for _, id := range r.pendingAcks {
 		log.Printf("%s", flowLine("", "→", "C64", "ACK", fmt.Sprintf("id=%d", id)))
-		ack := serial.Frame{Type: serial.FrameAckToC64, Payload: []byte{id}}
+		ack := serial.Frame{Type: serial.FrameAckToC64, Payload: ackToC64Payload(id)}
 		if err := r.Link.Send(ack); err != nil {
 			logErrorf("     ! failed to send ACK(%d) to C64: %v", id, err)
 		}
@@ -1564,10 +1649,15 @@ func (r *Relay) resendAckToC64(id byte) {
 	r.txMu.Lock()
 	defer r.txMu.Unlock()
 
-	ack := serial.Frame{Type: serial.FrameAckToC64, Payload: []byte{id}}
+	ack := serial.Frame{Type: serial.FrameAckToC64, Payload: ackToC64Payload(id)}
 	if err := r.Link.Send(ack); err != nil {
 		logErrorf("     ! failed to resend ACK(%d) to C64: %v", id, err)
 	}
+}
+
+func ackToC64Payload(id byte) []byte {
+	id &= 0x7F
+	return []byte{id, id ^ 0x7F}
 }
 
 // unwrapC64Frame strips the transport ID from a reliable C64→bridge frame,
@@ -1627,10 +1717,8 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) 
 				continue
 			}
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
-			continue
-		case serial.FrameHeartbeat:
-			if waitingTextAck {
-				r.noteTextAckFrame("HEARTBEAT")
+			if waitingTextAck && f.Type == serial.FrameUser {
+				return f, nil
 			}
 			continue
 		default:
@@ -1694,8 +1782,6 @@ func (r *Relay) waitForAckOrSemantic(ctx context.Context, id byte, timeout time.
 			deadline = time.Now().Add(timeout)
 			fmt.Fprintln(r.streamOut())
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
-		case serial.FrameHeartbeat:
-			continue
 		case serial.FrameStatus, serial.FrameResult, serial.FrameError, serial.FrameLLM:
 			if r.acceptC64FrameQueued(&f, true) {
 				if name == "STATUS" && f.Type == serial.FrameStatus {
@@ -1768,7 +1854,7 @@ func (r *Relay) DrainTransport(ctx context.Context, quiet, max time.Duration) er
 		}
 
 		switch f.Type {
-		case serial.FrameAck, serial.FrameHeartbeat:
+		case serial.FrameAck:
 			continue
 		case serial.FrameUser, serial.FrameSystem, serial.FrameStatus,
 			serial.FrameResult, serial.FrameError, serial.FrameLLM:
@@ -1881,10 +1967,6 @@ func (r *Relay) recvFromSocketOnly(ctx context.Context, waitingTextAck bool) (se
 				return serial.Frame{}, fmt.Errorf("recv: %w", res.err)
 			}
 			stallDumped = false
-			if res.frame.Type == serial.FrameHeartbeat {
-				r.noteHeartbeat()
-				continue
-			}
 			r.lastC64FrameAt = time.Now()
 			return res.frame, nil
 
@@ -1956,10 +2038,6 @@ func (r *Relay) recvFromC64(ctx context.Context, waitingTextAck bool) (serial.Fr
 				return serial.Frame{}, false, fmt.Errorf("recv: %w", res.err)
 			}
 			stallDumped = false
-			if res.frame.Type == serial.FrameHeartbeat {
-				r.noteHeartbeat()
-				continue
-			}
 			r.lastC64FrameAt = time.Now()
 			return res.frame, false, nil
 
@@ -2091,6 +2169,10 @@ func (r *Relay) currentRelayState() []string {
 	r.overlapMu.Lock()
 	overlapBusy := r.overlapBusy
 	r.overlapMu.Unlock()
+	r.overflowMu.Lock()
+	overflowBusy := r.overflowBusy
+	overflowWaiters := len(r.overflowWaiters)
+	r.overflowMu.Unlock()
 	r.ackWaitMu.Lock()
 	ackWaiters := len(r.ackWaiters)
 	ackWaiterIDs := sortedAckWaiterIDs(r.ackWaiters)
@@ -2111,6 +2193,8 @@ func (r *Relay) currentRelayState() []string {
 		fmt.Sprintf("relay.text_in_flight: %d", len(r.textInFlight)),
 		fmt.Sprintf("relay.text_ack_wait: %s", r.currentTextAckDiagnostics()),
 		fmt.Sprintf("relay.overlap_busy: %t", overlapBusy),
+		fmt.Sprintf("relay.overflow_busy: %t", overflowBusy),
+		fmt.Sprintf("relay.overflow_waiters: %d", overflowWaiters),
 		fmt.Sprintf("relay.msg_gate_busy: %t", msgGateBusy),
 		fmt.Sprintf("relay.msg_gate_waiters: %d", msgGateWaiters),
 		fmt.Sprintf("relay.overlap_queue_depth: %d", r.overlapQueueDepth()),

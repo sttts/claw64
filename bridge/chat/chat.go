@@ -19,8 +19,7 @@ type Channel interface {
 	// error occurs.
 	Start(ctx context.Context, handler MessageHandler) error
 
-	// Send pushes a message to a specific user/channel. Used for
-	// unsolicited messages (e.g. C64 heartbeat notifications).
+	// Send pushes a message to a specific user/channel.
 	Send(ctx context.Context, user string, text string) error
 
 	// Stop disconnects from the platform and releases resources.

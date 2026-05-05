@@ -169,16 +169,17 @@ allocation and `make kill` to stop processes without starting new ones.
 ## Architecture Notes
 - C64 agent is a TSR at $C000, hooks KERNAL at $E5D1 and IRQ at $0314/$0315, invisible to user.
 - Current protected memory map: guarded helpers $9000-$91FF, C64 user queue
-  $9200-$94FF (3 x 256-byte slots), queue metadata $9500-$9503, EXEC staging
-  $9600-$967F, soul $9800+, cold helper reserve $A000-$A3FF, future memory
+  $9300-$95FF (3 x 256-byte slots), queue metadata $9600-$9603, EXEC staging
+  $9700-$977F, soul $9800+, cold helper reserve $A000-$A3FF, future memory
   staging $A800-$BFFF, resident runtime below RXBUF $CF00, TXBUF $CF80.
 - Serial protocol: see `PROTOCOL.md` for the normative wire format and rules.
   In short: SYNC(0xFE) + TYPE(1) + LENGTH(1) + PAYLOAD + CHK(XOR), with
   reliable frames carrying a 1-byte transport ID in the payload.
-  ACK means the sender may continue safely. HEARTBEAT is fire-and-forget.
+  ACK means the sender may continue safely. Bridge→C64 ACK payloads include
+  the ID plus its 7-bit complement; C64→bridge ACK payloads carry the ID.
 - Frame types include MSG('M'), EXEC('E'), STOP('K'), STATUS('Q'/'U'),
-  TEXT('T'), RESULT('R'), ACK('A'), USER('Y'), LLM_MSG('L'), ERROR('X'),
-  SYSTEM('S'), HEARTBEAT('H'), SCREENSHOT('P').
+  TEXT('T'), DONE('D'), RESULT('R'), USER, LLM_MSG, ERROR, SYSTEM,
+  directional ACKs, and SCREENSHOT('P').
 - Text-oriented multi-frame payloads use 120-byte chunks with in-band chunk headers for SYSTEM and RESULT.
 - RS232 at 2400 baud via C64 userport. VICE maps to TCP localhost:25232.
 - Bridge sends bytes with paced writes to satisfy VICE/KERNAL RS232 timing.

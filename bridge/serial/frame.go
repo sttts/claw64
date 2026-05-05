@@ -30,19 +30,18 @@ const (
 	FrameStop       byte = 0x4B // 'K' — request RUN/STOP for current BASIC program
 	FrameStatusReq  byte = 0x51 // 'Q' — ask whether BASIC is running or READY
 	FrameText       byte = 0x54 // 'T' — LLM's final answer, forward to user
-	FrameDone       byte = 0x44 // 'D' — LLM cycle completed without user text
+	FrameDone       byte = 0x44 // 'D' — LLM call completed without C64 action
 	FrameScreenshot byte = 0x50 // 'P' — request current text screen snapshot
 	FrameAckToC64   byte = 0x42 // 'B' — bridge ACK for C64 reliable frames
 
 	// C64 → Bridge
-	FrameResult    byte = 0x60 // '`' — tool result: screen scrape
-	FrameSystem    byte = 0x61 // 'a' — system prompt chunk
-	FrameStatus    byte = 0x62 // 'b' — BASIC state / long-running status text
-	FrameLLM       byte = 0x63 // 'c' — context message for the LLM
-	FrameHeartbeat byte = 0x64 // 'd' — heartbeat
-	FrameError     byte = 0x65 // 'e' — tool call timed out
-	FrameUser      byte = 0x66 // 'f' — user-visible text emitted by the C64
-	FrameAck       byte = 0x67 // 'g' — C64 ACK for bridge reliable frames
+	FrameResult byte = 0x60 // '`' — tool result: screen scrape
+	FrameSystem byte = 0x61 // 'a' — system prompt chunk
+	FrameStatus byte = 0x62 // 'b' — BASIC state / long-running status text
+	FrameLLM    byte = 0x63 // 'c' — typed context message for the LLM
+	FrameError  byte = 0x65 // 'e' — tool call timed out
+	FrameUser   byte = 0x66 // 'f' — user-visible text emitted by the C64
+	FrameAck    byte = 0x67 // 'g' — C64 ACK for bridge reliable frames
 )
 
 // Frame is a single protocol frame.
@@ -89,7 +88,6 @@ func isKnownType(typ byte) bool {
 		typ == FrameStatusReq || typ == FrameText || typ == FrameDone || typ == FrameScreenshot ||
 		typ == FrameAckToC64 || typ == FrameAck || typ == FrameResult ||
 		typ == FrameStatus || typ == FrameUser || typ == FrameLLM || typ == FrameError ||
-		typ == FrameHeartbeat ||
 		typ == FrameSystem
 }
 
@@ -216,8 +214,6 @@ func TypeName(t byte) string {
 		return "LLM_MSG"
 	case FrameError:
 		return "ERROR"
-	case FrameHeartbeat:
-		return "HEARTBEAT"
 	case FrameSystem:
 		return "SYSTEM"
 	default:
@@ -243,7 +239,6 @@ func ExtractAckID(payload []byte) (byte, bool) {
 }
 
 // IsReliableC64 returns true for C64→bridge frame types that carry a transport ID.
-// HEARTBEAT is the only fire-and-forget C64→bridge frame.
 func IsReliableC64(t byte) bool {
 	switch t {
 	case FrameUser, FrameStatus, FrameResult, FrameError, FrameLLM, FrameSystem:

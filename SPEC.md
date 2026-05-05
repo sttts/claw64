@@ -81,9 +81,10 @@ Receive EXEC, SCREENSHOT or TEXT frame from bridge
           Wait for next EXEC or TEXT frame
 ```
 
-The C64 can also send LLM_MSG frames at any time to add context
-(e.g. current screen state, error conditions) to the LLM conversation.
-The bridge appends these to the history and calls the LLM again.
+The C64 can also send typed LLM_MSG frames at any time to add context
+(e.g. user input, idle heartbeat, current screen state, error conditions)
+to the LLM conversation. The bridge formats these events, appends them to
+history, and calls the LLM again.
 
 ## Components
 
@@ -102,10 +103,10 @@ $0200-$03FF  System variables, keyboard buffer
 $0400-$07FF  Screen RAM (agent reads this to capture output)
 $0800-$8FFF  BASIC program + variables after install
 $9000-$91FF  Guarded helper code copied by loader
-$9200-$94FF  C64-side user-message queue (3 x 256-byte slots)
-$9500-$9503  Queue metadata: staged length, head, tail, count
-$9504+       Guarded busy/READY/status lookup tables
-$9600-$967F  EXEC staging buffer
+$9300-$95FF  C64-side user-message queue (3 x 256-byte slots)
+$9600-$9603  Queue metadata: staged length, head, tail, count
+$9604+       Guarded busy/READY/status lookup tables
+$9700-$977F  EXEC staging buffer
 $9800+       C64 soul / system prompt text
 $A000-$A3FF  Cold helper-code reserve
 $A800-$BFFF  Memory staging reserve for future durable-memory work
@@ -123,7 +124,7 @@ that guarded helpers, queue storage, staging reservations, resident code, and
 fixed RX/TX buffers do not overlap.
 
 The event queue is a fixed ring buffer on the C64. It has three 256-byte slots
-at `$9200-$94FF`; each slot stores an event type, payload length, and payload.
+at `$9300-$95FF`; each slot stores an event type, payload length, and payload.
 The current event type is `EVENT_MSG`, used for queued chat messages. If all
 slots are occupied, the guarded enqueue helper advances the head and overwrites
 the oldest pending event. The bridge therefore preserves ordering while
@@ -134,9 +135,9 @@ Durable memory is not implemented yet. `$A800-$BFFF` is reserved as a staging
 window for planned floppy-backed `MEMORY_SUMMARY` / `MEMORY_FULL` traffic, not
 as durable state by itself.
 
-The C64 TSR emits a heartbeat frame after a silent `DONE` completion as a
-liveness event. The bridge may observe or forward it, but heartbeat policy and
-agent behavior remain C64 owned.
+The C64 TSR emits heartbeat as a typed `LLM_MSG` only after roughly two idle
+minutes. There is no bridge-understood heartbeat frame; the bridge treats it
+like any other C64-originated LLM message.
 
 #### KERNAL integration
 
@@ -200,8 +201,8 @@ frame types to API calls and back.
 #### Responsibilities
 
 - Receive chat messages and send MSG frames to the C64.
-- Receive LLM_MSG frames from the C64, append to conversation history,
-  call the LLM.
+- Receive typed LLM_MSG frames from the C64, append formatted events to
+  conversation history, call the LLM.
 - When the LLM returns a tool call: send EXEC frame to the C64.
 - When the LLM returns text: send TEXT frame to the C64.
 - Receive RESULT frames from the C64, append as tool results to history,
@@ -322,6 +323,8 @@ This document only states the architectural contract:
 - Reliable frames use 1-byte transport IDs scoped per direction.
 - `ACK` means the sender may continue safely. It does not merely mean
   "frame parsed", and it does not imply the final user-visible outcome is done.
+- Bridge→C64 ACK payloads include the ID plus its 7-bit complement, so a
+  corrupted one-byte ACK cannot falsely release a C64-originated frame.
 - `EXEC` is the only execution request.
 - On receipt, the C64 copies `EXEC` text into C64-owned execution storage
   before acting on it.
@@ -332,7 +335,8 @@ This document only states the architectural contract:
 - TEXT responses still flow LLM→bridge→C64→bridge→user. The bridge does not
   shortcut around the C64.
 - Silent LLM completion flows LLM→bridge→C64 as an internal `DONE` frame.
-  `DONE` ends the C64-visible cycle without creating user-visible text.
+  `DONE` ends the in-flight C64-visible LLM call without creating
+  user-visible text.
 - The bridge stays a pure relay. It owns transport, history, and API calls,
   not agent behavior.
 
@@ -412,7 +416,7 @@ Build:       make assemble / make vice / make bridge
 ### In scope (MVP)
 
 - C64 TSR agent in 6502 assembly.
-- Frame protocol (MSG/EXEC/SCREENSHOT/TEXT/RESULT/LLM_MSG/ERROR/HEARTBEAT/SYSTEM).
+- Frame protocol (MSG/EXEC/SCREENSHOT/TEXT/RESULT/LLM_MSG/ERROR/SYSTEM).
 - Bridge in Go: LLM proxy + chat relay + serial link.
 - Tools: `exec`, `screen`, `status`, `stop`.
 - Multi-user chat support.

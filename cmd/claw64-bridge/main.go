@@ -266,6 +266,10 @@ func runChatBridge(cfg CLI, ch chat.Channel) {
 	}
 	rl.SetupProgress()
 
+	if err := rl.PrimeTransport(ctx); err != nil {
+		log.Printf("serial: transport prime failed: %v", err)
+	}
+
 	log.Printf("bridge: chat=%s llm=%s serial=%s", ch.Name(), llmDesc, serialLabel(cfg))
 
 	err = ch.Start(ctx, func(ctx context.Context, userID, text string) error {

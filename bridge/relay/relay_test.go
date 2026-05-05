@@ -202,7 +202,7 @@ func TestToolRequestsRequireSemanticConfirmation(t *testing.T) {
 func TestAppendC64LLMEventUsesBackendCompatibleUserRole(t *testing.T) {
 	r := &Relay{History: NewHistory()}
 
-	r.appendC64LLMEvent("u", "[heartbeat] idle for 10 minutes")
+	r.appendC64LLMEvent("u", []byte{2})
 
 	got := r.History.Get("u")
 	if len(got) != 1 {
@@ -211,7 +211,24 @@ func TestAppendC64LLMEventUsesBackendCompatibleUserRole(t *testing.T) {
 	if got[0].Role != "user" {
 		t.Fatalf("role = %q, want user", got[0].Role)
 	}
-	if got[0].Content != "[heartbeat] idle for 10 minutes" {
+	if got[0].Content != "[C64 heartbeat]\n" {
+		t.Fatalf("content = %q", got[0].Content)
+	}
+}
+
+func TestAppendC64LLMEventsAggregatesIntoOneHistoryMessage(t *testing.T) {
+	r := &Relay{History: NewHistory()}
+
+	r.appendC64LLMEvents("u", [][]byte{
+		{1, 'f', 'i', 'r', 's', 't'},
+		{1, 's', 'e', 'c', 'o', 'n', 'd'},
+	})
+
+	got := r.History.Get("u")
+	if len(got) != 1 {
+		t.Fatalf("history len = %d, want 1", len(got))
+	}
+	if got[0].Content != "[C64 event batch]\n[1:user] first\n[2:user] second" {
 		t.Fatalf("content = %q", got[0].Content)
 	}
 }
@@ -541,81 +558,51 @@ func TestOverlapQueueDepthCountsActiveHolderWaitersAndOverlapSend(t *testing.T) 
 	}
 }
 
-func TestOverlapQueueFreshTurnReadyRequiresIdleBridgeState(t *testing.T) {
-	r := &Relay{SystemPrompt: "ready"}
-	if !r.overlapQueueFreshTurnReady() {
-		t.Fatal("overlapQueueFreshTurnReady = false on idle relay")
+func TestOverflowLaneAdmitsWaitersFIFO(t *testing.T) {
+	r := &Relay{}
+	ctx := context.Background()
+	if err := r.acquireOverflowLane(ctx); err != nil {
+		t.Fatalf("acquire first overflow lane: %v", err)
 	}
 
-	r.basicRunning = true
-	if r.overlapQueueFreshTurnReady() {
-		t.Fatal("overlapQueueFreshTurnReady = true while basicRunning")
+	acquired := make(chan int, 2)
+	go func() {
+		if err := r.acquireOverflowLane(ctx); err == nil {
+			acquired <- 1
+		}
+	}()
+	waitForOverflowWaiters(t, r, 1)
+	go func() {
+		if err := r.acquireOverflowLane(ctx); err == nil {
+			acquired <- 2
+		}
+	}()
+	waitForOverflowWaiters(t, r, 2)
+
+	r.releaseOverflowLane()
+	if got := <-acquired; got != 1 {
+		t.Fatalf("first released waiter = %d, want 1", got)
 	}
 
-	r.basicRunning = false
-	r.msgGateBusy = true
-	if r.overlapQueueFreshTurnReady() {
-		t.Fatal("overlapQueueFreshTurnReady = true while msg gate busy")
-	}
-
-	r.msgGateBusy = false
-	r.msgGateWaiters = []chan struct{}{make(chan struct{})}
-	if r.overlapQueueFreshTurnReady() {
-		t.Fatal("overlapQueueFreshTurnReady = true with queued waiters")
-	}
-
-	r.msgGateWaiters = nil
-	r.overlapBusy = true
-	if r.overlapQueueFreshTurnReady() {
-		t.Fatal("overlapQueueFreshTurnReady = true while overlap send active")
-	}
-
-	r.overlapBusy = false
-	r.waitingTool = true
-	if r.overlapQueueFreshTurnReady() {
-		t.Fatal("overlapQueueFreshTurnReady = true while waitingTool")
-	}
-
-	r.waitingTool = false
-	r.pendingFrames = []queuedFrame{{frame: serial.Frame{Type: serial.FrameLLM}}}
-	if r.overlapQueueFreshTurnReady() {
-		t.Fatal("overlapQueueFreshTurnReady = true with pending semantic frames")
-	}
-
-	r.pendingFrames = nil
-	r.textOutQueue = []byte("queued")
-	if r.overlapQueueFreshTurnReady() {
-		t.Fatal("overlapQueueFreshTurnReady = true with pending text out queue")
-	}
-
-	r.textOutQueue = nil
-	r.textInFlight = []byte("chunk")
-	if r.overlapQueueFreshTurnReady() {
-		t.Fatal("overlapQueueFreshTurnReady = true with text in flight")
+	r.releaseOverflowLane()
+	if got := <-acquired; got != 2 {
+		t.Fatalf("second released waiter = %d, want 2", got)
 	}
 }
 
-func TestOverlapQueueFreshTurnReadyWithGateHeldAllowsQueuedWaiters(t *testing.T) {
-	r := &Relay{SystemPrompt: "ready", msgGateBusy: true}
-	if !r.overlapQueueFreshTurnReadyWithGateHeld() {
-		t.Fatal("overlapQueueFreshTurnReadyWithGateHeld = false for current gate holder")
+func waitForOverflowWaiters(t *testing.T, r *Relay, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		r.overflowMu.Lock()
+		got := len(r.overflowWaiters)
+		r.overflowMu.Unlock()
+		if got == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
-
-	r.msgGateWaiters = []chan struct{}{make(chan struct{})}
-	if !r.overlapQueueFreshTurnReadyWithGateHeld() {
-		t.Fatal("overlapQueueFreshTurnReadyWithGateHeld = false with queued waiters behind holder")
-	}
-
-	r.basicRunning = true
-	if r.overlapQueueFreshTurnReadyWithGateHeld() {
-		t.Fatal("overlapQueueFreshTurnReadyWithGateHeld = true while overlap is still allowed")
-	}
-
-	r.basicRunning = false
-	r.overlapBusy = true
-	if r.overlapQueueFreshTurnReadyWithGateHeld() {
-		t.Fatal("overlapQueueFreshTurnReadyWithGateHeld = true while overlap send active")
-	}
+	t.Fatalf("overflow waiters did not reach %d", want)
 }
 
 func TestDispatchAckWaiterDeliversMatchingAck(t *testing.T) {
