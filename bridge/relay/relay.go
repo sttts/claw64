@@ -1718,6 +1718,7 @@ func (r *Relay) waitForAckID(ctx context.Context, id byte, waitingTextAck bool) 
 			}
 			r.pendingFrames = append(r.pendingFrames, queuedFrame{frame: f, accepted: true})
 			if waitingTextAck && f.Type == serial.FrameUser {
+				r.rememberLateAck(id)
 				return f, nil
 			}
 			continue

@@ -705,6 +705,43 @@ func TestWaitForAckWaiterAcceptsMatchingAck(t *testing.T) {
 	}
 }
 
+func TestWaitForAckIDMarksTextAckLateAfterUserSemanticFrame(t *testing.T) {
+	bridgeConn, c64Conn := net.Pipe()
+	t.Cleanup(func() {
+		_ = bridgeConn.Close()
+		_ = c64Conn.Close()
+	})
+
+	r := &Relay{Link: serial.NewTestLink(bridgeConn)}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = c64Conn.Write(serial.Encode(serial.Frame{
+			Type:    serial.FrameUser,
+			Payload: serial.PrependID(11, []byte("READY.")),
+		}))
+
+		// Drain the bridge ACK and its defensive resend for the C64 USER frame.
+		_, _ = serial.Decode(c64Conn)
+		_, _ = serial.Decode(c64Conn)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	f, err := r.waitForAckID(ctx, 5, true)
+	if err != nil {
+		t.Fatalf("waitForAckID error = %v", err)
+	}
+	if f.Type != serial.FrameUser || string(f.Payload) != "READY." {
+		t.Fatalf("waitForAckID frame = %s %q, want USER READY.", serial.TypeName(f.Type), string(f.Payload))
+	}
+	if !r.consumeLateAck(5) {
+		t.Fatal("TEXT ACK id was not remembered as expected-late")
+	}
+	<-done
+}
+
 func TestOverlappingMSGUsesQueueAdmissionAckWindow(t *testing.T) {
 	if msgAdmissionAckTimeout <= ackTimeout {
 		t.Fatalf("msgAdmissionAckTimeout = %v, want above idle ackTimeout %v", msgAdmissionAckTimeout, ackTimeout)
